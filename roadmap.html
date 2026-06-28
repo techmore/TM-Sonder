@@ -1,0 +1,449 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Sonder Roadmap</title>
+  <style>
+    :root {
+      color-scheme: dark;
+      --bg: #f7e1d7;
+      --bg2: #dedbd2;
+      --panel: rgba(255, 249, 245, 0.82);
+      --panel-strong: #f7e1d7;
+      --line: #b0c4b1;
+      --text: #4a5759;
+      --muted: rgba(74, 87, 89, 0.78);
+      --accent: #edafb8;
+      --accent-2: #b0c4b1;
+      --warn: #c97f68;
+      --good: #6d8b73;
+      --shadow: 0 24px 70px rgba(0, 0, 0, 0.32);
+      --radius: 22px;
+    }
+
+    * { box-sizing: border-box; }
+    html { scroll-behavior: smooth; }
+    body {
+      margin: 0;
+      font: 16px/1.55 -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      color: var(--text);
+      background:
+        radial-gradient(circle at top left, rgba(237, 175, 184, 0.28), transparent 30%),
+        radial-gradient(circle at top right, rgba(176, 196, 177, 0.22), transparent 28%),
+        linear-gradient(180deg, #f7e1d7 0%, var(--bg) 42%, #dedbd2 100%);
+      min-height: 100vh;
+    }
+
+    a { color: inherit; }
+    .wrap { max-width: 1180px; margin: 0 auto; padding: 28px 20px 56px; }
+    .hero {
+      position: relative;
+      overflow: hidden;
+      border: 1px solid var(--line);
+      border-radius: calc(var(--radius) + 8px);
+      background: linear-gradient(145deg, rgba(255, 249, 245, 0.92), rgba(247, 225, 215, 0.88));
+      box-shadow: var(--shadow);
+      padding: 34px;
+      isolation: isolate;
+    }
+    .hero::before {
+      content: "";
+      position: absolute;
+      inset: -2px;
+      background:
+        radial-gradient(circle at 20% 20%, rgba(237, 175, 184, 0.22), transparent 20%),
+        radial-gradient(circle at 80% 10%, rgba(176, 196, 177, 0.2), transparent 24%);
+      z-index: -1;
+      pointer-events: none;
+    }
+    .eyebrow {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      padding: 7px 12px;
+      border-radius: 999px;
+      border: 1px solid rgba(237, 175, 184, 0.35);
+      background: rgba(237, 175, 184, 0.14);
+      color: var(--accent);
+      font-size: 12px;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+      font-weight: 700;
+    }
+    h1 {
+      margin: 14px 0 10px;
+      font-size: clamp(2.2rem, 5vw, 4.5rem);
+      line-height: 0.96;
+      letter-spacing: -0.04em;
+    }
+    .lede {
+      max-width: 820px;
+      color: var(--muted);
+      font-size: 1.06rem;
+      margin: 0 0 22px;
+    }
+    .hero-grid {
+      display: grid;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      gap: 14px;
+      margin-top: 24px;
+    }
+    .metric, .card, .note {
+      border: 1px solid var(--line);
+      border-radius: var(--radius);
+      background: var(--panel);
+      box-shadow: var(--shadow);
+    }
+    .metric { padding: 16px; }
+    .metric .label { color: var(--muted); font-size: 13px; text-transform: uppercase; letter-spacing: 0.08em; }
+    .metric .value { font-size: 1.4rem; margin-top: 6px; font-weight: 700; }
+    .metric .desc { color: var(--muted); margin-top: 4px; font-size: 14px; }
+
+    .layout {
+      display: grid;
+      grid-template-columns: minmax(0, 1.65fr) minmax(280px, 0.85fr);
+      gap: 18px;
+      margin-top: 18px;
+      align-items: start;
+    }
+    .stack { display: grid; gap: 18px; }
+    .card { padding: 24px; }
+    .card h2 {
+      margin: 0 0 10px;
+      font-size: 1.35rem;
+      letter-spacing: -0.02em;
+    }
+    .card p, .card li { color: var(--muted); }
+    .section-intro { margin-top: 0; }
+    .roadmap {
+      display: grid;
+      gap: 14px;
+    }
+    .phase {
+      border: 1px solid var(--line);
+      border-radius: 18px;
+      background: linear-gradient(180deg, rgba(255,255,255,0.02), rgba(255,255,255,0.01));
+      padding: 18px;
+    }
+    .phase-head {
+      display: flex;
+      justify-content: space-between;
+      gap: 14px;
+      align-items: center;
+      margin-bottom: 10px;
+    }
+    .phase h3 { margin: 0; font-size: 1.08rem; }
+    .tag {
+      display: inline-flex;
+      align-items: center;
+      padding: 6px 10px;
+      border-radius: 999px;
+      font-size: 12px;
+      font-weight: 700;
+      letter-spacing: 0.04em;
+      text-transform: uppercase;
+      white-space: nowrap;
+    }
+    .tag.now { background: rgba(109, 139, 115, 0.12); color: var(--good); border: 1px solid rgba(109, 139, 115, 0.18); }
+    .tag.next { background: rgba(176, 196, 177, 0.18); color: #637865; border: 1px solid rgba(176, 196, 177, 0.38); }
+    .tag.later { background: rgba(237, 175, 184, 0.16); color: #9f6370; border: 1px solid rgba(237, 175, 184, 0.28); }
+    ul { margin: 10px 0 0; padding-left: 18px; }
+    li + li { margin-top: 8px; }
+    .chips { display: flex; flex-wrap: wrap; gap: 10px; margin-top: 12px; }
+    .chip {
+      padding: 8px 11px;
+      border-radius: 999px;
+      border: 1px solid var(--line);
+      background: rgba(255,255,255,0.5);
+      color: var(--text);
+      font-size: 13px;
+    }
+    .palette-grid {
+      display: grid;
+      gap: 10px;
+      grid-template-columns: repeat(5, minmax(0, 1fr));
+      margin-top: 12px;
+    }
+    .swatch {
+      border: 1px solid var(--line);
+      border-radius: 16px;
+      overflow: hidden;
+      background: rgba(255,255,255,0.5);
+    }
+    .swatch .chip-color {
+      height: 58px;
+    }
+    .swatch .meta {
+      padding: 10px;
+      font-size: 12px;
+      color: var(--muted);
+    }
+    .swatch .meta strong { display:block; color: var(--text); margin-bottom: 2px; }
+    .note { padding: 18px; }
+    .note h3 { margin: 0 0 10px; font-size: 1.05rem; }
+    .timeline {
+      display: grid;
+      gap: 10px;
+      margin-top: 12px;
+    }
+    .timeline-row {
+      display: grid;
+      grid-template-columns: 110px 1fr;
+      gap: 10px;
+      padding-top: 10px;
+      border-top: 1px solid var(--line);
+    }
+    .timeline-row:first-child { border-top: 0; padding-top: 0; }
+    .timeline-row strong { color: var(--text); }
+    .timeline-row span { color: var(--muted); }
+    .footer {
+      margin-top: 18px;
+      color: var(--muted);
+      font-size: 14px;
+      text-align: center;
+    }
+    @media (max-width: 960px) {
+      .hero-grid, .layout { grid-template-columns: 1fr; }
+      .palette-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+      .timeline-row { grid-template-columns: 1fr; }
+      .phase-head { align-items: flex-start; flex-direction: column; }
+    }
+    @media (prefers-reduced-motion: reduce) {
+      html { scroll-behavior: auto; }
+    }
+  </style>
+</head>
+<body>
+  <main class="wrap">
+    <section class="hero">
+      <span class="eyebrow">TM Sonder roadmap</span>
+      <h1>Build the server around discovery, sync, and low-friction access.</h1>
+      <p class="lede">
+        The goal is a private-first media system that behaves more like a smart library index than a checkout kiosk.
+        The server should do most of the discovery work, keep the client light, and expose a clean path for both local
+        and Tailscale-backed remote use.
+      </p>
+      <div class="hero-grid">
+        <div class="metric">
+          <div class="label">North Star</div>
+          <div class="value">Server-led discovery</div>
+          <div class="desc">Push curated lists, cached context, and relevant library state to devices instead of making clients crawl everything.</div>
+        </div>
+        <div class="metric">
+          <div class="label">Constraint</div>
+          <div class="value">Low resource use</div>
+          <div class="desc">Favor cached catalogs, incremental updates, and sparse polling over constant rescans.</div>
+        </div>
+        <div class="metric">
+          <div class="label">Access</div>
+          <div class="value">Private or public</div>
+          <div class="desc">Support local-only, Tailscale, and optionally public endpoints with explicit authentication.</div>
+        </div>
+      </div>
+    </section>
+
+    <div class="layout">
+      <section class="stack">
+        <article class="card">
+          <h2>What is still missing</h2>
+          <p class="section-intro">
+            This fills in the gaps around the current local server: better discovery, better remote behavior, and
+            a roadmap for turning Sonder into a real client/server system instead of just a single machine media host.
+          </p>
+          <div class="chips">
+            <span class="chip">Remote catalog sync</span>
+            <span class="chip">Curated lists</span>
+            <span class="chip">Watch-state sync</span>
+            <span class="chip">Open-by-default access</span>
+            <span class="chip">Tailscale support</span>
+            <span class="chip">Private/public modes</span>
+            <span class="chip">Book-native UX</span>
+            <span class="chip">Plex importer</span>
+            <span class="chip">.sonder context cache</span>
+            <span class="chip">Native audiobook server</span>
+            <span class="chip">Metadata curation</span>
+          </div>
+        </article>
+
+        <article class="card">
+          <h2>Roadmap</h2>
+          <div class="roadmap">
+            <div class="phase">
+              <div class="phase-head">
+                <h3>Phase 1: stabilize the server surface</h3>
+                <span class="tag now">Now</span>
+              </div>
+              <ul>
+                <li>Add explicit server health, library, and catalog endpoints that can be cached by clients.</li>
+                <li>Introduce clear source states for local, remote available, remote unavailable, syncing, and failed.</li>
+                <li>Make progress updates cheap and incremental so clients can sync resume state without pulling the whole library.</li>
+                <li>Keep the current Mac/web experience snappy even when no remote devices are connected.</li>
+                <li>Document the design system and make sage (`#B0C4B1`) the shared visual baseline across macOS and iOS.</li>
+                <li>Keep `library.json` as the app index and move imported show context into per-root `.sonder/sonder-context.json` caches.</li>
+              </ul>
+            </div>
+
+            <div class="phase">
+              <div class="phase-head">
+                <h3>Phase 2: discovery and curation</h3>
+                <span class="tag next">Next</span>
+              </div>
+              <ul>
+                <li>Have the server precompute “best next” lists, recently added lists, continue watching, and focused collections.</li>
+                <li>Support server-side search, faceting, and recommendation hints so clients can stay lightweight.</li>
+                <li>Add book-native views for ebooks and audiobooks with separate shelves, stats, and collection logic.</li>
+                <li>Add selective push or refresh notifications so devices only fetch the data that changed.</li>
+                <li>Build saved views that feel more like library shelves than raw database filters.</li>
+                <li>Carry the shared earthy theme tokens into client shells so both platforms feel like the same product family, with sage as the base and Cherry Blossom only as an accent.</li>
+                <li>Finish the Plex import path so launch-time migration, manual refresh, and stale-aware caching all use the same importer.</li>
+              </ul>
+            </div>
+
+            <div class="phase">
+              <div class="phase-head">
+                <h3>Phase 3: remote sync and background efficiency</h3>
+                <span class="tag next">Next</span>
+              </div>
+              <ul>
+                <li>Allow manual download, selective cache, and watch-progress sync before any full media mirroring.</li>
+                <li>Use backoff, version checks, and delta fetches instead of aggressive polling.</li>
+                <li>Favor small metadata payloads and avoid waking the network or disk when a cached response is sufficient.</li>
+                <li>Build a server-side metadata pipeline that can enrich titles with artwork, chapter data, and clean tags without requiring the client to do lookup work.</li>
+                <li>Treat Wikipedia-derived artwork and factual metadata as a reasonable source for creative-commons-friendly enrichment when library files are sparse.</li>
+                <li>Let the server act as the source of truth for title metadata, artwork, and list membership.</li>
+                <li>Make the new book and audiobook enrichment flow the canonical place to resolve cover art, summaries, and publisher-like fields.</li>
+                <li>Expand the importer to handle stale checks, per-show status, and exact root-folder cache refreshes.</li>
+              </ul>
+            </div>
+
+            <div class="phase">
+              <div class="phase-head">
+                <h3>Phase 3b: native audiobook server</h3>
+                <span class="tag next">Next</span>
+              </div>
+              <ul>
+                <li>Build Sonder’s own audiobook indexer so it owns ingestion, normalization, and serving end to end.</li>
+                <li>Mirror the useful Audnexus ideas natively: chapter extraction, cached metadata, search, and fast identifier lookup.</li>
+                <li>Store audiobook records, authors, series, narrators, chapters, and cover art in Sonder’s local database.</li>
+                <li>Expose audiobook-specific routes for catalog, detail, chapters, search, and cover art.</li>
+                <li>Support local sidecars and embedded metadata before any optional external enrichment.</li>
+                <li>Keep refreshes fingerprint-based so repeated boots do not rescan unchanged audiobooks.</li>
+              </ul>
+            </div>
+
+            <div class="phase">
+              <div class="phase-head">
+                <h3>Phase 4: access models and federation</h3>
+                <span class="tag later">Later</span>
+              </div>
+              <ul>
+                <li>Support explicit pairing and trust tokens only when the operator turns on restrictions.</li>
+                <li>Offer a local-only mode, a Tailscale-private mode, and an optional public mode with strong auth for later.</li>
+                <li>Make remote servers discoverable through configured entries, not silent LAN scanning.</li>
+                <li>Let a device keep browsing a cached library even when the remote source is offline.</li>
+              </ul>
+            </div>
+          </div>
+        </article>
+
+        <article class="card">
+          <h2>Design principles</h2>
+          <ul>
+            <li>Discovery should feel curated, not noisy. The server should do the heavy lifting.</li>
+            <li>Clients should remain fast on weak devices and low-bandwidth connections.</li>
+            <li>Offline browsing should be graceful, with clear availability states.</li>
+            <li>Authentication and sharing should be explicit and legible to users.</li>
+            <li>Public exposure should be a deliberate choice, not the default path.</li>
+          </ul>
+        </article>
+
+        <article class="card">
+          <h2>Success Criteria</h2>
+          <ul>
+            <li>Open the iOS client, choose a local or remote server, and reach shelves without manual cleanup.</li>
+            <li>Start a video, ebook, or audiobook on the client, force close the app, reopen it, and resume at the same continuity point.</li>
+            <li>Persist progress on the server so another device can resume from the latest known position.</li>
+            <li>Keep local client cache as a fast fallback, but treat server progress as the source of truth when both sides are available.</li>
+          <li>Support LAN and Tailscale access paths so remote media feels like a normal library, not a special case.</li>
+          <li>Keep artwork, metadata, and theme snapshots in sync so the client can relaunch into a coherent experience.</li>
+          <li>Import Plex context once, cache it locally, and use the cache as the default discovery layer on future boots.</li>
+          <li>Ship a native audiobook server that Sonder owns fully, rather than depending on external audiobook infrastructure.</li>
+          </ul>
+        </article>
+      </section>
+
+      <aside class="stack">
+        <section class="note">
+          <h3>Suggested API focus</h3>
+          <div class="timeline">
+            <div class="timeline-row">
+              <strong>Catalog</strong>
+              <span>Versioned library payloads, delta refreshes, and cache-friendly responses.</span>
+            </div>
+            <div class="timeline-row">
+              <strong>Discovery</strong>
+              <span>Curated shelves, top picks, continue-watching, cached show context, and server-generated list bundles.</span>
+            </div>
+            <div class="timeline-row">
+              <strong>Sync</strong>
+              <span>Progress, list membership, and optional offline pins before full file sync.</span>
+            </div>
+            <div class="timeline-row">
+              <strong>Books</strong>
+              <span>Native audiobook ingestion, chapter data, cover art, and identifier-based lookup.</span>
+            </div>
+            <div class="timeline-row">
+              <strong>Access</strong>
+              <span>Clear LAN and Tailscale URLs, optional auth headers, and an easy path for later restrictions.</span>
+            </div>
+          </div>
+        </section>
+
+        <section class="note">
+          <h3>Good “missing feature” candidates</h3>
+          <ul>
+            <li>Remote-server status in the UI.</li>
+            <li>Saved server lists and trust onboarding.</li>
+            <li>Collection curation and pinned shelves.</li>
+            <li>Library-wide search that runs on the server.</li>
+            <li>Bandwidth-aware artwork and metadata loading.</li>
+            <li>Background sync that wakes only when needed.</li>
+            <li>Book-specific artwork, chapters, and series metadata.</li>
+            <li>Separate audiobook and ebook stats, tags, and recommendations.</li>
+            <li>Native Plex context import with a durable `.sonder` cache.</li>
+            <li>Native audiobook server features inspired by Audnexus, but owned entirely by Sonder.</li>
+            <li>Theme presets with documented palette tokens and migration guidance.</li>
+          </ul>
+        </section>
+
+        <section class="note">
+          <h3>Success looks like</h3>
+          <p>
+            A user opens Sonder, sees a curated library immediately, and can move between local and trusted remote
+            servers without thinking about networking details. The server has already done most of the discovery work,
+            and the client stays small, fast, and battery-friendly.
+          </p>
+        </section>
+
+        <section class="note">
+          <h3>Theme Tokens</h3>
+          <p>The roadmap should speak the same visual language as the app, using sage as the base tone and the rest of the palette as supporting permutations.</p>
+          <div class="palette-grid">
+            <div class="swatch"><div class="chip-color" style="background:#B0C4B1"></div><div class="meta"><strong>Ash Grey</strong>#B0C4B1</div></div>
+            <div class="swatch"><div class="chip-color" style="background:#F7E1D7"></div><div class="meta"><strong>Powder Petal</strong>#F7E1D7</div></div>
+            <div class="swatch"><div class="chip-color" style="background:#DEDBD2"></div><div class="meta"><strong>Dust Grey</strong>#DEDBD2</div></div>
+            <div class="swatch"><div class="chip-color" style="background:#EDAFB8"></div><div class="meta"><strong>Cherry Blossom</strong>#EDAFB8</div></div>
+            <div class="swatch"><div class="chip-color" style="background:#4A5759"></div><div class="meta"><strong>Iron Grey</strong>#4A5759</div></div>
+          </div>
+        </section>
+      </aside>
+    </div>
+
+    <p class="footer">
+      Related note: the federation draft in <a href="feature_federation.md">feature_federation.md</a> stays the source
+      of truth for App Store-safe server linking rules.
+    </p>
+  </main>
+</body>
+</html>

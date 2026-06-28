@@ -1,0 +1,251 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Sonder Client Requirements</title>
+  <style>
+    :root {
+      color-scheme: light;
+      --bg: #f7e1d7;
+      --panel: rgba(255, 249, 245, 0.92);
+      --line: #b0c4b1;
+      --text: #4a5759;
+      --muted: rgba(74, 87, 89, 0.76);
+      --accent: #edafb8;
+      --accent2: #6d8b73;
+      --shadow: 0 18px 48px rgba(74, 87, 89, 0.18);
+      --radius: 20px;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      font: 16px/1.55 -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      color: var(--text);
+      background:
+        radial-gradient(circle at top left, rgba(237, 175, 184, 0.24), transparent 30%),
+        radial-gradient(circle at top right, rgba(176, 196, 177, 0.2), transparent 26%),
+        linear-gradient(180deg, #f7e1d7 0%, var(--bg) 45%, #dedbd2 100%);
+      min-height: 100vh;
+    }
+    .wrap { max-width: 1120px; margin: 0 auto; padding: 28px 20px 56px; }
+    .hero, .card {
+      border: 1px solid var(--line);
+      border-radius: calc(var(--radius) + 4px);
+      background: var(--panel);
+      box-shadow: var(--shadow);
+    }
+    .hero { padding: 30px; }
+    .eyebrow {
+      display: inline-flex;
+      padding: 6px 10px;
+      border-radius: 999px;
+      border: 1px solid rgba(237, 175, 184, 0.36);
+      background: rgba(237, 175, 184, 0.16);
+      font-size: 12px;
+      font-weight: 700;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+    }
+    h1 { margin: 12px 0 10px; font-size: clamp(2.1rem, 4vw, 3.8rem); line-height: 0.98; }
+    h2 { margin: 0 0 10px; font-size: 1.25rem; }
+    h3 { margin: 18px 0 8px; font-size: 1rem; }
+    p, li { color: var(--muted); }
+    .grid { display: grid; grid-template-columns: 1.2fr 0.8fr; gap: 18px; margin-top: 18px; }
+    .stack { display: grid; gap: 18px; }
+    .card { padding: 22px; }
+    ul { margin: 10px 0 0; padding-left: 18px; }
+    li + li { margin-top: 8px; }
+    .chips { display: flex; flex-wrap: wrap; gap: 10px; margin-top: 12px; }
+    .chip {
+      padding: 7px 10px;
+      border-radius: 999px;
+      border: 1px solid var(--line);
+      background: rgba(255,255,255,0.48);
+      font-size: 13px;
+    }
+    .swatches {
+      display: grid;
+      gap: 10px;
+      grid-template-columns: repeat(5, minmax(0, 1fr));
+      margin-top: 12px;
+    }
+    .swatch { border: 1px solid var(--line); border-radius: 16px; overflow: hidden; background: rgba(255,255,255,0.52); }
+    .swatch .color { height: 54px; }
+    .swatch .meta { padding: 10px; font-size: 12px; color: var(--muted); }
+    .swatch .meta strong { display: block; color: var(--text); margin-bottom: 2px; }
+    .table {
+      display: grid;
+      gap: 10px;
+      margin-top: 12px;
+    }
+    .row {
+      display: grid;
+      grid-template-columns: 190px 1fr;
+      gap: 12px;
+      padding-top: 10px;
+      border-top: 1px solid var(--line);
+    }
+    .row:first-child { border-top: 0; padding-top: 0; }
+    .row strong { color: var(--text); }
+    .footer { margin-top: 18px; color: var(--muted); font-size: 14px; text-align: center; }
+    @media (max-width: 900px) {
+      .grid { grid-template-columns: 1fr; }
+      .row { grid-template-columns: 1fr; }
+      .swatches { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+    }
+  </style>
+</head>
+<body>
+  <main class="wrap">
+    <section class="hero">
+      <span class="eyebrow">Client Requirements</span>
+      <h1>Sonder client integration requirements for Plex-like library sync, Libby-like browsing, and book-native support.</h1>
+      <p>
+        This document is the shared contract between the server and client teams. The client should stay light,
+        discover the server easily on LAN, connect cleanly over Tailscale or a manual URL, and render a polished
+        media library experience for video, ebooks, and audiobooks. The client should consume server-authored Plex
+        import context and Sonder's native audiobook index instead of rediscovering or scraping metadata itself.
+      </p>
+      <div class="chips">
+        <span class="chip">LAN Bonjour discovery</span>
+        <span class="chip">Tailscale / MagicDNS URLs</span>
+        <span class="chip">Books + audiobooks</span>
+        <span class="chip">Theme sync</span>
+        <span class="chip">Progress sync</span>
+        <span class="chip">Cached shelves</span>
+      </div>
+    </section>
+
+    <div class="grid">
+      <section class="stack">
+        <article class="card">
+          <h2>Goals</h2>
+          <ul>
+            <li>Make connecting to a Sonder server as easy as opening a Plex or Libby-style app and seeing a library immediately.</li>
+            <li>Support local LAN discovery and explicit Tailscale-based remote access without requiring the client to scan networks aggressively.</li>
+            <li>Keep the client fast, battery-friendly, and cache-first.</li>
+            <li>Show books, audiobooks, movies, and TV in a way that feels native to each category.</li>
+            <li>Use server-authored metadata and artwork as the source of truth.</li>
+            <li>Trust `.sonder/sonder-context.json` and the server's local audiobook cache for migrated libraries.</li>
+          </ul>
+        </article>
+
+        <article class="card">
+          <h2>Connection Modes</h2>
+          <div class="table">
+            <div class="row">
+              <strong>Local</strong>
+              <span>Loopback access for the host Mac. Always supported. No pairing required for localhost.</span>
+            </div>
+            <div class="row">
+              <strong>LAN</strong>
+              <span>Auto-discover via Bonjour/mDNS when the server allows LAN sharing. Client should use the discovery payload and server TXT records. Default posture is open access unless the server later enables restrictions.</span>
+            </div>
+            <div class="row">
+              <strong>Tailscale</strong>
+              <span>Explicit server URL using MagicDNS or the tailnet IP. The client should not assume automatic discovery; it should consume a provided URL and only use a token if the server requires one.</span>
+            </div>
+            <div class="row">
+              <strong>Manual</strong>
+              <span>User-entered URL for cases where discovery is unavailable or the server is remote/private.</span>
+            </div>
+          </div>
+        </article>
+
+        <article class="card">
+          <h2>API Contract</h2>
+          <h3>Required endpoints</h3>
+          <ul>
+            <li><code>GET /api/health</code> returns server health, port, and availability state.</li>
+            <li><code>GET /api/library</code> returns the full catalog, progress records, server settings, and theme snapshot.</li>
+            <li><code>GET /api/discovery</code> returns connection modes, capabilities, endpoints, and theme details for fast onboarding.</li>
+            <li><code>POST /api/progress/{id}</code> updates resume state.</li>
+            <li><code>GET /stream/{id}</code> streams playable media when supported.</li>
+          </ul>
+          <h3>Discovery payload expectations</h3>
+          <ul>
+            <li>Must include whether LAN sharing is enabled.</li>
+            <li>Should include a local URL and, when available, a LAN URL or a clear Tailscale hint.</li>
+            <li>Should include capabilities for books, audiobooks, progress sync, media streaming, and theme sync.</li>
+            <li>Should include theme token values so client surfaces can match the host.</li>
+            <li>Should indicate when a library is backed by Plex-imported context or native Sonder audiobook records.</li>
+          </ul>
+        </article>
+
+        <article class="card">
+          <h2>Functional Requirements</h2>
+          <ul>
+            <li>Cache the last successful server response and show shelves immediately while refreshing in the background.</li>
+            <li>Display connection state clearly: local, LAN discovered, Tailscale connected, offline, unauthorized, or stale.</li>
+            <li>Surface ebook and audiobook shelves separately from video shelves.</li>
+            <li>Use server cover art and summaries when available, with graceful fallback to local artwork or placeholders.</li>
+            <li>Support resume progress for all playable media types.</li>
+            <li>Preserve browsing when the server is temporarily offline.</li>
+            <li>Apply the shared earthy theme tokens consistently across navigation, surfaces, badges, and cards, using sage as the base and Cherry Blossom only as an accent.</li>
+            <li>Render migrated Plex libraries immediately from server-cached context without reindexing on device.</li>
+            <li>Browse audiobooks entirely through Sonder's native server APIs and cached index data.</li>
+          </ul>
+        </article>
+
+        <article class="card">
+          <h2>Definition Of Success</h2>
+          <ul>
+            <li>Open the client, discover or enter the server, and load the library without manual cleanup.</li>
+            <li>Start a video, ebook, or audiobook, force close the client, reopen it, and resume at the same position.</li>
+            <li>Have the server remember the latest progress so another device can continue from the same point.</li>
+            <li>Keep progress, shelves, and artwork stable when media lives on a remote server or tailnet host.</li>
+            <li>Let the client cache locally so it can relaunch quickly even if the server is temporarily unavailable.</li>
+          </ul>
+        </article>
+      </section>
+
+      <aside class="stack">
+        <article class="card">
+          <h2>Theme Baseline</h2>
+          <p>The client should inherit the same earthy palette used by the macOS app and server docs, with sage as the base tone.</p>
+          <div class="swatches">
+            <div class="swatch"><div class="color" style="background:#B0C4B1"></div><div class="meta"><strong>Ash Grey</strong>#B0C4B1</div></div>
+            <div class="swatch"><div class="color" style="background:#F7E1D7"></div><div class="meta"><strong>Powder Petal</strong>#F7E1D7</div></div>
+            <div class="swatch"><div class="color" style="background:#DEDBD2"></div><div class="meta"><strong>Dust Grey</strong>#DEDBD2</div></div>
+            <div class="swatch"><div class="color" style="background:#EDAFB8"></div><div class="meta"><strong>Cherry Blossom</strong>#EDAFB8</div></div>
+            <div class="swatch"><div class="color" style="background:#4A5759"></div><div class="meta"><strong>Iron Grey</strong>#4A5759</div></div>
+          </div>
+        </article>
+
+        <article class="card">
+          <h2>Minimum UI Surfaces</h2>
+          <ul>
+            <li>Server picker / onboarding screen</li>
+            <li>Home shelves with cached continue-watching</li>
+            <li>Search and filter across the catalog</li>
+            <li>Book shelf and audiobook shelf</li>
+            <li>Title detail with artwork, metadata, and resume</li>
+            <li>Server status and connection health view</li>
+            <li>Settings for manual URL, token, and sync preference</li>
+            <li>Server-authored Plex context display for migrated libraries</li>
+            <li>Native audiobook browsing backed by Sonder's own server index</li>
+          </ul>
+        </article>
+
+        <article class="card">
+          <h2>Non-Goals For v1</h2>
+          <ul>
+            <li>No automatic internet-wide discovery.</li>
+            <li>No client-side metadata scraping.</li>
+            <li>No background network crawling on random subnets.</li>
+            <li>No public server directory.</li>
+            <li>No forcing the user to manage two separate libraries for the same server.</li>
+            <li>No requiring the client to understand Plex bundle structure or an external audiobook server.</li>
+          </ul>
+        </article>
+      </aside>
+    </div>
+
+    <p class="footer">
+      Use this as the shared integration contract for the client team. The server should expose enough discovery and
+      metadata for the client to feel easy to connect, easy to browse, and consistent with the rest of Sonder.
+    </p>
+  </main>
+</body>
+</html>

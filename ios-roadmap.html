@@ -1,0 +1,396 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Sonder iOS Roadmap</title>
+  <style>
+    :root {
+      color-scheme: dark;
+      --bg: #f7e1d7;
+      --panel: rgba(255, 249, 245, 0.86);
+      --panel2: #dedbd2;
+      --line: #b0c4b1;
+      --text: #4a5759;
+      --muted: rgba(74, 87, 89, 0.78);
+      --accent: #edafb8;
+      --accent2: #b0c4b1;
+      --warn: #c97f68;
+      --radius: 22px;
+      --shadow: 0 28px 80px rgba(0, 0, 0, 0.34);
+    }
+
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      font: 16px/1.55 -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      color: var(--text);
+      background:
+        radial-gradient(circle at top, rgba(237, 175, 184, 0.28), transparent 22%),
+        radial-gradient(circle at 100% 0%, rgba(176, 196, 177, 0.22), transparent 28%),
+        linear-gradient(180deg, #f7e1d7 0%, var(--bg) 40%, #dedbd2 100%);
+    }
+
+    a { color: inherit; }
+    .wrap { max-width: 1180px; margin: 0 auto; padding: 28px 20px 56px; }
+    .hero {
+      border: 1px solid var(--line);
+      border-radius: calc(var(--radius) + 10px);
+      background: linear-gradient(160deg, rgba(255, 249, 245, 0.94), rgba(247, 225, 215, 0.9));
+      box-shadow: var(--shadow);
+      padding: 34px;
+    }
+    .eyebrow {
+      display: inline-flex;
+      padding: 7px 12px;
+      border-radius: 999px;
+      border: 1px solid rgba(237, 175, 184, 0.35);
+      background: rgba(237, 175, 184, 0.14);
+      color: var(--accent);
+      font-size: 12px;
+      font-weight: 700;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+    }
+    h1 {
+      margin: 14px 0 10px;
+      font-size: clamp(2.2rem, 5vw, 4.2rem);
+      line-height: 0.96;
+      letter-spacing: -0.04em;
+    }
+    .lede { max-width: 840px; color: var(--muted); margin: 0; font-size: 1.06rem; }
+    .grid {
+      display: grid;
+      grid-template-columns: 1.2fr 0.8fr;
+      gap: 18px;
+      margin-top: 18px;
+      align-items: start;
+    }
+    .card {
+      border: 1px solid var(--line);
+      border-radius: var(--radius);
+      background: var(--panel);
+      box-shadow: var(--shadow);
+      padding: 24px;
+    }
+    h2, h3 { margin-top: 0; }
+    h2 { margin-bottom: 10px; font-size: 1.35rem; }
+    p, li { color: var(--muted); }
+    ul { margin: 10px 0 0; padding-left: 18px; }
+    li + li { margin-top: 8px; }
+    .device {
+      border-radius: 28px;
+      border: 1px solid var(--line);
+      background:
+        linear-gradient(180deg, rgba(255,255,255,0.05), rgba(255,255,255,0.01)),
+        var(--panel2);
+      padding: 20px;
+      box-shadow: inset 0 1px 0 rgba(255,255,255,0.04);
+    }
+    .screen {
+      border-radius: 22px;
+      overflow: hidden;
+      border: 1px solid #b0c4b1;
+      background: linear-gradient(180deg, #f7e1d7, #dedbd2);
+    }
+    .screen-top {
+      padding: 18px;
+      background: linear-gradient(180deg, rgba(237, 175, 184, 0.16), transparent);
+      border-bottom: 1px solid var(--line);
+    }
+    .screen-top .title { font-size: 1.05rem; font-weight: 700; }
+    .screen-top .sub { color: var(--muted); font-size: 14px; margin-top: 4px; }
+    .rows { padding: 12px; display: grid; gap: 10px; }
+    .row {
+      display: flex;
+      justify-content: space-between;
+      gap: 12px;
+      padding: 12px 14px;
+      border-radius: 16px;
+      border: 1px solid rgba(255,255,255,0.06);
+      background: rgba(255,255,255,0.03);
+    }
+    .row strong { display: block; }
+    .row span { color: var(--muted); font-size: 14px; }
+    .pill {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      border-radius: 999px;
+      padding: 6px 10px;
+      font-size: 12px;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 0.04em;
+      border: 1px solid var(--line);
+      white-space: nowrap;
+    }
+    .pill.good { color: #637865; background: rgba(176, 196, 177, 0.18); }
+    .pill.warn { color: var(--warn); background: rgba(237, 175, 184, 0.12); }
+    .phases {
+      display: grid;
+      gap: 14px;
+      margin-top: 12px;
+    }
+    .phase {
+      border-radius: 18px;
+      border: 1px solid var(--line);
+      background: rgba(255,255,255,0.02);
+      padding: 18px;
+    }
+    .phase-head {
+      display: flex;
+      justify-content: space-between;
+      gap: 12px;
+      align-items: center;
+      margin-bottom: 10px;
+    }
+    .phase h3 { margin: 0; font-size: 1.05rem; }
+    .footer {
+      margin-top: 18px;
+      color: var(--muted);
+      font-size: 14px;
+      text-align: center;
+    }
+    .two-col {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 18px;
+      margin-top: 18px;
+    }
+    .compact { padding: 18px; }
+    .palette-grid {
+      display: grid;
+      gap: 10px;
+      grid-template-columns: repeat(5, minmax(0, 1fr));
+      margin-top: 12px;
+    }
+    .swatch {
+      border: 1px solid var(--line);
+      border-radius: 16px;
+      overflow: hidden;
+      background: rgba(255,255,255,0.5);
+    }
+    .chip-color { height: 58px; }
+    .swatch .meta {
+      padding: 10px;
+      font-size: 12px;
+      color: var(--muted);
+    }
+    .swatch .meta strong { display:block; color: var(--text); margin-bottom: 2px; }
+    @media (max-width: 960px) {
+      .grid, .two-col { grid-template-columns: 1fr; }
+      .palette-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+      .phase-head { flex-direction: column; align-items: flex-start; }
+    }
+  </style>
+</head>
+<body>
+  <main class="wrap">
+    <section class="hero">
+      <span class="eyebrow">iOS client roadmap</span>
+      <h1>A lightweight client that feels like a great library app, not a mini desktop server.</h1>
+      <p class="lede">
+        The iOS app should be fast to open, cheap to sync, and mostly a viewer/runner for server-authored discovery.
+        Think Libby-style simplicity for browsing and reading, but adapted to media libraries, with the server doing the
+        expensive indexing and the phone staying battery-friendly. It should also trust the server's cached Plex-imported
+        context and native audiobook index instead of rediscovering everything itself.
+      </p>
+    </section>
+
+    <div class="grid">
+      <section class="card">
+        <h2>Client philosophy</h2>
+        <ul>
+          <li>Keep local state small and cache-first.</li>
+          <li>Prefer server-generated shelves and curated lists over client-side discovery logic.</li>
+          <li>Load artwork, metadata, and progress lazily so the app feels immediate.</li>
+          <li>Make remote access obvious, not hidden behind networking jargon.</li>
+          <li>Optimize for one-handed use and quick continuation of what was already in progress.</li>
+          <li>Make the book experience feel native, with proper ebook and audiobook surfaces.</li>
+          <li>Treat Plex-imported show context and Sonder-authored audiobook metadata as server-owned cache, not client work.</li>
+        </ul>
+
+        <div class="two-col">
+          <div class="card compact">
+            <h3>Low resource goals</h3>
+            <ul>
+              <li>Small sync payloads.</li>
+              <li>Incremental refreshes.</li>
+              <li>Minimal background churn.</li>
+              <li>Respect system power and network conditions.</li>
+            </ul>
+          </div>
+          <div class="card compact">
+            <h3>Server does the heavy lifting</h3>
+            <ul>
+              <li>Search and ranking.</li>
+              <li>Recommended lists.</li>
+              <li>Availability state.</li>
+              <li>Federated server awareness.</li>
+            </ul>
+          </div>
+        </div>
+      </section>
+
+      <section class="card">
+        <h2>Theme Tokens</h2>
+        <p>The iOS client should inherit the same earthy palette as the macOS host, with sage as the base tone and the rest of the palette used as supporting variations.</p>
+        <div class="palette-grid">
+          <div class="swatch"><div class="chip-color" style="background:#B0C4B1"></div><div class="meta"><strong>Ash Grey</strong>#B0C4B1</div></div>
+          <div class="swatch"><div class="chip-color" style="background:#F7E1D7"></div><div class="meta"><strong>Powder Petal</strong>#F7E1D7</div></div>
+          <div class="swatch"><div class="chip-color" style="background:#DEDBD2"></div><div class="meta"><strong>Dust Grey</strong>#DEDBD2</div></div>
+          <div class="swatch"><div class="chip-color" style="background:#EDAFB8"></div><div class="meta"><strong>Cherry Blossom</strong>#EDAFB8</div></div>
+          <div class="swatch"><div class="chip-color" style="background:#4A5759"></div><div class="meta"><strong>Iron Grey</strong>#4A5759</div></div>
+        </div>
+      </section>
+
+      <aside class="device">
+        <div class="screen">
+          <div class="screen-top">
+            <div class="title">Sonder</div>
+            <div class="sub">Cached, curated, and ready when the network is not.</div>
+          </div>
+          <div class="rows">
+            <div class="row">
+              <div>
+                <strong>Continue Watching</strong>
+                <span>Resume instantly from server-synced progress.</span>
+              </div>
+              <span class="pill good">Priority</span>
+            </div>
+            <div class="row">
+              <div>
+                <strong>Recently Added</strong>
+                <span>Server pushes fresh shelves instead of forcing a scan.</span>
+              </div>
+              <span class="pill good">Curated</span>
+            </div>
+            <div class="row">
+              <div>
+                <strong>Remote Library</strong>
+                <span>Browse trusted servers with explicit status and trust.</span>
+              </div>
+              <span class="pill warn">Tailscale</span>
+            </div>
+          </div>
+        </div>
+      </aside>
+    </div>
+
+    <div class="two-col">
+      <section class="card">
+        <h2>Roadmap</h2>
+        <div class="phases">
+          <div class="phase">
+            <div class="phase-head">
+              <h3>Phase 1: fast first launch</h3>
+              <span class="pill good">Now</span>
+            </div>
+            <ul>
+              <li>Login or connect to an existing server using a URL, with tokens only when the operator enables them.</li>
+              <li>Show cached shelves immediately, even before the network returns.</li>
+              <li>Render continue-watching and local favorites without waiting for a full sync.</li>
+              <li>Keep the initial home screen simple and stable.</li>
+              <li>Adopt the shared earthy palette so the iPhone and iPad shell visually matches the macOS host, with sage as the base and Cherry Blossom reserved for accent moments.</li>
+            </ul>
+          </div>
+
+          <div class="phase">
+            <div class="phase-head">
+              <h3>Phase 2: remote browsing</h3>
+              <span class="pill good">Next</span>
+            </div>
+            <ul>
+              <li>Browse server-authored collections, recommendations, and library sections.</li>
+              <li>Support search that runs on the server with compact result payloads.</li>
+              <li>Show availability clearly when remote content is offline.</li>
+              <li>Remember which servers are trusted and what sync policy they use.</li>
+              <li>Show separate ebook and audiobook collections so the UI matches how people actually use the library.</li>
+              <li>Keep the theme tokens and component language in sync with the macOS roadmap so both clients feel coherent.</li>
+              <li>Render cached server context for migrated Plex libraries without forcing a fresh discovery pass on device.</li>
+            </ul>
+          </div>
+
+          <div class="phase">
+            <div class="phase-head">
+              <h3>Phase 3: syncing without bloat</h3>
+              <span class="pill warn">Later</span>
+            </div>
+            <ul>
+              <li>Sync watch progress, selected shelves, and pinned titles first.</li>
+              <li>Offer manual download for offline use, with clear storage control.</li>
+              <li>Fetch artwork and metadata progressively based on screen size and visibility.</li>
+              <li>Use background refresh sparingly and only when the device is likely to benefit.</li>
+              <li>Surface chapter, cover, and series metadata when it improves the reading/listening experience.</li>
+              <li>Consume server-resolved book and audiobook art instead of redoing Wikipedia lookups on-device.</li>
+              <li>Trust `.sonder/sonder-context.json` and the server's audiobook index for migrated libraries instead of rescraping local media on the phone.</li>
+            </ul>
+          </div>
+
+          <div class="phase">
+            <div class="phase-head">
+              <h3>Phase 4: multi-server and access modes</h3>
+              <span class="pill warn">Later</span>
+            </div>
+            <ul>
+              <li>Handle local, Tailscale-private, and public-trusted servers in the same UI, with restrictions added only when the server asks for them.</li>
+              <li>Let users add servers explicitly and label them by trust zone, but keep the default flow open and simple.</li>
+              <li>Support switching between servers without losing local cache data.</li>
+              <li>Prepare for federation so one client can see multiple libraries cleanly.</li>
+              <li>Continue to work when the server has imported Plex context or native audiobook records and the client only needs to render.</li>
+            </ul>
+          </div>
+        </div>
+      </section>
+
+      <section class="card">
+        <h2>Success Criteria</h2>
+        <ul>
+          <li>Open the app, reconnect to the server, and show cached shelves immediately.</li>
+          <li>Start a video, ebook, or audiobook, force close the app, reopen it, and land back at the correct resume position.</li>
+          <li>Sync progress back to the server so another client can continue from the latest saved state.</li>
+          <li>Handle local, LAN, and Tailscale URLs without making the user think about networking.</li>
+          <li>Keep the app responsive while loading artwork and metadata in the background.</li>
+          <li>Respect server-provided restrictions only when they are explicitly enabled.</li>
+          <li>Open a migrated Plex-backed library and show cached shelves immediately from server-authored context.</li>
+          <li>Browse native Sonder audiobook records without any external audiobook server dependency.</li>
+        </ul>
+      </section>
+
+      <section class="card">
+        <h2>Missing client features</h2>
+        <ul>
+          <li>Server picker and trust onboarding.</li>
+          <li>Cached home shelves and offline browse mode.</li>
+          <li>Server-driven search and discovery.</li>
+          <li>Remote status badges and retry behavior.</li>
+          <li>Download queue and storage manager.</li>
+          <li>Progress sync and resume across devices.</li>
+          <li>Tailscale-aware connection hints.</li>
+          <li>Accessibility-first, low-friction navigation.</li>
+          <li>Dedicated ebook reader and audiobook detail surfaces.</li>
+          <li>Book-native artwork, chapter, and collection treatment.</li>
+          <li>Theme preset support that mirrors the macOS color tokens and documentation.</li>
+          <li>Server-authored Plex import context should render immediately on first open.</li>
+          <li>Native audiobook browsing should be powered by Sonder's own audiobook index and API.</li>
+        </ul>
+
+        <h2 style="margin-top: 22px;">What not to do first</h2>
+        <ul>
+          <li>Do not build a heavyweight local indexing engine on iPhone.</li>
+          <li>Do not rely on constant polling or background scanning.</li>
+          <li>Do not surface raw server complexity before the library UI is polished.</li>
+          <li>Do not make public sharing the default assumption.</li>
+          <li>Do not force the client to solve metadata enrichment that belongs on the server.</li>
+        </ul>
+      </section>
+    </div>
+
+    <p class="footer">
+      The iOS client should mostly be a fast, reliable window into the server’s curated view of the library, with
+      optional offline support and very deliberate network behavior.
+    </p>
+  </main>
+</body>
+</html>

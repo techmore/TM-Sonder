@@ -1,6 +1,7 @@
 import AppKit
 import AVFoundation
 import Combine
+import CryptoKit
 import SwiftUI
 import UniformTypeIdentifiers
 
@@ -22,16 +23,12 @@ struct ContentView: View {
         NavigationSplitView {
             Sidebar(selection: $selection, library: library)
                 .navigationSplitViewColumnWidth(min: 220, ideal: 240, max: 280)
-        } content: {
-            contentView
-                .navigationSplitViewColumnWidth(min: 780, ideal: 900, max: 1120)
         } detail: {
-            detailView
-                .navigationSplitViewColumnWidth(min: 430, ideal: 520, max: 680)
+            contentView
         }
         .tint(SonderTheme.accent)
         .foregroundStyle(SonderTheme.text)
-        .frame(minWidth: 1320, idealWidth: 1480, minHeight: 820, idealHeight: 920)
+        .frame(minWidth: 1040, idealWidth: 1240, minHeight: 820, idealHeight: 920)
         .fileImporter(
             isPresented: $showingImporter,
             allowedContentTypes: SonderMediaFormat.importTypes,
@@ -49,7 +46,7 @@ struct ContentView: View {
         .toolbar {
             ToolbarItemGroup(placement: .primaryAction) {
                 Button {
-                    NSWorkspace.shared.open(URL(string: "http://127.0.0.1:8797")!)
+                    NSWorkspace.shared.open(URL(string: "http://127.0.0.1:\(library.serverSettings.port)")!)
                 } label: {
                     Label("Web", systemImage: "network")
                 }
@@ -90,6 +87,10 @@ struct ContentView: View {
             )
         case .tvShows:
             TVShowsView(library: library, selectedItemID: $selectedItemID)
+        case .audiobooks:
+            AudiobooksView(library: library, selectedItemID: $selectedItemID)
+        case .ebooks:
+            BooksView(library: library, selectedItemID: $selectedItemID)
         case .continueWatching:
             ContinueWatchingView(library: library, selectedItemID: $selectedItemID)
         case .collections:
@@ -98,22 +99,6 @@ struct ContentView: View {
             ServerDashboard(library: library)
         case .about:
             AboutSonderView()
-        }
-    }
-
-    @ViewBuilder
-    private var detailView: some View {
-        switch selection ?? .library {
-        case .server:
-            EmptyDetailView(title: "Local Server", subtitle: "The web interface and API are hosted from this Mac on port 8797.", icon: "network")
-        case .about:
-            EmptyDetailView(title: "TM Sonder", subtitle: "A private macOS media server for movies, shows, documentaries, and watched progress.", icon: "play.tv")
-        default:
-            if let selectedItemID, let item = library.item(id: selectedItemID) {
-                MediaDetailView(item: item, library: library)
-            } else {
-                EmptyDetailView(title: "Select Media", subtitle: "Choose a title to inspect metadata, progress, stream URL, and collection options.", icon: "film")
-            }
         }
     }
 }
@@ -128,6 +113,10 @@ struct Sidebar: View {
                 .tag(SonderSection.library)
             Label("TV Shows", systemImage: "tv")
                 .tag(SonderSection.tvShows)
+            Label("Audiobooks", systemImage: "headphones")
+                .tag(SonderSection.audiobooks)
+            Label("Books", systemImage: "book")
+                .tag(SonderSection.ebooks)
             Label("Continue Watching", systemImage: "play.rectangle")
                 .tag(SonderSection.continueWatching)
             Label("Collections", systemImage: "folder")
@@ -191,7 +180,7 @@ struct LibraryView: View {
                 Text("Sonder Library")
                     .font(.largeTitle.weight(.bold))
                     .foregroundStyle(SonderTheme.text)
-                Text("Local movies, shows, and documentaries streamed from this Mac")
+        Text("Local movies, shows, documentaries, books, and audiobooks streamed from this Mac")
                     .foregroundStyle(SonderTheme.textLight)
             }
 
@@ -292,48 +281,571 @@ struct ContinueWatchingView: View {
     }
 }
 
+enum LibraryDisplayMode: String, CaseIterable, Identifiable {
+    case grid
+    case spreadsheet
+
+    var id: String { rawValue }
+
+    var label: String {
+        switch self {
+        case .grid: "Grid"
+        case .spreadsheet: "Spreadsheet"
+        }
+    }
+
+    var icon: String {
+        switch self {
+        case .grid: "square.grid.2x2"
+        case .spreadsheet: "tablecells"
+        }
+    }
+}
+
+struct LibraryDisplayModePicker: View {
+    @Binding var mode: LibraryDisplayMode
+
+    var body: some View {
+        Picker("View", selection: $mode) {
+            ForEach(LibraryDisplayMode.allCases) { mode in
+                Label(mode.label, systemImage: mode.icon).tag(mode)
+            }
+        }
+        .pickerStyle(.segmented)
+        .frame(width: 260)
+        .labelsHidden()
+    }
+}
+
 struct TVShowsView: View {
     @ObservedObject var library: SonderLibrary
     @Binding var selectedItemID: UUID?
+    @State private var displayMode: LibraryDisplayMode = .grid
+    @State private var searchText = ""
+    @State private var selectedShowName: String?
+
+    private var selectedShow: SonderTVShowGroup? {
+        guard let selectedShowName else { return nil }
+        return library.tvShowGroups.first { $0.name == selectedShowName }
+    }
+
+    private var filteredShows: [SonderTVShowGroup] {
+        let trimmed = searchText.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard trimmed.isEmpty == false else { return library.tvShowGroups }
+        return library.tvShowGroups.compactMap { show in
+            if show.name.localizedCaseInsensitiveContains(trimmed) {
+                return show
+            }
+            let seasons = show.seasons.compactMap { season -> SonderTVSeasonGroup? in
+                let matchingEpisodes = season.episodes.filter { $0.searchText.localizedCaseInsensitiveContains(trimmed) }
+                guard matchingEpisodes.isEmpty == false else { return nil }
+                return SonderTVSeasonGroup(seasonNumber: season.seasonNumber, episodes: matchingEpisodes)
+            }
+            guard seasons.isEmpty == false else { return nil }
+            return SonderTVShowGroup(name: show.name, seasons: seasons)
+        }
+    }
 
     var body: some View {
-        List {
-            ForEach(library.tvShowGroups) { show in
-                Section {
-                    ForEach(show.seasons) { season in
+        Group {
+            if let selectedShow {
+                TVShowDetailPage(show: selectedShow, library: library) { item in
+                    selectedItemID = item.id
+                } back: {
+                    selectedShowName = nil
+                }
+            } else {
+                VStack(spacing: 0) {
+                    libraryModeBar(title: "TV Shows", count: filteredShows.count, countLabel: "shows", mode: $displayMode, searchText: $searchText, searchPrompt: "Search shows, seasons, or episodes")
+                    switch displayMode {
+            case .grid:
+                ScrollView {
+                    if filteredShows.isEmpty {
+                        EmptyLibraryMessage(text: searchText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? "Add a TV Shows library folder to group episodes by show and season." : "No shows match this search.")
+                            .padding(20)
+                    } else {
+                        LazyVGrid(columns: [GridItem(.adaptive(minimum: 240, maximum: 300), spacing: 16)], spacing: 16) {
+                            ForEach(filteredShows) { show in
+                                TVShowCard(show: show, library: library) {
+                                    selectedShowName = show.name
+                                } play: { item in
+                                    library.play(item)
+                                }
+                            }
+                        }
+                        .padding(20)
+                    }
+                }
+            case .spreadsheet:
+                List {
+                    ForEach(filteredShows) { show in
                         DisclosureGroup {
-                            ForEach(season.episodes) { item in
-                                MediaListRow(item: item, detail: library.progressLabel(for: item)) {
-                                    selectedItemID = item.id
+                            ForEach(show.seasons) { season in
+                                DisclosureGroup {
+                                    ForEach(season.episodes) { item in
+                                        MediaListRow(item: item, detail: library.progressLabel(for: item)) {
+                                            selectedItemID = item.id
+                                        }
+                                    }
+                                } label: {
+                                    HStack {
+                                        Label(season.label, systemImage: "rectangle.stack")
+                                        Spacer()
+                                        Text("\(season.episodes.count) episodes")
+                                            .font(.caption.monospacedDigit())
+                                            .foregroundStyle(SonderTheme.textLight)
+                                    }
                                 }
                             }
                         } label: {
                             HStack {
-                                Label(season.label, systemImage: "rectangle.stack")
+                                Label(show.name, systemImage: "tv")
+                                Button {
+                                    selectedShowName = show.name
+                                } label: {
+                                    Label("Open", systemImage: "arrow.right")
+                                }
+                                .buttonStyle(.borderless)
                                 Spacer()
-                                Text("\(season.episodes.count) episodes")
+                                Text("\(show.seasons.count) seasons")
+                                    .font(.caption.monospacedDigit())
+                                    .foregroundStyle(SonderTheme.textLight)
+                                Text("\(show.displayCount) episodes")
                                     .font(.caption.monospacedDigit())
                                     .foregroundStyle(SonderTheme.textLight)
                             }
                         }
                     }
-                } header: {
-                    HStack {
-                        Text(show.name)
-                        Spacer()
-                        Text("\(show.episodeCount) episodes")
-                            .font(.caption.monospacedDigit())
+                    if filteredShows.isEmpty {
+                        EmptyLibraryMessage(text: searchText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? "Add a TV Shows library folder to group episodes by show and season." : "No shows match this search.")
+                    }
+                }
+                .scrollContentBackground(.hidden)
                     }
                 }
             }
-            if library.tvShowGroups.isEmpty {
-                Text("Add a TV Shows library folder to group episodes by show and season.")
+        }
+        .navigationTitle(selectedShow?.name ?? "TV Shows")
+        .background(SonderTheme.background)
+    }
+}
+
+struct TVShowDetailPage: View {
+    let show: SonderTVShowGroup
+    @ObservedObject var library: SonderLibrary
+    let selectEpisode: (SonderMediaItem) -> Void
+    let back: () -> Void
+
+    private var episodes: [SonderMediaItem] {
+        show.seasons.flatMap(\.episodes)
+    }
+
+    private var realEpisodes: [SonderMediaItem] {
+        episodes.filter { $0.isPlaceholder == false }
+    }
+
+    private var representativeEpisode: SonderMediaItem? {
+        episodes.first { $0.localPosterPath != nil } ?? realEpisodes.first ?? episodes.first
+    }
+
+    private var playableCount: Int {
+        realEpisodes.filter(\.hasFile).count
+    }
+
+    private var totalRuntime: Double {
+        realEpisodes.map(\.durationSeconds).filter { $0 > 0 }.reduce(0, +)
+    }
+
+    var body: some View {
+        ScrollView {
+            LazyVStack(alignment: .leading, spacing: 18) {
+                Button(action: back) {
+                    Label("TV Shows", systemImage: "chevron.left")
+                }
+                .buttonStyle(.borderless)
+
+                HStack(alignment: .top, spacing: 22) {
+                    if let representativeEpisode {
+                        PosterView(item: representativeEpisode)
+                            .frame(width: 180, height: 270)
+                            .clipShape(RoundedRectangle(cornerRadius: 8))
+                            .onAppear {
+                                library.prioritizeAssets(for: representativeEpisode.id)
+                            }
+                    } else {
+                        RoundedRectangle(cornerRadius: 8)
+                            .fill(SonderTheme.surfaceDeep)
+                            .frame(width: 180, height: 270)
+                            .overlay {
+                                Image(systemName: "tv")
+                                    .font(.system(size: 46, weight: .semibold))
+                                    .foregroundStyle(SonderTheme.accent)
+                            }
+                    }
+
+                    VStack(alignment: .leading, spacing: 14) {
+                        Text(show.name)
+                            .font(.largeTitle.weight(.bold))
+                            .foregroundStyle(SonderTheme.text)
+                            .lineLimit(2)
+                        Text(show.displayCount == 0 ? "Scanning show details" : "\(show.seasons.count) season(s), \(show.displayCount) episode(s)")
+                            .font(.title3)
+                            .foregroundStyle(SonderTheme.textLight)
+
+                        HStack(spacing: 10) {
+                            TVShowStatTile(label: "Seasons", value: "\(show.seasons.count)", icon: "rectangle.stack")
+                            TVShowStatTile(label: "Episodes", value: "\(show.displayCount)", icon: "play.rectangle")
+                            TVShowStatTile(label: "Playable", value: "\(playableCount)", icon: "play.circle")
+                            TVShowStatTile(label: "Runtime", value: totalRuntime > 0 ? SonderTime.format(totalRuntime) : "Pending", icon: "clock")
+                        }
+                    }
+                }
+
+                DashboardPanel(title: "Seasons") {
+                    VStack(alignment: .leading, spacing: 14) {
+                        ForEach(show.seasons) { season in
+                            TVSeasonDetailSection(season: season, library: library, selectEpisode: selectEpisode)
+                        }
+                    }
+                }
+            }
+            .padding(24)
+        }
+        .background(SonderTheme.background)
+    }
+}
+
+struct TVShowStatTile: View {
+    let label: String
+    let value: String
+    let icon: String
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Label(label, systemImage: icon)
+                .font(.caption)
+                .foregroundStyle(SonderTheme.textLight)
+            Text(value)
+                .font(.headline.monospacedDigit())
+                .foregroundStyle(SonderTheme.text)
+        }
+        .frame(minWidth: 116, alignment: .leading)
+        .padding(12)
+        .background(SonderTheme.surface, in: RoundedRectangle(cornerRadius: 8))
+        .overlay(RoundedRectangle(cornerRadius: 8).stroke(SonderTheme.border))
+    }
+}
+
+struct TVSeasonDetailSection: View {
+    let season: SonderTVSeasonGroup
+    @ObservedObject var library: SonderLibrary
+    let selectEpisode: (SonderMediaItem) -> Void
+
+    private var visibleEpisodes: [SonderMediaItem] {
+        let realEpisodes = season.episodes.filter { $0.isPlaceholder == false }
+        return realEpisodes.isEmpty ? season.episodes : realEpisodes
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack {
+                Label(season.label, systemImage: "rectangle.stack")
+                    .font(.headline)
+                Spacer()
+                Text("\(visibleEpisodes.count) episode(s)")
+                    .font(.caption.monospacedDigit())
                     .foregroundStyle(SonderTheme.textLight)
             }
+
+            ForEach(visibleEpisodes) { episode in
+                HStack(spacing: 12) {
+                    Button {
+                        selectEpisode(episode)
+                        library.prioritizeAssets(for: episode.id)
+                    } label: {
+                        VStack(alignment: .leading, spacing: 3) {
+                            Text(episode.episodeCode == "Not episodic" ? episode.title : "\(episode.episodeCode) - \(episode.title)")
+                                .font(.body.weight(.medium))
+                                .lineLimit(1)
+                            Text([episode.format.rawValue.uppercased(), library.progressLabel(for: episode)].joined(separator: " - "))
+                                .font(.caption)
+                                .foregroundStyle(SonderTheme.textLight)
+                                .lineLimit(1)
+                        }
+                    }
+                    .buttonStyle(.plain)
+
+                    Spacer()
+
+                    Button {
+                        library.play(episode)
+                    } label: {
+                        Image(systemName: "play.fill")
+                    }
+                    .buttonStyle(.borderless)
+                    .disabled(episode.hasFile == false)
+                }
+                .padding(.vertical, 7)
+                .padding(.horizontal, 10)
+                .background(SonderTheme.surfaceDeep, in: RoundedRectangle(cornerRadius: 6))
+            }
         }
-        .navigationTitle("TV Shows")
-        .scrollContentBackground(.hidden)
+    }
+}
+
+struct TVShowCard: View {
+    let show: SonderTVShowGroup
+    @ObservedObject var library: SonderLibrary
+    let open: () -> Void
+    let play: (SonderMediaItem) -> Void
+
+    private var episodes: [SonderMediaItem] {
+        show.seasons.flatMap(\.episodes)
+    }
+
+    private var representativeEpisode: SonderMediaItem? {
+        episodes.first { $0.localPosterPath != nil } ?? episodes.first
+    }
+
+    private var seasonCount: Int {
+        show.seasons.count
+    }
+
+    private var progressLabel: String {
+        guard let episode = representativeEpisode else { return "No episodes" }
+        return library.progressLabel(for: episode)
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Button(action: open) {
+                if let representativeEpisode {
+                    PosterView(item: representativeEpisode)
+                        .frame(maxWidth: .infinity)
+                        .frame(height: 240)
+                } else {
+                    Rectangle()
+                        .fill(SonderTheme.surfaceDeep)
+                        .overlay {
+                            Image(systemName: "tv")
+                                .font(.system(size: 42, weight: .semibold))
+                                .foregroundStyle(SonderTheme.accent)
+                        }
+                        .frame(maxWidth: .infinity)
+                        .frame(height: 240)
+                }
+            }
+            .buttonStyle(.plain)
+            .clipShape(RoundedRectangle(cornerRadius: 8))
+            .contentShape(RoundedRectangle(cornerRadius: 8))
+
+            VStack(alignment: .leading, spacing: 5) {
+                Text(show.name)
+                    .font(.headline)
+                    .lineLimit(2)
+                HStack(spacing: 8) {
+                    Label("\(seasonCount) seasons", systemImage: "rectangle.stack")
+                    Label("\(show.episodeCount) episodes", systemImage: "play.rectangle")
+                }
+                .font(.caption.monospacedDigit())
+                .foregroundStyle(SonderTheme.textLight)
+                Text(progressLabel)
+                    .font(.caption)
+                    .foregroundStyle(SonderTheme.textLight)
+                    .lineLimit(1)
+            }
+            .frame(minHeight: 62, alignment: .top)
+
+            HStack {
+                Button(action: open) {
+                    Label("Open", systemImage: "rectangle.stack")
+                }
+                Spacer()
+                Button {
+                    if let representativeEpisode {
+                        play(representativeEpisode)
+                    }
+                } label: {
+                    Image(systemName: "play.fill")
+                }
+                .buttonStyle(.borderless)
+                .disabled(representativeEpisode?.hasFile != true)
+            }
+        }
+        .padding(12)
+        .background(SonderTheme.surface, in: RoundedRectangle(cornerRadius: 8))
+        .overlay(RoundedRectangle(cornerRadius: 8).stroke(SonderTheme.border))
+    }
+}
+
+struct AudiobooksView: View {
+    @ObservedObject var library: SonderLibrary
+    @Binding var selectedItemID: UUID?
+    @State private var displayMode: LibraryDisplayMode = .grid
+
+    private var items: [SonderMediaItem] {
+        library.items.filter { $0.kind == .audiobook }.sorted { $0.title.localizedStandardCompare($1.title) == .orderedAscending }
+    }
+
+    var body: some View {
+        MediaKindBrowser(
+            title: "Audiobooks",
+            emptyText: "Add audiobook files to browse them here.",
+            items: items,
+            detail: { library.progressLabel(for: $0) },
+            library: library,
+            selectedItemID: $selectedItemID,
+            displayMode: $displayMode
+        )
+    }
+}
+
+struct BooksView: View {
+    @ObservedObject var library: SonderLibrary
+    @Binding var selectedItemID: UUID?
+    @State private var displayMode: LibraryDisplayMode = .grid
+
+    private var items: [SonderMediaItem] {
+        library.items.filter { $0.kind == .ebook }.sorted { $0.title.localizedStandardCompare($1.title) == .orderedAscending }
+    }
+
+    var body: some View {
+        MediaKindBrowser(
+            title: "Books",
+            emptyText: "Add EPUB or PDF files to browse them here.",
+            items: items,
+            detail: { $0.format.rawValue.uppercased() },
+            library: library,
+            selectedItemID: $selectedItemID,
+            displayMode: $displayMode
+        )
+    }
+}
+
+struct MediaKindBrowser: View {
+    let title: String
+    let emptyText: String
+    let items: [SonderMediaItem]
+    let detail: (SonderMediaItem) -> String
+    @ObservedObject var library: SonderLibrary
+    @Binding var selectedItemID: UUID?
+    @Binding var displayMode: LibraryDisplayMode
+    @State private var searchText = ""
+
+    private var filteredItems: [SonderMediaItem] {
+        let trimmed = searchText.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard trimmed.isEmpty == false else { return items }
+        return items.filter { $0.searchText.localizedCaseInsensitiveContains(trimmed) }
+    }
+
+    var body: some View {
+        VStack(spacing: 0) {
+            libraryModeBar(title: title, count: filteredItems.count, mode: $displayMode, searchText: $searchText, searchPrompt: "Search \(title.lowercased())")
+            switch displayMode {
+            case .grid:
+                ScrollView {
+                    if filteredItems.isEmpty {
+                        EmptyLibraryMessage(text: searchText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? emptyText : "No titles match this search.")
+                            .padding(20)
+                    } else {
+                        LazyVGrid(columns: [GridItem(.adaptive(minimum: 190, maximum: 230), spacing: 14)], spacing: 14) {
+                            ForEach(filteredItems) { item in
+                                MediaCard(item: item, progress: library.progress(for: item), posterHeight: 260) {
+                                    selectedItemID = item.id
+                                } play: {
+                                    library.play(item)
+                                }
+                            }
+                        }
+                        .padding(20)
+                    }
+                }
+            case .spreadsheet:
+                List {
+                    if filteredItems.isEmpty {
+                        EmptyLibraryMessage(text: searchText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? emptyText : "No titles match this search.")
+                    } else {
+                        ForEach(filteredItems) { item in
+                            MediaListRow(item: item, detail: detail(item)) {
+                                selectedItemID = item.id
+                            }
+                        }
+                    }
+                }
+                .scrollContentBackground(.hidden)
+            }
+        }
+        .navigationTitle(title)
         .background(SonderTheme.background)
+    }
+}
+
+struct SearchField: View {
+    @Binding var text: String
+    let prompt: String
+
+    var body: some View {
+        HStack(spacing: 8) {
+            Image(systemName: "magnifyingglass")
+                .foregroundStyle(SonderTheme.textLight)
+            TextField(prompt, text: $text)
+                .textFieldStyle(.plain)
+            if text.isEmpty == false {
+                Button {
+                    text = ""
+                } label: {
+                    Image(systemName: "xmark.circle.fill")
+                        .foregroundStyle(SonderTheme.textLight)
+                }
+                .buttonStyle(.plain)
+                .help("Clear search")
+            }
+        }
+        .padding(.horizontal, 10)
+        .padding(.vertical, 8)
+        .background(SonderTheme.background, in: RoundedRectangle(cornerRadius: 8))
+        .overlay(RoundedRectangle(cornerRadius: 8).stroke(SonderTheme.border))
+    }
+}
+
+struct EmptyLibraryMessage: View {
+    let text: String
+
+    var body: some View {
+        Text(text)
+            .foregroundStyle(SonderTheme.textLight)
+            .frame(maxWidth: .infinity, alignment: .leading)
+    }
+}
+
+private func libraryModeBar(
+    title: String,
+    count: Int,
+    countLabel: String = "titles",
+    mode: Binding<LibraryDisplayMode>,
+    searchText: Binding<String>,
+    searchPrompt: String
+) -> some View {
+    HStack(spacing: 14) {
+        VStack(alignment: .leading, spacing: 2) {
+            Text(title)
+                .font(.title2.weight(.semibold))
+            Text("\(count) \(countLabel)")
+                .font(.caption.monospacedDigit())
+                .foregroundStyle(SonderTheme.textLight)
+        }
+        Spacer(minLength: 14)
+        SearchField(text: searchText, prompt: searchPrompt)
+            .frame(minWidth: 240, idealWidth: 320, maxWidth: 420)
+        LibraryDisplayModePicker(mode: mode)
+    }
+    .padding(.horizontal, 20)
+    .padding(.vertical, 12)
+    .background(SonderTheme.surface)
+    .overlay(alignment: .bottom) {
+        Rectangle()
+            .fill(SonderTheme.border)
+            .frame(height: 1)
     }
 }
 
@@ -400,23 +912,25 @@ struct ServerDashboard: View {
                 LazyVGrid(columns: [GridItem(.adaptive(minimum: 280), spacing: 14)], spacing: 14) {
                     DashboardPanel(title: "Library Mix") {
                         ForEach(SonderMediaKind.mediaCases) { kind in
-                            let count = library.items.filter { $0.kind == kind }.count
+                            let count = library.mediaKindCounts[kind, default: 0]
                             MeterRow(label: kind.label, value: count, max: max(1, library.items.count))
                         }
                     }
 
                     DashboardPanel(title: "Popular Tags") {
-                        ForEach(library.tagUsage.prefix(10), id: \.tag) { item in
-                            MeterRow(label: item.tag, value: item.count, max: max(1, library.tagUsage.first?.count ?? 1))
+                        let popularTags = Array(library.tagUsage.prefix(10))
+                        let maxTagCount = max(1, library.tagUsage.first?.count ?? 1)
+                        ForEach(popularTags, id: \.tag) { item in
+                            MeterRow(label: item.tag, value: item.count, max: maxTagCount)
                         }
                     }
                 }
 
                 DashboardPanel(title: "Endpoints") {
-                    EndpointRow(label: "Web", value: "http://127.0.0.1:8797")
-                    EndpointRow(label: "Health", value: "http://127.0.0.1:8797/api/health")
-                    EndpointRow(label: "Library JSON", value: "http://127.0.0.1:8797/api/library")
-                    EndpointRow(label: "Stream Route", value: "http://127.0.0.1:8797/stream/{id}")
+                    EndpointRow(label: "Web", value: "http://127.0.0.1:\(library.serverSettings.port)")
+                    EndpointRow(label: "Health", value: "http://127.0.0.1:\(library.serverSettings.port)/api/health")
+                    EndpointRow(label: "Library JSON", value: "http://127.0.0.1:\(library.serverSettings.port)/api/library")
+                    EndpointRow(label: "Stream Route", value: "http://127.0.0.1:\(library.serverSettings.port)/stream/{id}")
                 }
 
                 DashboardPanel(title: "Web Server") {
@@ -435,6 +949,23 @@ struct ServerDashboard: View {
                         .fixedSize(horizontal: false, vertical: true)
                 }
 
+                DashboardPanel(title: "Theme") {
+                    Picker("Palette", selection: Binding(
+                        get: { SonderThemePreset(rawValue: library.serverSettings.themePreset) ?? .earthy },
+                        set: { library.updateTheme($0) }
+                    )) {
+                        ForEach(SonderThemePreset.allCases) { preset in
+                            Text(preset.label).tag(preset)
+                        }
+                    }
+                    .pickerStyle(.segmented)
+
+                    Text(SonderThemePreset(rawValue: library.serverSettings.themePreset)?.description ?? SonderThemePreset.earthy.description)
+                        .font(.caption)
+                        .foregroundStyle(SonderTheme.textLight)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+
                 DashboardPanel(title: "Storage") {
                     EndpointRow(label: "Media", value: library.storagePath)
                     Text("Use the Storage toolbar button to choose a mounted NAS, external disk, or synced folder. New imports copy there; the app database remains in Application Support.")
@@ -443,11 +974,74 @@ struct ServerDashboard: View {
                         .fixedSize(horizontal: false, vertical: true)
                 }
 
+                DashboardPanel(title: "Plex Import") {
+                    HStack {
+                        Label("Import cached Plex context into show roots", systemImage: "externaldrive.badge.icloud")
+                            .foregroundStyle(SonderTheme.textLight)
+                        Spacer()
+                        Button {
+                            library.importPlexContextIfAvailable(force: true)
+                        } label: {
+                            Label("Import Now", systemImage: "arrow.down.doc")
+                        }
+                        .disabled(library.scanProgress != nil)
+                    }
+                    Text("Sonder can import Plex summaries, art, and identifiers into per-show `.sonder/sonder-context.json` caches so later boots read local context first.")
+                        .font(.caption)
+                        .foregroundStyle(SonderTheme.textLight)
+                        .fixedSize(horizontal: false, vertical: true)
+                    HStack {
+                        Text(library.plexImportStatus.lastMessage)
+                            .font(.caption)
+                            .foregroundStyle(SonderTheme.textLight)
+                        Spacer()
+                        if let lastRunAt = library.plexImportStatus.lastRunAt {
+                            Text("Last run \(lastRunAt.formatted(date: .abbreviated, time: .shortened))")
+                                .font(.caption2.monospacedDigit())
+                                .foregroundStyle(SonderTheme.textLight.opacity(0.85))
+                        }
+                    }
+                }
+
+                DashboardPanel(title: "Audiobook Import") {
+                    HStack {
+                        Label("Build Sonder's native audiobook index and chapter cache", systemImage: "headphones")
+                            .foregroundStyle(SonderTheme.textLight)
+                        Spacer()
+                        Button {
+                            library.importAudiobookContextIfAvailable(force: true)
+                        } label: {
+                            Label("Refresh Now", systemImage: "arrow.clockwise")
+                        }
+                        .disabled(library.scanProgress != nil)
+                    }
+                    Text("Sonder stores audiobook metadata in its own local cache so boots can load books, chapters, and artwork without rescanning everything.")
+                        .font(.caption)
+                        .foregroundStyle(SonderTheme.textLight)
+                        .fixedSize(horizontal: false, vertical: true)
+                    HStack {
+                        Text(library.audiobookImportStatus.lastMessage)
+                            .font(.caption)
+                            .foregroundStyle(SonderTheme.textLight)
+                        Spacer()
+                        if let lastRunAt = library.audiobookImportStatus.lastRunAt {
+                            Text("Last run \(lastRunAt.formatted(date: .abbreviated, time: .shortened))")
+                                .font(.caption2.monospacedDigit())
+                                .foregroundStyle(SonderTheme.textLight.opacity(0.85))
+                        }
+                    }
+                }
+
                 DashboardPanel(title: "Remote Libraries") {
                     HStack {
                         Label("\(library.libraryDefinitions.count) libraries / \(library.mediaDirectories.count) folders", systemImage: "network")
                             .foregroundStyle(SonderTheme.textLight)
                         Spacer()
+                        Button {
+                            library.chooseMediaLibraryRoot()
+                        } label: {
+                            Label("Media Library", systemImage: "externaldrive.badge.plus")
+                        }
                         Button {
                             library.chooseMediaDirectories(kind: .movies)
                         } label: {
@@ -459,6 +1053,16 @@ struct ServerDashboard: View {
                             Label("TV Library", systemImage: "tv")
                         }
                         Button {
+                            library.chooseMediaDirectories(kind: .audiobooks)
+                        } label: {
+                            Label("Audio Library", systemImage: "headphones")
+                        }
+                        Button {
+                            library.chooseMediaDirectories(kind: .ebooks)
+                        } label: {
+                            Label("Books Library", systemImage: "book")
+                        }
+                        Button {
                             library.rescanMediaDirectories()
                         } label: {
                             Label("Rescan", systemImage: "arrow.clockwise")
@@ -466,7 +1070,7 @@ struct ServerDashboard: View {
                         .disabled(library.mediaDirectories.isEmpty)
                     }
 
-                    Text("Select mounted SMB/NFS/NAS folders through the system picker. Sonder stores security-scoped bookmarks and only scans directories the user grants.")
+                    Text("Select a Media Library root to auto-detect TV Shows, Movies, Books, and Audiobooks folders, or add individual SMB/NFS/NAS folders manually. Sonder stores security-scoped bookmarks and only scans directories the user grants.")
                         .font(.caption)
                         .foregroundStyle(SonderTheme.textLight)
                         .fixedSize(horizontal: false, vertical: true)
@@ -630,7 +1234,25 @@ struct AboutSonderView: View {
                 AboutPanel(
                     title: "Plex-Like Basics",
                     icon: "play.rectangle.on.rectangle",
-                    bodyText: "The app catalogs movies, television, and documentaries, tracks watched position, groups titles into collections, and serves playable files through HTTP routes."
+                    bodyText: "The app catalogs movies, television, documentaries, books, and audiobooks, tracks watched position, groups titles into collections, and serves playable files through HTTP routes."
+                )
+
+                AboutPanel(
+                    title: "TV Show Workflow",
+                    icon: "tv",
+                    bodyText: "TV libraries are documented as Show -> Season -> Episode. Opening a show should expose show metrics, series information, season artwork, season drill-down, and episode playback. Unknown seasons are kept in an Unsorted Season bucket until filenames or folders provide a season number."
+                )
+
+                AboutPanel(
+                    title: "Server and iOS Contract",
+                    icon: "iphone.and.arrow.forward",
+                    bodyText: "Client workflows should use the server library JSON, group TV episodes by showTitle and seasonNumber, open /stream/{id} for playback, and POST progress to /api/progress/{id}. Browser-playable files stream directly; catalog-only formats should open in a native player or use a future transcoding route."
+                )
+
+                AboutPanel(
+                    title: "Transcoding and Cache Policy",
+                    icon: "externaldrive.badge.icloud",
+                    bodyText: "Direct play is preferred. On-demand conversion, local cache, and pre-cache controls should be explicit user choices with visible storage impact, rather than automatic background work during browsing."
                 )
 
                 AboutPanel(
@@ -688,27 +1310,29 @@ struct MediaDetailView: View {
                             .buttonStyle(.borderedProminent)
 
                             Button {
-                                NSWorkspace.shared.open(URL(string: "http://127.0.0.1:8797/stream/\(item.id.uuidString)")!)
+                                NSWorkspace.shared.open(URL(string: "http://127.0.0.1:\(library.serverSettings.port)/stream/\(item.id.uuidString)")!)
                             } label: {
                                 Label("Stream URL", systemImage: "network")
                             }
                             .disabled(item.hasFile == false)
                         }
 
-                        HStack {
-                            Button {
-                                library.renameForPlex(item)
-                            } label: {
-                                Label("Rename for Plex", systemImage: "textformat")
-                            }
-                            .disabled(item.hasFile == false)
+                        if item.kind == .movie || item.kind == .tvShow || item.kind == .documentary {
+                            HStack {
+                                Button {
+                                    library.renameForPlex(item)
+                                } label: {
+                                    Label("Rename for Plex", systemImage: "textformat")
+                                }
+                                .disabled(item.hasFile == false)
 
-                            Button {
-                                library.convertToMP4(item)
-                            } label: {
-                                Label("Convert to MP4", systemImage: "arrow.triangle.2.circlepath")
+                                Button {
+                                    library.convertToMP4(item)
+                                } label: {
+                                    Label("Convert to MP4", systemImage: "arrow.triangle.2.circlepath")
+                                }
+                                .disabled(item.hasFile == false)
                             }
-                            .disabled(item.hasFile == false)
                         }
                     }
                 }
@@ -738,11 +1362,25 @@ struct MediaDetailView: View {
                     MetadataRow(label: "Kind", value: item.kind.label)
                     MetadataRow(label: "Studio", value: item.studio)
                     MetadataRow(label: "Year", value: "\(item.year)")
-                    MetadataRow(label: "Runtime", value: SonderTime.format(item.durationSeconds))
+                    MetadataRow(label: "Runtime", value: item.durationSeconds > 0 ? SonderTime.format(item.durationSeconds) : "Not probed")
                     MetadataRow(label: "Format", value: item.format.rawValue.uppercased())
+                    if let width = item.probedWidth, let height = item.probedHeight {
+                        MetadataRow(label: "Resolution", value: "\(width)×\(height)")
+                    } else {
+                        MetadataRow(label: "Resolution", value: "Not probed")
+                    }
+                    MetadataRow(label: "Codec", value: item.probedCodec ?? "Not probed")
+                    if let bitrate = item.probedBitrate {
+                        MetadataRow(label: "Bitrate", value: "\(bitrate / 1_000_000) Mbps")
+                    }
+                    MetadataRow(label: "Browser Play", value: item.isBrowserPlayable ? "Yes" : "Catalog only")
                     if item.kind == .tvShow {
                         MetadataRow(label: "Show", value: item.showTitle ?? item.title)
                         MetadataRow(label: "Episode", value: item.episodeCode)
+                    } else if item.kind == .ebook {
+                        MetadataRow(label: "Reader", value: "Books / Preview")
+                    } else if item.kind == .audiobook {
+                        MetadataRow(label: "Player", value: "Books / Music")
                     }
                     MetadataRow(label: "Plex Name", value: item.plexFileName)
                 }
@@ -762,7 +1400,11 @@ struct MediaDetailView: View {
         }
         .background(SonderTheme.background)
         .navigationTitle("Title")
+        .onAppear {
+            library.prioritizeAssets(for: item.id)
+        }
         .onChange(of: item.id) { _, _ in
+            library.prioritizeAssets(for: item.id)
             let progress = library.progressRecord(for: item)
             seconds = progress?.seconds ?? item.progressSeconds
             duration = progress?.duration ?? item.durationSeconds
@@ -1163,6 +1805,58 @@ struct WrappingLayout: Layout {
     }
 }
 
+/// Thread-safe cache of pre-serialized HTTP responses.  The library invalidates
+/// this whenever its state changes, so the HTTP server never needs to hop to the
+/// main actor for reads.  Encoding happens at most once between mutations.
+nonisolated final class SonderHTTPCache: @unchecked Sendable {
+    private let lock = NSLock()
+    private var libraryData: Data?
+    private var discoveryData: Data?
+    /// Monotonically increasing generation that lets the server detect when a
+    /// cached response it intends to store was built against stale library state.
+    /// Bumped inside `invalidate()` so every library mutation pushes the
+    /// generation forward.
+    private var generation: UInt64 = 0
+
+    func invalidate() {
+        lock.withLock {
+            libraryData = nil
+            discoveryData = nil
+            generation &+= 1
+        }
+    }
+
+    /// Returns the cached library response and the generation it was stored at.
+    /// The caller should capture the generation and pass it back to
+    /// `setLibrary(_, generation:)`. If the generation does not match the
+    /// current value, the set is a no-op (the caller built stale data).
+    func cachedLibrary() -> (data: Data?, generation: UInt64) {
+        lock.withLock {
+            (libraryData, generation)
+        }
+    }
+
+    func setLibrary(_ data: Data, generation: UInt64) {
+        lock.withLock {
+            guard generation == self.generation else { return }
+            libraryData = data
+        }
+    }
+
+    func cachedDiscovery() -> (data: Data?, generation: UInt64) {
+        lock.withLock {
+            (discoveryData, generation)
+        }
+    }
+
+    func setDiscovery(_ data: Data, generation: UInt64) {
+        lock.withLock {
+            guard generation == self.generation else { return }
+            discoveryData = data
+        }
+    }
+}
+
 @MainActor
 final class SonderLibrary: ObservableObject {
     @Published private(set) var items: [SonderMediaItem]
@@ -1177,7 +1871,23 @@ final class SonderLibrary: ObservableObject {
     @Published private(set) var storagePath: String
     private var storageBookmark: Data?
 
+    /// The cache is itself thread-safe and Sendable, so the stored reference
+    /// is implicitly nonisolated and safely accessible from the HTTP server's
+    /// background queue without main-actor hops.
+    private let httpCacheStorage = SonderHTTPCache()
+    nonisolated var httpCache: SonderHTTPCache { httpCacheStorage }
+
     private let store: SonderStore
+    private let saveQueue = DispatchQueue(label: "tm.sonder.save", qos: .utility)
+    private var saveWorkItem: DispatchWorkItem?
+    private var pendingIndexedItems: [SonderMediaItem] = []
+    private var pendingScanProgress: SonderScanProgress?
+    private var pendingIndexFlushTask: Task<Void, Never>?
+    private var prioritizedAssetRefreshIDs = Set<UUID>()
+    private var didAttemptPlexImport = false
+    private var didAttemptAudiobookImport = false
+    @Published private(set) var plexImportStatus = PlexImportStatus()
+    @Published private(set) var audiobookImportStatus = SonderAudiobookImportStatus()
 
     static let defaultCollections = [
         SonderCollection(name: "Saturday Feature Queue", kind: .playlist, itemIDs: Array(SonderSeed.catalog.filter { $0.kind == .movie }.prefix(4).map(\.id))),
@@ -1188,7 +1898,107 @@ final class SonderLibrary: ObservableObject {
     init(store: SonderStore? = nil) {
         let resolvedStore = store ?? SonderStore()
         self.store = resolvedStore
-        let snapshot = resolvedStore.load()
+        let initialSnapshot = SonderSnapshot.startupPlaceholder
+        items = initialSnapshot.items
+        progressRecords = initialSnapshot.progress
+        collections = initialSnapshot.collections
+        activity = initialSnapshot.activity
+        conversionJobs = initialSnapshot.conversionJobs ?? []
+        libraryDefinitions = initialSnapshot.libraryDefinitions ?? SonderLibraryDefinition.defaults
+        mediaDirectories = initialSnapshot.mediaDirectories ?? []
+        serverSettings = initialSnapshot.serverSettings ?? .default
+        storageBookmark = initialSnapshot.storageBookmark
+        storagePath = initialSnapshot.storagePath ?? resolvedStore.uploadsURL.path
+        rebuildDerivedData()
+        loadPersistedLibrary(from: resolvedStore)
+    }
+
+    func importPlexContextIfAvailable(force: Bool = false) {
+        guard force || didAttemptPlexImport == false else { return }
+        didAttemptPlexImport = true
+        Task.detached { [store] in
+            let support = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first
+            let plexRoot = support?.appendingPathComponent("Plex Media Server", isDirectory: true)
+            let dbURL = plexRoot?.appendingPathComponent("Plug-in Support/Databases/com.plexapp.plugins.library.db")
+            let metadataRoot = plexRoot?.appendingPathComponent("Metadata/TV Shows", isDirectory: true)
+            guard let dbURL, let metadataRoot,
+                  FileManager.default.fileExists(atPath: dbURL.path),
+                  FileManager.default.fileExists(atPath: metadataRoot.path) else { return }
+            let importer = PlexImporter(dbURL: dbURL, bundleRootURL: metadataRoot)
+            let summary = await importer.importShowContexts()
+            guard summary.importedCount > 0 || summary.unchangedCount > 0 || summary.skippedCount > 0 else {
+                await MainActor.run {
+                    self.plexImportStatus = PlexImportStatus(lastRunAt: Date(), importedCount: 0, unchangedCount: 0, skippedCount: 0, lastMessage: "No Plex show metadata found.")
+                }
+                return
+            }
+            let cacheRoot = store.rootURL.appendingPathComponent("PlexImport", isDirectory: true)
+            try? FileManager.default.createDirectory(at: cacheRoot, withIntermediateDirectories: true)
+            let payload = [
+                "imported": summary.importedCount,
+                "unchanged": summary.unchangedCount,
+                "skipped": summary.skippedCount,
+                "capturedAt": ISO8601DateFormatter().string(from: Date())
+            ] as [String: Any]
+            if let data = try? JSONSerialization.data(withJSONObject: payload, options: [.prettyPrinted, .sortedKeys]) {
+                try? data.write(to: cacheRoot.appendingPathComponent("plex-import-index.json"), options: .atomic)
+            }
+            await MainActor.run {
+                let message = summary.importedCount > 0 ? "Imported Plex context for \(summary.importedCount) show(s)." : "Plex context already up to date."
+                self.plexImportStatus = PlexImportStatus(lastRunAt: Date(), importedCount: summary.importedCount, unchangedCount: summary.unchangedCount, skippedCount: summary.skippedCount, lastMessage: message)
+                self.addActivity("Imported Plex context", detail: "\(summary.importedCount) imported, \(summary.unchangedCount) unchanged, \(summary.skippedCount) skipped.", icon: "externaldrive.badge.icloud")
+            }
+        }
+    }
+
+    func importAudiobookContextIfAvailable(force: Bool = false) {
+        guard force || didAttemptAudiobookImport == false else { return }
+        didAttemptAudiobookImport = true
+        Task.detached { [store] in
+            let importer = SonderAudiobookImporter(store: store)
+            let summary = await importer.refreshIndex(items: await MainActor.run { self.items }, mediaDirectories: await MainActor.run { self.mediaDirectories })
+            await MainActor.run {
+                self.audiobookImportStatus = SonderAudiobookImportStatus(
+                    lastRunAt: Date(),
+                    importedCount: summary.importedCount,
+                    updatedCount: summary.updatedCount,
+                    unchangedCount: summary.unchangedCount,
+                    skippedCount: summary.skippedCount,
+                    lastMessage: summary.message
+                )
+                self.addActivity("Refreshed audiobook index", detail: summary.message, icon: "headphones")
+            }
+        }
+    }
+
+    @Published private(set) var playableCount = 0
+    @Published private(set) var inProgressItems: [SonderMediaItem] = []
+    @Published private(set) var averageProgress = 0.0
+    @Published private(set) var allTags: [String] = []
+    @Published private(set) var tagUsage: [(tag: String, count: Int)] = []
+    @Published private(set) var tvShowGroups: [SonderTVShowGroup] = []
+    @Published private(set) var mediaKindCounts: [SonderMediaKind: Int] = [:]
+    @Published private(set) var isLoadingPersistedLibrary = false
+
+    private nonisolated static let scanProgressUpdateStride = 100
+    private nonisolated static let scanIndexBatchSize = 12
+    private nonisolated static let maxConcurrentAssetRefreshes = 4
+    private nonisolated static let indexUICommitIntervalNanoseconds: UInt64 = 450_000_000
+    private nonisolated static let maxPendingIndexedItemsBeforeCommit = 96
+    private nonisolated static let maxPriorityAssetRefreshItems = 24
+
+    private func loadPersistedLibrary(from store: SonderStore) {
+        isLoadingPersistedLibrary = true
+        Task.detached {
+            let snapshot = store.load()
+            let derivedData = Self.makeDerivedData(items: snapshot.items, progressRecords: snapshot.progress)
+            await MainActor.run {
+                self.applyLoadedSnapshot(snapshot, derivedData: derivedData, from: store)
+            }
+        }
+    }
+
+    private func applyLoadedSnapshot(_ snapshot: SonderSnapshot, derivedData: SonderDerivedData, from store: SonderStore) {
         items = snapshot.items
         progressRecords = snapshot.progress
         collections = snapshot.collections
@@ -1197,57 +2007,137 @@ final class SonderLibrary: ObservableObject {
         let loadedLibraryDefinitions = snapshot.libraryDefinitions ?? SonderLibraryDefinition.defaults
         libraryDefinitions = loadedLibraryDefinitions
         mediaDirectories = Self.migrateDirectories(snapshot.mediaDirectories ?? [], libraries: loadedLibraryDefinitions)
-        serverSettings = snapshot.serverSettings ?? .default
+        let loadedServerSettings = snapshot.serverSettings ?? .default
+        let serverSettingsChanged = loadedServerSettings != serverSettings
+        serverSettings = loadedServerSettings
         storageBookmark = snapshot.storageBookmark
-        storagePath = resolvedStore.storageURL(from: snapshot.storageBookmark)?.path ?? snapshot.storagePath ?? resolvedStore.uploadsURL.path
+        storagePath = snapshot.storagePath ?? store.uploadsURL.path
+        applyDerivedData(derivedData)
+        isLoadingPersistedLibrary = false
+        if serverSettingsChanged {
+            NotificationCenter.default.post(name: .sonderServerSettingsDidChange, object: nil)
+        }
     }
 
-    var playableCount: Int {
-        items.filter(\.hasFile).count
+    private func enqueueScanProgress(_ progress: SonderScanProgress) {
+        pendingScanProgress = progress
+        scheduleIndexFlush()
     }
 
-    var inProgressItems: [SonderMediaItem] {
-        progressRecords
+    private func enqueueIndexedItems(_ newItems: [SonderMediaItem], progress: SonderScanProgress?) {
+        pendingIndexedItems.append(contentsOf: newItems)
+        if let progress {
+            pendingScanProgress = progress
+        }
+        if pendingIndexedItems.count >= Self.maxPendingIndexedItemsBeforeCommit {
+            flushPendingIndexUpdates()
+        } else {
+            scheduleIndexFlush()
+        }
+    }
+
+    private func scheduleIndexFlush() {
+        guard pendingIndexFlushTask == nil else { return }
+        pendingIndexFlushTask = Task { [weak self] in
+            try? await Task.sleep(nanoseconds: Self.indexUICommitIntervalNanoseconds)
+            await MainActor.run {
+                self?.flushPendingIndexUpdates()
+            }
+        }
+    }
+
+    private func flushPendingIndexUpdates() {
+        pendingIndexFlushTask?.cancel()
+        pendingIndexFlushTask = nil
+        let indexedItems = pendingIndexedItems
+        let progress = pendingScanProgress
+        pendingIndexedItems.removeAll(keepingCapacity: true)
+        pendingScanProgress = nil
+
+        if indexedItems.isEmpty == false {
+            items.append(contentsOf: indexedItems)
+            removeResolvedPlaceholders()
+            commitLibraryMutation(persist: false)
+        }
+        if let progress {
+            scanProgress = progress
+        }
+    }
+
+    private func removeResolvedPlaceholders() {
+        let realKeys = Set(items.filter { $0.isPlaceholder == false }.map(placeholderKey(for:)))
+        items.removeAll { item in
+            item.isPlaceholder && realKeys.contains(placeholderKey(for: item))
+        }
+    }
+
+    private func placeholderKey(for item: SonderMediaItem) -> String {
+        let rootTitle = (item.kind == .tvShow ? item.showTitle : nil) ?? item.title
+        return "\(item.kind.rawValue)|\(rootTitle.cleanedMediaTitle.lowercased())"
+    }
+
+    private func rebuildDerivedData() {
+        applyDerivedData(Self.makeDerivedData(items: items, progressRecords: progressRecords))
+    }
+
+    private func applyDerivedData(_ derivedData: SonderDerivedData) {
+        playableCount = derivedData.playableCount
+        averageProgress = derivedData.averageProgress
+        allTags = derivedData.allTags
+        tagUsage = derivedData.tagUsage
+        mediaKindCounts = derivedData.mediaKindCounts
+        inProgressItems = derivedData.inProgressItems
+        tvShowGroups = derivedData.tvShowGroups
+    }
+
+    nonisolated private static func makeDerivedData(items: [SonderMediaItem], progressRecords: [SonderProgress]) -> SonderDerivedData {
+        let playableCount = items.filter(\.hasFile).count
+        let averageProgress = progressRecords.isEmpty ? 0 : progressRecords.map(\.percent).reduce(0, +) / Double(progressRecords.count)
+        let allTags = Array(Set(items.flatMap(\.tags))).sorted()
+        let tagUsage: [(tag: String, count: Int)] = Dictionary(grouping: items.flatMap(\.tags), by: { $0 })
+            .map { (tag: $0.key, count: $0.value.count) }
+            .sorted { lhs, rhs in lhs.count > rhs.count }
+        let mediaKindCounts = Dictionary(grouping: items, by: \.kind).mapValues(\.count)
+
+        let itemsByID = Dictionary(items.map { ($0.id, $0) }, uniquingKeysWith: { current, _ in current })
+        let inProgressItems = progressRecords
             .filter { $0.seconds > 0 && $0.percent < 0.96 }
             .sorted { $0.updatedAt > $1.updatedAt }
-            .compactMap { item(id: $0.itemID) }
-    }
+            .compactMap { itemsByID[$0.itemID] }
 
-    var averageProgress: Double {
-        guard progressRecords.isEmpty == false else { return 0 }
-        return progressRecords.map(\.percent).reduce(0, +) / Double(progressRecords.count)
-    }
-
-    var allTags: [String] {
-        Array(Set(items.flatMap(\.tags))).sorted()
-    }
-
-    var tagUsage: [(tag: String, count: Int)] {
-        Dictionary(grouping: items.flatMap(\.tags), by: { $0 })
-            .map { ($0.key, $0.value.count) }
-            .sorted { $0.count > $1.count }
-    }
-
-    var tvShowGroups: [SonderTVShowGroup] {
         let episodes = items
             .filter { $0.kind == .tvShow }
-            .sorted {
-                (($0.showTitle ?? $0.title), $0.seasonNumber ?? 0, $0.episodeNumber ?? 0, $0.title)
-                    < (($1.showTitle ?? $1.title), $1.seasonNumber ?? 0, $1.episodeNumber ?? 0, $1.title)
+            .sorted { lhs, rhs in
+                let lhsKey = lhs.showTitle ?? lhs.title
+                let rhsKey = rhs.showTitle ?? rhs.title
+                if lhsKey != rhsKey { return lhsKey < rhsKey }
+                if lhs.seasonNumber != rhs.seasonNumber { return (lhs.seasonNumber ?? 0) < (rhs.seasonNumber ?? 0) }
+                if lhs.episodeNumber != rhs.episodeNumber { return (lhs.episodeNumber ?? 0) < (rhs.episodeNumber ?? 0) }
+                return lhs.title < rhs.title
             }
-        return Dictionary(grouping: episodes, by: { $0.showTitle ?? $0.title })
+        let tvShowGroups = Dictionary(grouping: episodes, by: { $0.showTitle ?? $0.title })
             .map { showName, showEpisodes in
-                let seasons = Dictionary(grouping: showEpisodes, by: { $0.seasonNumber ?? 0 })
+                let seasons = Dictionary(grouping: showEpisodes, by: { $0.seasonNumber ?? SonderTVSeasonGroup.unknownSeasonNumber })
                     .map { seasonNumber, seasonEpisodes in
                         SonderTVSeasonGroup(
                             seasonNumber: seasonNumber,
                             episodes: seasonEpisodes.sorted { ($0.episodeNumber ?? 0, $0.title) < ($1.episodeNumber ?? 0, $1.title) }
                         )
                     }
-                    .sorted { $0.seasonNumber < $1.seasonNumber }
+                    .sorted { $0.sortOrder < $1.sortOrder }
                 return SonderTVShowGroup(name: showName, seasons: seasons)
             }
             .sorted { $0.name.localizedStandardCompare($1.name) == .orderedAscending }
+
+        return SonderDerivedData(
+            playableCount: playableCount,
+            averageProgress: averageProgress,
+            allTags: allTags,
+            tagUsage: tagUsage,
+            mediaKindCounts: mediaKindCounts,
+            inProgressItems: inProgressItems,
+            tvShowGroups: tvShowGroups
+        )
     }
 
     func seedDemoLibrary() {
@@ -1263,21 +2153,46 @@ final class SonderLibrary: ObservableObject {
         scanProgress = nil
         serverSettings = .default
         addActivity("Seeded demo library", detail: "Loaded movies, shows, and documentaries for layout testing.", icon: "sparkles.tv")
-        save()
+        commitLibraryMutation()
     }
 
-    func updateServerSettings(isEnabled: Bool? = nil, allowLAN: Bool? = nil, port: Int? = nil) {
+    func updateServerSettings(isEnabled: Bool? = nil, allowLAN: Bool? = nil, port: Int? = nil, pairingToken: String? = nil) {
         if let isEnabled {
             serverSettings.isEnabled = isEnabled
         }
         if let allowLAN {
             serverSettings.allowLAN = allowLAN
+            // Auto-generate a pairing token the first time LAN is enabled, so the
+            // default is secure rather than open. The user can rotate it in settings.
+            if allowLAN && serverSettings.pairingToken.isEmpty {
+                serverSettings.pairingToken = SonderServerSettings.generateToken()
+            }
         }
         if let port {
             serverSettings.port = min(max(port, 1024), 65535)
         }
+        if let pairingToken {
+            serverSettings.pairingToken = pairingToken
+        }
+        SonderTheme.apply(preset: SonderThemePreset(rawValue: serverSettings.themePreset) ?? .earthy)
         addActivity("Updated server settings", detail: serverSettings.statusLabel, icon: "network")
-        save()
+        commitLibraryMutation()
+        NotificationCenter.default.post(name: .sonderServerSettingsDidChange, object: nil)
+    }
+
+    func updateTheme(_ preset: SonderThemePreset) {
+        serverSettings.themePreset = preset.rawValue
+        SonderTheme.apply(preset: preset)
+        addActivity("Updated theme", detail: preset.label, icon: "paintpalette")
+        commitLibraryMutation()
+    }
+
+    /// Convenience: regenerates the LAN pairing token, invalidating any previously
+    /// paired clients.
+    func regeneratePairingToken() {
+        serverSettings.pairingToken = SonderServerSettings.generateToken()
+        addActivity("Rotated LAN pairing token", detail: "Previously paired clients must re-pair.", icon: "key.fill")
+        commitLibraryMutation()
         NotificationCenter.default.post(name: .sonderServerSettingsDidChange, object: nil)
     }
 
@@ -1290,10 +2205,27 @@ final class SonderLibrary: ObservableObject {
             storageBookmark = try store.bookmark(for: url)
             storagePath = url.path
             addActivity("Updated storage", detail: url.path, icon: "externaldrive")
-            save()
+            commitLibraryMutation()
         } catch {
             addActivity("Storage unchanged", detail: error.localizedDescription, icon: "exclamationmark.triangle")
         }
+    }
+
+    func chooseMediaLibraryRoot() {
+        let panel = NSOpenPanel()
+        panel.title = "Add Media Library"
+        panel.prompt = "Add Library"
+        panel.message = "Choose a folder that contains Movies, TV Shows, Books, or Audiobooks subfolders. Other folders will be ignored."
+        panel.canChooseFiles = false
+        panel.canChooseDirectories = true
+        panel.allowsMultipleSelection = false
+        panel.canCreateDirectories = false
+        panel.resolvesAliases = true
+
+        guard panel.runModal() == .OK, let rootURL = panel.urls.first else {
+            return
+        }
+        addMediaLibraryRoot(rootURL)
     }
 
     func chooseMediaDirectories(kind: SonderLibraryImportKind) {
@@ -1313,28 +2245,97 @@ final class SonderLibrary: ObservableObject {
         addMediaDirectories(panel.urls, kind: kind)
     }
 
-    func addMediaDirectories(_ urls: [URL], kind: SonderLibraryImportKind) {
-        var added = 0
+    func addMediaLibraryRoot(_ rootURL: URL) {
+        let matchedDirectories = detectMediaLibraryDirectories(in: rootURL)
+        guard matchedDirectories.isEmpty == false else {
+            addActivity("No media folders found", detail: "\(rootURL.lastPathComponent) did not contain Movies, TV Shows, Books, or Audiobooks folders.", icon: "folder.badge.questionmark")
+            return
+        }
+
+        let addedDirectories = matchedDirectories.flatMap { match in
+            addMediaDirectories([match.url], kind: match.kind, scansAfterAdd: false)
+        }
+
+        if addedDirectories.isEmpty == false {
+            let summary = matchedDirectories.map { "\($0.kind.label): \($0.url.lastPathComponent)" }.joined(separator: ", ")
+            addActivity("Added media library", detail: summary, icon: "externaldrive.badge.plus")
+            scanMediaDirectories(addedDirectories)
+        }
+    }
+
+    @discardableResult
+    func addMediaDirectories(_ urls: [URL], kind: SonderLibraryImportKind, scansAfterAdd: Bool = true) -> [SonderMediaDirectory] {
+        var addedDirectories: [SonderMediaDirectory] = []
         for url in urls {
             do {
                 let bookmark = try store.bookmark(for: url)
+                let directory = SonderMediaDirectory(name: url.lastPathComponent, path: url.path, bookmark: bookmark, kind: kind, libraryID: libraryID(for: kind))
                 if let existingIndex = mediaDirectories.firstIndex(where: { $0.path == url.path && $0.kind == kind }) {
                     mediaDirectories[existingIndex].bookmark = bookmark
                     mediaDirectories[existingIndex].name = url.lastPathComponent
                     mediaDirectories[existingIndex].libraryID = libraryID(for: kind)
-                    added += 1
+                    addedDirectories.append(mediaDirectories[existingIndex])
                 } else {
-                    mediaDirectories.append(SonderMediaDirectory(name: url.lastPathComponent, path: url.path, bookmark: bookmark, kind: kind, libraryID: libraryID(for: kind)))
-                    added += 1
+                    mediaDirectories.append(directory)
+                    addedDirectories.append(directory)
                 }
             } catch {
                 addActivity("Directory add failed", detail: "\(url.lastPathComponent): \(error.localizedDescription)", icon: "exclamationmark.triangle")
             }
         }
 
-        if added > 0 {
-            addActivity("Added media directories", detail: "\(added) folder(s) ready to scan.", icon: "folder.badge.plus")
-            rescanMediaDirectories()
+        if addedDirectories.isEmpty == false {
+            addActivity("Added media directories", detail: "\(addedDirectories.count) folder(s) ready to scan.", icon: "folder.badge.plus")
+            if scansAfterAdd {
+                scanMediaDirectories(addedDirectories)
+            }
+        }
+        return addedDirectories
+    }
+
+    private func detectMediaLibraryDirectories(in rootURL: URL) -> [(kind: SonderLibraryImportKind, url: URL)] {
+        let didAccess = rootURL.startAccessingSecurityScopedResource()
+        defer {
+            if didAccess {
+                rootURL.stopAccessingSecurityScopedResource()
+            }
+        }
+
+        guard let children = try? FileManager.default.contentsOfDirectory(
+            at: rootURL,
+            includingPropertiesForKeys: [.isDirectoryKey],
+            options: [.skipsHiddenFiles]
+        ) else { return [] }
+
+        let directories = children.filter { url in
+            (try? url.resourceValues(forKeys: [.isDirectoryKey]).isDirectory) == true
+        }
+        var matches: [SonderLibraryImportKind: URL] = [:]
+        for url in directories {
+            guard let kind = Self.mediaLibraryKind(forFolderName: url.lastPathComponent) else { continue }
+            if matches[kind] == nil {
+                matches[kind] = url
+            }
+        }
+
+        return SonderLibraryImportKind.mediaLibraryDetectionPriority.compactMap { kind in
+            matches[kind].map { (kind: kind, url: $0) }
+        }
+    }
+
+    nonisolated private static func mediaLibraryKind(forFolderName folderName: String) -> SonderLibraryImportKind? {
+        let normalized = folderName.lowercased().filter(\.isLetter)
+        switch normalized {
+        case "tvshows", "tvshow", "television", "series":
+            return .tvShows
+        case "movies", "movie", "films", "film":
+            return .movies
+        case "ebooks", "ebook", "books", "book":
+            return .ebooks
+        case "audiobooks", "audiobook", "audibooks", "audibook", "audio":
+            return .audiobooks
+        default:
+            return nil
         }
     }
 
@@ -1350,19 +2351,20 @@ final class SonderLibrary: ObservableObject {
         guard scanProgress == nil else { return }
         guard directories.isEmpty == false else { return }
         let existingPaths = Set(items.compactMap(\.sourcePath))
+        let existingMaterialKeys = Set(items.map(placeholderKey(for:)))
         scanProgress = SonderScanProgress(phase: .fastTitles, title: "Preparing scan", detail: "Starting fast title index.", filesSeen: 0, mediaFound: 0, indexedCount: 0, directoriesDone: 0, directoriesTotal: directories.count)
 
         Task.detached { [store] in
-            var indexedItems: [SonderMediaItem] = []
             var directoryUpdates: [UUID: SonderScanDiagnostics] = [:]
             var totalFilesSeen = 0
             var totalMediaFound = 0
-            var scannedPaths = existingPaths
+            let scanIndexState = SonderScanIndexState(existingPaths: existingPaths, existingMaterialKeys: existingMaterialKeys)
 
             for (offset, directory) in directories.enumerated() {
+                await scanIndexState.beginDirectory()
                 let startFilesSeen = totalFilesSeen
                 let startMediaFound = totalMediaFound
-                let currentIndexedCount = indexedItems.count
+                let currentIndexedCount = 0
                 await MainActor.run {
                     self.scanProgress = SonderScanProgress(
                         phase: .fastTitles,
@@ -1376,69 +2378,76 @@ final class SonderLibrary: ObservableObject {
                     )
                 }
 
+                let rootMaterials = store.rootMaterials(in: directory.path, bookmark: directory.bookmark, kind: directory.kind)
+                let placeholders = await scanIndexState.placeholders(from: rootMaterials, directory: directory)
+                if placeholders.isEmpty == false {
+                    let progress = SonderScanProgress(
+                        phase: .fastTitles,
+                        title: "Indexing \(directory.kind.label)",
+                        detail: "Discovered \(placeholders.count) root title(s). Deep scan continues.",
+                        filesSeen: startFilesSeen,
+                        mediaFound: startMediaFound,
+                        indexedCount: await scanIndexState.currentDirectoryIndexedCount(),
+                        directoriesDone: offset,
+                        directoriesTotal: directories.count
+                    )
+                    await MainActor.run {
+                        self.enqueueIndexedItems(placeholders, progress: progress)
+                    }
+                }
+
                 do {
-                    let scanResult = try await store.mediaFiles(in: directory.path, bookmark: directory.bookmark) { filesSeen, mediaFound, currentPath in
+                    let scanResult = try await store.mediaFiles(
+                        in: directory.path,
+                        bookmark: directory.bookmark,
+                        progressStride: Self.scanProgressUpdateStride,
+                        discoveryBatchSize: Self.scanIndexBatchSize
+                    ) { filesSeen, mediaFound, currentPath in
                         let progressFilesSeen = startFilesSeen + filesSeen
                         let progressMediaFound = startMediaFound + mediaFound
-                        let progressIndexedCount = currentIndexedCount
+                        let indexedSoFar = await scanIndexState.currentDirectoryIndexedCount()
+                        let progressIndexedCount = currentIndexedCount + indexedSoFar
+                        let progress = SonderScanProgress(
+                            phase: .fastTitles,
+                            title: "Indexing \(directory.kind.label)",
+                            detail: currentPath,
+                            filesSeen: progressFilesSeen,
+                            mediaFound: progressMediaFound,
+                            indexedCount: progressIndexedCount,
+                            directoriesDone: offset,
+                            directoriesTotal: directories.count
+                        )
                         await MainActor.run {
-                            self.scanProgress = SonderScanProgress(
+                            self.enqueueScanProgress(progress)
+                        }
+                    } discovered: { scannedFiles in
+                        let chunk = await scanIndexState.index(scannedFiles, directory: directory)
+                        guard chunk.isEmpty == false else { return }
+                        let indexedSoFar = await scanIndexState.currentDirectoryIndexedCount()
+                        let lastPath = scannedFiles.last?.url.path ?? directory.path
+                        await MainActor.run {
+                            let currentProgress = self.pendingScanProgress ?? self.scanProgress
+                            let progress = SonderScanProgress(
                                 phase: .fastTitles,
                                 title: "Indexing \(directory.kind.label)",
-                                detail: currentPath,
-                                filesSeen: progressFilesSeen,
-                                mediaFound: progressMediaFound,
-                                indexedCount: progressIndexedCount,
+                                detail: lastPath,
+                                filesSeen: currentProgress?.filesSeen ?? startFilesSeen,
+                                mediaFound: max(currentProgress?.mediaFound ?? startMediaFound, startMediaFound + indexedSoFar),
+                                indexedCount: indexedSoFar,
                                 directoriesDone: offset,
                                 directoriesTotal: directories.count
                             )
+                            self.enqueueIndexedItems(chunk, progress: progress)
                         }
                     }
 
                     totalFilesSeen += scanResult.filesSeen
                     totalMediaFound += scanResult.mediaFound
-                    var directoryIndexedCount = 0
-                    var skippedDuplicates = 0
-                    for scannedFile in scanResult.files {
-                        guard scannedPaths.contains(scannedFile.url.path) == false else {
-                            skippedDuplicates += 1
-                            continue
-                        }
-                        scannedPaths.insert(scannedFile.url.path)
-                        let parsed = SonderMediaParser.parseTitle(url: scannedFile.url, libraryKind: directory.kind)
-                        let format = SonderMediaFormat(url: scannedFile.url)
-                        indexedItems.append(
-                            SonderMediaItem(
-                                title: parsed.title,
-                                subtitle: parsed.subtitle,
-                                kind: parsed.kind,
-                                studio: "Remote Library",
-                                year: parsed.year ?? Calendar.current.component(.year, from: Date()),
-                                durationSeconds: 5400,
-                                format: format,
-                                tags: ["remote", directory.kind.tag, format.rawValue.lowercased()],
-                                summary: "Indexed from a user-selected \(directory.kind.label.lowercased()) directory.",
-                                sourcePath: scannedFile.url.path,
-                                sourceBookmark: scannedFile.bookmark,
-                                showTitle: parsed.showTitle,
-                                seasonNumber: parsed.season,
-                                episodeNumber: parsed.episode,
-                                metadataIDSource: parsed.metadataIDSource,
-                                metadataID: parsed.metadataID,
-                                edition: parsed.edition,
-                                splitPart: parsed.splitPart,
-                                localPosterPath: nil,
-                                localBackdropPath: nil,
-                                subtitlePaths: []
-                            )
-                        )
-                        directoryIndexedCount += 1
-                    }
                     directoryUpdates[directory.id] = SonderScanDiagnostics(
-                        mediaCount: scanResult.files.count,
+                        mediaCount: scanResult.mediaFound,
                         fileCount: scanResult.filesSeen,
                         unsupportedCount: scanResult.unsupportedMediaCount,
-                        skippedDuplicateCount: skippedDuplicates,
+                        skippedDuplicateCount: await scanIndexState.currentDirectorySkippedDuplicateCount(),
                         parseFailureCount: 0,
                         scannedAt: Date()
                     )
@@ -1449,11 +2458,10 @@ final class SonderLibrary: ObservableObject {
                 }
             }
 
-            let finalIndexedItems = indexedItems
+            let discoveredIDsSnapshot = await scanIndexState.discoveredItemIDs()
             let finalDirectoryUpdates = directoryUpdates
-            let finalIndexedCount = indexedItems.count
             await MainActor.run {
-                self.items.append(contentsOf: finalIndexedItems)
+                self.flushPendingIndexUpdates()
                 for index in self.mediaDirectories.indices {
                     if let update = finalDirectoryUpdates[self.mediaDirectories[index].id] {
                         self.mediaDirectories[index].lastIndexedCount = update.mediaCount
@@ -1464,63 +2472,85 @@ final class SonderLibrary: ObservableObject {
                         self.mediaDirectories[index].lastScannedAt = update.scannedAt
                     }
                 }
-                self.addActivity("Indexed media titles", detail: "\(finalIndexedCount) new title(s) indexed. Local assets will refresh next.", icon: "arrow.clockwise")
-                self.save()
-                self.refreshLocalAssets(for: finalIndexedItems.map(\.id), directoriesTotal: directories.count)
+                self.addActivity("Indexed media titles", detail: "\(self.items.count) title(s) indexed. Local assets will refresh next.", icon: "arrow.clockwise")
+                self.commitLibraryMutation()
+                self.refreshLocalAssets(for: discoveredIDsSnapshot, directoriesTotal: directories.count)
             }
         }
     }
 
-    private func refreshLocalAssets(for itemIDs: [UUID]? = nil, directoriesTotal: Int? = nil) {
+    private func refreshLocalAssets(for itemIDs: [UUID]? = nil, directoriesTotal: Int? = nil, showsProgress: Bool = true) {
         let targetIDs = Set(itemIDs ?? items.map(\.id))
         let targets = items.filter { targetIDs.contains($0.id) && $0.sourcePath != nil }
         guard targets.isEmpty == false else {
-            scanProgress = nil
+            if showsProgress {
+                scanProgress = nil
+            }
             return
         }
 
-        scanProgress = SonderScanProgress(phase: .localAssets, title: "Finding local artwork", detail: "Checking posters and subtitles beside indexed media.", filesSeen: 0, mediaFound: 0, indexedCount: 0, directoriesDone: 0, directoriesTotal: max(directoriesTotal ?? targets.count, 1))
+        if showsProgress {
+            scanProgress = SonderScanProgress(phase: .localAssets, title: "Finding local artwork", detail: "Checking posters and subtitles beside indexed media.", filesSeen: 0, mediaFound: 0, indexedCount: 0, directoriesDone: 0, directoriesTotal: max(directoriesTotal ?? targets.count, 1))
+        }
+
+        // Capture Sendable snapshots of each target's id + resolved URL so the detached
+        // task can probe off the main actor without touching the @MainActor model.
+        let probeTargets: [(id: UUID, url: URL)] = targets.compactMap { item in
+            guard let url = item.playableURL else { return nil }
+            return (item.id, url)
+        }
 
         Task.detached {
-            var updates: [UUID: SonderLocalAssetUpdate] = [:]
-            for (offset, item) in targets.enumerated() {
-                guard let sourcePath = item.sourcePath else { continue }
-                let assets = SonderMediaParser.localAssets(near: URL(fileURLWithPath: sourcePath))
-                updates[item.id] = SonderLocalAssetUpdate(
-                    posterPath: assets.poster?.path,
-                    backdropPath: assets.backdrop?.path,
-                    subtitlePaths: assets.subtitles.map(\.path)
-                )
-                if offset.isMultiple(of: 25) {
-                    let updateCount = updates.count
-                    await MainActor.run {
-                        self.scanProgress = SonderScanProgress(
-                            phase: .localAssets,
-                            title: "Finding local artwork",
-                            detail: sourcePath,
-                            filesSeen: offset + 1,
-                            mediaFound: updateCount,
-                            indexedCount: updateCount,
-                            directoriesDone: min(offset + 1, targets.count),
-                            directoriesTotal: targets.count
-                        )
-                    }
-                }
+            let collector = SonderAssetRefreshCollector()
+
+            await Self.runWithConcurrencyLimit(Self.maxConcurrentAssetRefreshes, over: probeTargets) { target in
+                let didAccess = target.url.startAccessingSecurityScopedResource()
+                defer { if didAccess { target.url.stopAccessingSecurityScopedResource() } }
+                let assets = SonderMediaParser.localAssets(near: target.url)
+                let probe = await SonderMediaProbe.probe(url: target.url)
+                await collector.append(SonderAssetRefreshResult(
+                    itemID: target.id,
+                    assetUpdate: SonderLocalAssetUpdate(
+                        posterPath: assets.poster?.path,
+                        backdropPath: assets.backdrop?.path,
+                        subtitlePaths: assets.subtitles.map(\.path)
+                    ),
+                    probe: probe
+                ))
             }
 
-            let finalUpdates = updates
-            let finalUpdateCount = updates.count
+            let results = await collector.all()
+            let finalAssetUpdates = Dictionary(results.map { ($0.itemID, $0.assetUpdate) }, uniquingKeysWith: { _, latest in latest })
+            let finalProbeResults = Dictionary(results.map { ($0.itemID, $0.probe) }, uniquingKeysWith: { _, latest in latest })
+            let finalUpdateCount = results.count
             await MainActor.run {
                 for index in self.items.indices {
-                    if let update = finalUpdates[self.items[index].id] {
+                    let id = self.items[index].id
+                    if let update = finalAssetUpdates[id] {
                         self.items[index].localPosterPath = update.posterPath
                         self.items[index].localBackdropPath = update.backdropPath
                         self.items[index].subtitlePaths = update.subtitlePaths
                     }
+                    if let probe = finalProbeResults[id] {
+                        if probe.durationSeconds > 0 {
+                            self.items[index].durationSeconds = probe.durationSeconds
+                        }
+                        self.items[index].probedWidth = probe.width
+                        self.items[index].probedHeight = probe.height
+                        self.items[index].probedCodec = probe.codec
+                        self.items[index].probedBitrate = probe.bitrate
+                    }
                 }
-                self.scanProgress = nil
-                self.addActivity("Refreshed local assets", detail: "\(finalUpdateCount) title(s) checked for posters and subtitles.", icon: "photo")
-                self.save()
+                if showsProgress {
+                    self.scanProgress = nil
+                    self.addActivity("Refreshed local assets", detail: "\(finalUpdateCount) title(s) checked for posters, subtitles, and runtime.", icon: "photo")
+                } else {
+                    self.prioritizedAssetRefreshIDs.subtract(probeTargets.map(\.id))
+                }
+                self.commitLibraryMutation()
+                if showsProgress {
+                    self.refreshMetadata(for: targets.map(\.id))
+                }
             }
         }
     }
@@ -1532,38 +2562,105 @@ final class SonderLibrary: ObservableObject {
         }
 
         var importedCount = 0
+        var importedIDs: [UUID] = []
         for url in urls {
             do {
                 let managedURL = try store.copyIntoManagedStorage(url, storagePath: storagePath, storageBookmark: storageBookmark)
                 let format = SonderMediaFormat(url: managedURL)
                 let parsed = SonderMediaParser.parse(url: managedURL)
-                items.insert(
-                    SonderMediaItem(
-                        title: parsed.title,
-                        subtitle: parsed.subtitle,
-                        kind: parsed.kind,
-                        studio: "Local",
-                        year: parsed.year ?? Calendar.current.component(.year, from: Date()),
-                        durationSeconds: 5400,
-                        format: format,
-                        tags: ["imported", format.rawValue.lowercased()],
-                        summary: "Imported video copied into Sonder's managed library storage.",
-                        sourcePath: managedURL.path,
-                        showTitle: parsed.showTitle,
-                        seasonNumber: parsed.season,
-                        episodeNumber: parsed.episode
-                    ),
-                    at: 0
+                let item = SonderMediaItem(
+                    title: parsed.title,
+                    subtitle: parsed.subtitle,
+                    kind: parsed.kind,
+                    studio: "Local",
+                    year: parsed.year ?? Calendar.current.component(.year, from: Date()),
+                    durationSeconds: parsed.kind == .ebook ? 0 : 5400,
+                    format: format,
+                    tags: ["imported", format.rawValue.lowercased()],
+                    summary: parsed.kind == .ebook ? "Imported book copied into Sonder's managed library storage." : parsed.kind == .audiobook ? "Imported audiobook copied into Sonder's managed library storage." : "Imported video copied into Sonder's managed library storage.",
+                    sourcePath: managedURL.path,
+                    showTitle: parsed.showTitle,
+                    seasonNumber: parsed.season,
+                    episodeNumber: parsed.episode
                 )
+                items.insert(item, at: 0)
+                importedIDs.append(item.id)
                 importedCount += 1
+                // Probe real duration/dimensions off the main actor; merge by id when done.
+                let itemID = item.id
+                Task { [weak self] in
+                    guard let self else { return }
+                    let didAccess = managedURL.startAccessingSecurityScopedResource()
+                    defer { if didAccess { managedURL.stopAccessingSecurityScopedResource() } }
+                    let probe = await SonderMediaProbe.probe(url: managedURL)
+                    await MainActor.run {
+                        self.applyProbe(probe, toItemID: itemID)
+                    }
+                }
             } catch {
                 addActivity("Import failed", detail: "\(url.lastPathComponent): \(error.localizedDescription)", icon: "exclamationmark.triangle")
             }
         }
         if importedCount > 0 {
             addActivity("Imported media", detail: "\(importedCount) item(s) copied into managed storage.", icon: "square.and.arrow.down")
-            save()
+            commitLibraryMutation()
+            refreshMetadata(for: importedIDs)
         }
+    }
+
+    /// Merges a probed media result into the item identified by `itemID`, preserving
+    /// the duration stored by the user's watch progress when one exists. Looks up by id
+    /// so it stays correct even if the array reorders between probe start and finish.
+    private func applyProbe(_ probe: SonderMediaProbe.Result, toItemID itemID: UUID) {
+        guard let index = items.firstIndex(where: { $0.id == itemID }) else { return }
+        items[index].durationSeconds = probe.durationSeconds > 0 ? probe.durationSeconds : items[index].durationSeconds
+        items[index].probedWidth = probe.width
+        items[index].probedHeight = probe.height
+        items[index].probedCodec = probe.codec
+        items[index].probedBitrate = probe.bitrate
+        if let progressIndex = progressRecords.firstIndex(where: { $0.itemID == itemID }), probe.durationSeconds > 0 {
+            progressRecords[progressIndex].duration = probe.durationSeconds
+        }
+        commitLibraryMutation()
+    }
+
+    func refreshMetadata(for itemIDs: [UUID]? = nil) {
+        let targetIDs = itemIDs.map(Set.init)
+        let targets = items.filter { item in
+            let matchesTarget = targetIDs?.contains(item.id) ?? true
+            return matchesTarget && item.isPlaceholder == false && item.needsMetadataRefresh
+        }
+        guard targets.isEmpty == false else { return }
+        Task.detached { [store] in
+            let enricher = SonderMetadataEnricher(cacheRoot: store.rootURL.appendingPathComponent("MetadataCache", isDirectory: true))
+            for item in targets {
+                if let enrichment = await enricher.enrich(item: item) {
+                    await MainActor.run {
+                        self.applyMetadata(enrichment, toItemID: item.id)
+                    }
+                }
+            }
+        }
+    }
+
+    private func applyMetadata(_ enrichment: SonderMetadataEnrichment, toItemID itemID: UUID) {
+        guard let index = items.firstIndex(where: { $0.id == itemID }) else { return }
+        if let summary = enrichment.summary, items[index].summary.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || items[index].summary.contains("Imported") {
+            items[index].summary = summary
+        }
+        if let studio = enrichment.publisher, items[index].studio == "Local" || items[index].studio == "Remote Library" {
+            items[index].studio = studio
+        }
+        if let posterPath = enrichment.posterPath {
+            items[index].localPosterPath = posterPath
+        }
+        if let backdropPath = enrichment.backdropPath {
+            items[index].localBackdropPath = backdropPath
+        }
+        if let tags = enrichment.tags, tags.isEmpty == false {
+            items[index].tags = Array(Set(items[index].tags + tags)).sorted()
+        }
+        commitLibraryMutation()
     }
 
     func search(_ query: String, kind: SonderMediaKind?, tag: String?) -> [SonderMediaItem] {
@@ -1580,7 +2677,102 @@ final class SonderLibrary: ObservableObject {
         items.first { $0.id == id }
     }
 
+    func audiobookItems() -> [SonderMediaItem] {
+        items.filter { $0.kind == .audiobook }
+    }
+
+    func audiobookItem(id: UUID) -> SonderMediaItem? {
+        items.first { $0.id == id && $0.kind == .audiobook }
+    }
+
+    func audiobookMetadata(for itemID: UUID) -> (author: String?, series: String?, narrator: String?)? {
+        guard let item = audiobookItem(id: itemID), let sourcePath = item.sourcePath else { return nil }
+        let mediaURL = URL(fileURLWithPath: sourcePath)
+        return SonderAudiobookImporter.metadata(for: item, mediaURL: mediaURL)
+    }
+
+    func audiobookChapters(for itemID: UUID) -> [SonderAudiobookChapterRecord] {
+        guard let item = audiobookItem(id: itemID), let sourcePath = item.sourcePath else { return [] }
+        if let cached = loadCachedAudiobookChapters(for: itemID), cached.isEmpty == false {
+            return cached
+        }
+        let mediaURL = URL(fileURLWithPath: sourcePath)
+        let folderCandidates = [
+            mediaURL.deletingLastPathComponent(),
+            mediaURL.deletingLastPathComponent().deletingLastPathComponent()
+        ]
+        let fileNames = [
+            mediaURL.deletingPathExtension().lastPathComponent + ".chapters.json",
+            "chapters.json"
+        ]
+        for folder in folderCandidates {
+            for name in fileNames {
+                let candidate = folder.appendingPathComponent(name)
+                guard FileManager.default.fileExists(atPath: candidate.path),
+                      let data = try? Data(contentsOf: candidate),
+                      let decoded = try? JSONDecoder.sonder.decode(SonderAudiobookChapterFile.self, from: data) else { continue }
+                return decoded.chapters
+            }
+        }
+        return []
+    }
+
+    private func loadCachedAudiobookChapters(for itemID: UUID) -> [SonderAudiobookChapterRecord]? {
+        let cacheURL = store.rootURL.appendingPathComponent("AudiobookImport", isDirectory: true).appendingPathComponent("audiobook-index.json")
+        guard let data = try? Data(contentsOf: cacheURL),
+              let index = try? JSONDecoder.sonder.decode(SonderAudiobookIndex.self, from: data),
+              let entry = index.items.first(where: { $0.itemID == itemID }) else {
+            return nil
+        }
+        return entry.chapters
+    }
+
+    func prioritizeAssets(for itemID: UUID) {
+        let candidateIDs = priorityAssetTargetIDs(for: itemID)
+        let newIDs = candidateIDs.filter { prioritizedAssetRefreshIDs.insert($0).inserted }
+        guard newIDs.isEmpty == false else { return }
+        let limitedIDs = Array(newIDs.prefix(Self.maxPriorityAssetRefreshItems))
+        refreshLocalAssets(for: limitedIDs, showsProgress: false)
+    }
+
+    private func priorityAssetTargetIDs(for itemID: UUID) -> [UUID] {
+        guard let item = item(id: itemID) else { return [] }
+        if item.kind == .tvShow {
+            let showTitle = (item.showTitle ?? item.title).cleanedMediaTitle.lowercased()
+            return items
+                .filter { candidate in
+                    candidate.kind == .tvShow &&
+                    candidate.sourcePath != nil &&
+                    ((candidate.showTitle ?? candidate.title).cleanedMediaTitle.lowercased() == showTitle) &&
+                    (candidate.localPosterPath == nil || candidate.localBackdropPath == nil || candidate.probedWidth == nil)
+                }
+                .prefix(Self.maxPriorityAssetRefreshItems)
+                .map(\.id)
+        }
+        guard item.sourcePath != nil else { return [] }
+        guard item.localPosterPath == nil || item.localBackdropPath == nil || item.probedWidth == nil else { return [] }
+        return [item.id]
+    }
+
+    /// Returns a `Sendable` snapshot of everything the HTTP server needs to stream a
+    /// title, so file I/O and socket writes can run entirely off the main actor.
+    func streamTarget(id: UUID) -> SonderStreamTarget? {
+        guard let item = item(id: id) else { return nil }
+        prioritizeAssets(for: id)
+        return SonderStreamTarget(contentType: item.contentType, sourceBookmark: item.sourceBookmark, sourcePath: item.sourcePath)
+    }
+
+    /// Snapshot of auth/server state the background HTTP queue reads to enforce the
+    /// pairing gate on LAN requests. `Sendable` so it can cross actor boundaries.
+    func serverAuthSnapshot() -> SonderAuthSnapshot {
+        SonderAuthSnapshot(
+            allowLAN: serverSettings.allowLAN,
+            pairingToken: serverSettings.pairingToken
+        )
+    }
+
     func play(_ item: SonderMediaItem) {
+        prioritizeAssets(for: item.id)
         guard let url = item.playableURL else {
             addActivity("Play unavailable", detail: "\(item.title) needs a local media file.", icon: "exclamationmark.triangle")
             return
@@ -1588,7 +2780,6 @@ final class SonderLibrary: ObservableObject {
         _ = url.startAccessingSecurityScopedResource()
         NSWorkspace.shared.open(url)
         addActivity("Opened \(item.title)", detail: url.lastPathComponent, icon: "play.fill")
-        save()
     }
 
     func progress(for item: SonderMediaItem) -> Double {
@@ -1619,7 +2810,7 @@ final class SonderLibrary: ObservableObject {
         if let item = item(id: itemID) {
             addActivity("Updated progress", detail: "\(item.title) is now \(Int((sanitizedSeconds / sanitizedDuration) * 100))% watched.", icon: "chart.line.uptrend.xyaxis")
         }
-        save()
+        commitLibraryMutation()
     }
 
     func createCollection(named name: String, kind: SonderCollectionKind = .collection) {
@@ -1627,7 +2818,7 @@ final class SonderLibrary: ObservableObject {
         guard trimmed.isEmpty == false else { return }
         collections.insert(SonderCollection(name: trimmed, kind: kind, itemIDs: []), at: 0)
         addActivity("Created \(kind.label.lowercased())", detail: trimmed, icon: kind.icon)
-        save()
+        commitLibraryMutation()
     }
 
     func renameForPlex(_ item: SonderMediaItem) {
@@ -1643,15 +2834,51 @@ final class SonderLibrary: ObservableObject {
             items[index].sourcePath = finalURL.path
             items[index].format = SonderMediaFormat(url: finalURL)
             addActivity("Renamed for Plex", detail: finalURL.lastPathComponent, icon: "textformat")
-            save()
+            commitLibraryMutation()
         } catch {
             addActivity("Rename failed", detail: error.localizedDescription, icon: "exclamationmark.triangle")
         }
     }
 
+    /// Maximum number of `AVAssetExportSession`s to run concurrently. Without a cap,
+    /// `convertAllPlayableToMP4` used to fan out one Task per title (200 in a large
+    /// library), which exhausts GPU/memory and stalls the system.
+    private static let maxConcurrentConversions = 2
+
     func convertAllPlayableToMP4() {
-        for item in items where item.hasFile {
-            convertToMP4(item)
+        let candidates = items.filter { $0.hasFile && $0.format != .mp4 }
+        guard candidates.isEmpty == false else {
+            addActivity("Conversion skipped", detail: "No playable non-MP4 titles to convert.", icon: "checkmark.circle")
+            return
+        }
+        addActivity("Queueing conversions", detail: "\(candidates.count) title(s), \(Self.maxConcurrentConversions) at a time.", icon: "arrow.triangle.2.circlepath")
+        Task { [weak self] in
+            guard let self else { return }
+            await Self.runWithConcurrencyLimit(Self.maxConcurrentConversions, over: candidates) { item in
+                await MainActor.run { self.convertToMP4(item) }
+            }
+        }
+    }
+
+    /// Runs `work` over `items` with at most `limit` concurrent invocations. Used to
+    /// bound export-session fan-out. Each work closure awaits completion before the
+    /// slot is released.
+    private nonisolated static func runWithConcurrencyLimit<Item>(
+        _ limit: Int,
+        over items: [Item],
+        work: @escaping @Sendable (Item) async -> Void
+    ) async {
+        precondition(limit > 0)
+        await withTaskGroup(of: Void.self) { group in
+            var iterator = items.makeIterator()
+            for _ in 0..<min(limit, items.count) {
+                guard let item = iterator.next() else { break }
+                group.addTask { await work(item) }
+            }
+            while await group.next() != nil {
+                guard let item = iterator.next() else { continue }
+                group.addTask { await work(item) }
+            }
         }
     }
 
@@ -1668,7 +2895,7 @@ final class SonderLibrary: ObservableObject {
         let outputURL = store.availableConversionURL(for: sourceURL)
         let job = SonderConversionJob(title: item.title, detail: "\(sourceURL.lastPathComponent) -> \(outputURL.lastPathComponent)", status: .running)
         conversionJobs.insert(job, at: 0)
-        save()
+        commitLibraryMutation()
 
         Task {
             let result = await store.convertToMP4(sourceURL: sourceURL, outputURL: outputURL)
@@ -1683,7 +2910,7 @@ final class SonderLibrary: ObservableObject {
                 } else if result == false {
                     self.addActivity("Conversion failed", detail: "\(sourceURL.lastPathComponent). Use a companion HandBrake workflow for unsupported codecs.", icon: "exclamationmark.triangle")
                 }
-                self.save()
+                self.commitLibraryMutation()
             }
         }
     }
@@ -1693,7 +2920,7 @@ final class SonderLibrary: ObservableObject {
         if collections[index].itemIDs.contains(item.id) == false {
             collections[index].itemIDs.append(item.id)
             addActivity("Added to collection", detail: "\(item.title) -> \(collection.name)", icon: "plus.circle")
-            save()
+            commitLibraryMutation()
         }
     }
 
@@ -1702,8 +2929,37 @@ final class SonderLibrary: ObservableObject {
         activity = Array(activity.prefix(60))
     }
 
-    private func save() {
-        store.save(SonderSnapshot(items: items, progress: progressRecords, collections: collections, activity: activity, storagePath: storagePath, storageBookmark: storageBookmark, conversionJobs: conversionJobs, libraryDefinitions: libraryDefinitions, mediaDirectories: mediaDirectories, serverSettings: serverSettings))
+    /// Invalidates the HTTP cache so the next request rebuilds the serialised
+    /// library/discovery response.  Called by every mutation path.
+    private func invalidateHTTPCache() {
+        httpCache.invalidate()
+    }
+
+    /// Central mutation hook for library state. It refreshes derived data, invalidates
+    /// HTTP response caches, and optionally schedules a coalesced background persist.
+    private func commitLibraryMutation(persist: Bool = true) {
+        rebuildDerivedData()
+        invalidateHTTPCache()
+        guard persist else { return }
+        saveWorkItem?.cancel()
+        let snapshot = SonderSnapshot(
+            items: items,
+            progress: progressRecords,
+            collections: collections,
+            activity: activity,
+            storagePath: storagePath,
+            storageBookmark: storageBookmark,
+            conversionJobs: conversionJobs,
+            libraryDefinitions: libraryDefinitions,
+            mediaDirectories: mediaDirectories,
+            serverSettings: serverSettings
+        )
+        let workItem = DispatchWorkItem { [store = self.store] in
+            store.save(snapshot)
+        }
+        saveWorkItem = workItem
+        // 500 ms coalescing window — plenty for rapid progress updates without I/O pressure
+        saveQueue.asyncAfter(deadline: .now() + 0.5, execute: workItem)
     }
 
     private func libraryID(for kind: SonderLibraryImportKind) -> UUID {
@@ -1721,7 +2977,17 @@ final class SonderLibrary: ObservableObject {
     }
 }
 
-struct SonderSnapshot: Codable {
+nonisolated private struct SonderDerivedData {
+    var playableCount: Int
+    var averageProgress: Double
+    var allTags: [String]
+    var tagUsage: [(tag: String, count: Int)]
+    var mediaKindCounts: [SonderMediaKind: Int]
+    var inProgressItems: [SonderMediaItem]
+    var tvShowGroups: [SonderTVShowGroup]
+}
+
+nonisolated struct SonderSnapshot: Codable {
     var items: [SonderMediaItem]
     var progress: [SonderProgress]
     var collections: [SonderCollection]
@@ -1733,997 +2999,20 @@ struct SonderSnapshot: Codable {
     var mediaDirectories: [SonderMediaDirectory]?
     var serverSettings: SonderServerSettings?
 
-    static let seeded = SonderSnapshot(
-        items: SonderSeed.catalog,
+    static let startupPlaceholder = SonderSnapshot(
+        items: [],
         progress: [],
-        collections: SonderLibrary.defaultCollections,
+        collections: [],
         activity: [],
         storagePath: nil,
         storageBookmark: nil,
         conversionJobs: [],
-        libraryDefinitions: SonderLibraryDefinition.defaults,
+        libraryDefinitions: nil,
         mediaDirectories: [],
-        serverSettings: .default
+        serverSettings: nil
     )
-}
 
-final class SonderStore {
-    let rootURL: URL
-
-    init(rootURL: URL? = nil) {
-        if let rootURL {
-            self.rootURL = rootURL
-        } else {
-            let support = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first ?? FileManager.default.temporaryDirectory
-            self.rootURL = support.appendingPathComponent("TM Sonder", isDirectory: true)
-        }
-    }
-
-    var databaseURL: URL {
-        rootURL.appendingPathComponent("library.json")
-    }
-
-    var uploadsURL: URL {
-        rootURL.appendingPathComponent("Media", isDirectory: true)
-    }
-
-    func load() -> SonderSnapshot {
-        do {
-            let data = try Data(contentsOf: databaseURL)
-            return sanitize(try JSONDecoder.sonder.decode(SonderSnapshot.self, from: data))
-        } catch {
-            return .seeded
-        }
-    }
-
-    func save(_ snapshot: SonderSnapshot) {
-        do {
-            try FileManager.default.createDirectory(at: rootURL, withIntermediateDirectories: true)
-            let data = try JSONEncoder.sonder.encode(snapshot)
-            try data.write(to: databaseURL, options: .atomic)
-        } catch {
-            assertionFailure("Could not save Sonder library: \(error)")
-        }
-    }
-
-    func storageURL(from bookmark: Data?) -> URL? {
-        guard let bookmark else { return nil }
-        var isStale = false
-        return try? URL(resolvingBookmarkData: bookmark, options: [.withSecurityScope], relativeTo: nil, bookmarkDataIsStale: &isStale)
-    }
-
-    func bookmark(for url: URL) throws -> Data {
-        try url.bookmarkData(options: [.withSecurityScope], includingResourceValuesForKeys: nil, relativeTo: nil)
-    }
-
-    func copyIntoManagedStorage(_ sourceURL: URL, storagePath: String, storageBookmark: Data?) throws -> URL {
-        let mediaURL = storageURL(from: storageBookmark) ?? URL(fileURLWithPath: storagePath, isDirectory: true)
-        let didAccessMedia = mediaURL.startAccessingSecurityScopedResource()
-        defer {
-            if didAccessMedia {
-                mediaURL.stopAccessingSecurityScopedResource()
-            }
-        }
-        try FileManager.default.createDirectory(at: mediaURL, withIntermediateDirectories: true)
-        let destination = uniqueDestination(for: sourceURL.lastPathComponent, in: mediaURL)
-        let didAccessSource = sourceURL.startAccessingSecurityScopedResource()
-        if didAccessSource {
-            defer { sourceURL.stopAccessingSecurityScopedResource() }
-            try FileManager.default.copyItem(at: sourceURL, to: destination)
-        } else {
-            try FileManager.default.copyItem(at: sourceURL, to: destination)
-        }
-        return destination
-    }
-
-    nonisolated func mediaFiles(
-        in directoryPath: String,
-        bookmark: Data?,
-        progress: @escaping @Sendable (_ filesSeenDelta: Int, _ mediaFoundDelta: Int, _ currentPath: String) async -> Void
-    ) async throws -> SonderMediaScanResult {
-        let scopedURL = Self.storageURL(from: bookmark) ?? URL(fileURLWithPath: directoryPath, isDirectory: true)
-        let didAccess = scopedURL.startAccessingSecurityScopedResource()
-        defer {
-            if didAccess {
-                scopedURL.stopAccessingSecurityScopedResource()
-            }
-        }
-
-        guard let enumerator = FileManager.default.enumerator(
-            at: scopedURL,
-            includingPropertiesForKeys: [.isRegularFileKey],
-            options: [.skipsHiddenFiles, .skipsPackageDescendants]
-        ) else {
-            return SonderMediaScanResult(files: [], filesSeen: 0, mediaFound: 0, unsupportedMediaCount: 0)
-        }
-
-        var files: [SonderScannedMediaFile] = []
-        var filesSeen = 0
-        var mediaFound = 0
-        var unsupportedMediaCount = 0
-        while let url = enumerator.nextObject() as? URL {
-            filesSeen += 1
-            guard SonderMediaFormat.isSupported(url: url) else {
-                if Self.looksLikeUnsupportedVideo(url) {
-                    unsupportedMediaCount += 1
-                }
-                if filesSeen.isMultiple(of: 100) {
-                    await progress(filesSeen, mediaFound, url.path)
-                }
-                continue
-            }
-            let values = try? url.resourceValues(forKeys: [.isRegularFileKey])
-            if values?.isRegularFile == true {
-                mediaFound += 1
-                files.append(SonderScannedMediaFile(url: url, bookmark: try? Self.bookmark(for: url)))
-            }
-            if filesSeen.isMultiple(of: 100) {
-                await progress(filesSeen, mediaFound, url.path)
-            }
-        }
-        if filesSeen > 0 || mediaFound > 0 {
-            await progress(filesSeen, mediaFound, scopedURL.path)
-        }
-        return SonderMediaScanResult(
-            files: files.sorted { $0.url.path.localizedStandardCompare($1.url.path) == .orderedAscending },
-            filesSeen: filesSeen,
-            mediaFound: mediaFound,
-            unsupportedMediaCount: unsupportedMediaCount
-        )
-    }
-
-    nonisolated static func storageURL(from bookmark: Data?) -> URL? {
-        guard let bookmark else { return nil }
-        var isStale = false
-        return try? URL(resolvingBookmarkData: bookmark, options: [.withSecurityScope], relativeTo: nil, bookmarkDataIsStale: &isStale)
-    }
-
-    nonisolated static func bookmark(for url: URL) throws -> Data {
-        try url.bookmarkData(options: [.withSecurityScope], includingResourceValuesForKeys: nil, relativeTo: nil)
-    }
-
-    nonisolated private static func looksLikeUnsupportedVideo(_ url: URL) -> Bool {
-        ["flv", "wmv", "divx", "vob", "ogm", "rm", "rmvb"].contains(url.pathExtension.lowercased())
-    }
-
-    private func sanitize(_ snapshot: SonderSnapshot) -> SonderSnapshot {
-        var sanitized = snapshot
-        let itemIDs = Set(sanitized.items.map(\.id))
-        sanitized.progress.removeAll { itemIDs.contains($0.itemID) == false }
-        sanitized.collections = sanitized.collections.map { collection in
-            var copy = collection
-            copy.itemIDs = copy.itemIDs.filter { itemIDs.contains($0) }
-            return copy
-        }
-        return sanitized
-    }
-
-    func moveAvoidingCollision(from sourceURL: URL, to destinationURL: URL) throws -> URL {
-        let destination = uniqueDestination(for: destinationURL.lastPathComponent, in: destinationURL.deletingLastPathComponent())
-        if sourceURL.path == destination.path {
-            return sourceURL
-        }
-        try FileManager.default.moveItem(at: sourceURL, to: destination)
-        return destination
-    }
-
-    func convertToMP4(sourceURL: URL, outputURL: URL) async -> Bool {
-        let didAccess = sourceURL.startAccessingSecurityScopedResource()
-        defer {
-            if didAccess {
-                sourceURL.stopAccessingSecurityScopedResource()
-            }
-        }
-        let asset = AVURLAsset(url: sourceURL)
-        guard let session = AVAssetExportSession(asset: asset, presetName: AVAssetExportPresetHighestQuality),
-              session.supportedFileTypes.contains(.mp4) else {
-            return false
-        }
-        do {
-            session.outputURL = outputURL
-            session.outputFileType = .mp4
-            try await session.export(to: outputURL, as: .mp4)
-            return FileManager.default.fileExists(atPath: outputURL.path)
-        } catch {
-            return false
-        }
-    }
-
-    func availableConversionURL(for sourceURL: URL) -> URL {
-        uniqueDestination(
-            for: sourceURL.deletingPathExtension().appendingPathExtension("mp4").lastPathComponent,
-            in: sourceURL.deletingLastPathComponent()
-        )
-    }
-
-    private func uniqueDestination(for fileName: String, in folderURL: URL) -> URL {
-        let base = URL(fileURLWithPath: fileName).deletingPathExtension().lastPathComponent
-        let ext = URL(fileURLWithPath: fileName).pathExtension
-        var candidate = folderURL.appendingPathComponent(fileName)
-        var counter = 2
-        while FileManager.default.fileExists(atPath: candidate.path) {
-            let nextName = ext.isEmpty ? "\(base)-\(counter)" : "\(base)-\(counter).\(ext)"
-            candidate = folderURL.appendingPathComponent(nextName)
-            counter += 1
-        }
-        return candidate
-    }
-}
-
-struct SonderMediaItem: Codable, Identifiable, Hashable {
-    var id = UUID()
-    var title: String
-    var subtitle: String
-    var kind: SonderMediaKind
-    var studio: String
-    var year: Int
-    var durationSeconds: Double
-    var format: SonderMediaFormat
-    var tags: [String]
-    var summary: String
-    var sourcePath: String?
-    var sourceBookmark: Data?
-    var progressSeconds: Double = 0
-    var showTitle: String?
-    var seasonNumber: Int?
-    var episodeNumber: Int?
-    var metadataIDSource: String?
-    var metadataID: String?
-    var edition: String?
-    var splitPart: String?
-    var localPosterPath: String?
-    var localBackdropPath: String?
-    var subtitlePaths: [String] = []
-
-    var hasFile: Bool {
-        playableURL != nil
-    }
-
-    var playableURL: URL? {
-        if let sourceBookmark {
-            var isStale = false
-            if let url = try? URL(resolvingBookmarkData: sourceBookmark, options: [.withSecurityScope], relativeTo: nil, bookmarkDataIsStale: &isStale),
-               FileManager.default.fileExists(atPath: url.path) {
-                return url
-            }
-        }
-        guard let sourcePath, FileManager.default.fileExists(atPath: sourcePath) else { return nil }
-        return URL(fileURLWithPath: sourcePath)
-    }
-
-    var localPosterImage: NSImage? {
-        guard let localPosterPath else { return nil }
-        return NSImage(contentsOfFile: localPosterPath)
-    }
-
-    var contentType: String {
-        format.contentType
-    }
-
-    var progress: Double {
-        guard durationSeconds > 0 else { return 0 }
-        return min(max(progressSeconds / durationSeconds, 0), 1)
-    }
-
-    var searchText: String {
-        ([title, subtitle, studio, kind.label, summary, showTitle ?? "", episodeCode] + tags).joined(separator: " ")
-    }
-
-    var episodeCode: String {
-        guard let seasonNumber, let episodeNumber else { return "Not episodic" }
-        return String(format: "S%02dE%02d", seasonNumber, episodeNumber)
-    }
-
-    var plexFileName: String {
-        let ext = format == .unknown ? "mp4" : format.rawValue
-        switch kind {
-        case .tvShow:
-            let show = (showTitle ?? title).plexSafeName
-            let episodeTitle = title.plexSafeName
-            let code = episodeCode == "Not episodic" ? "S01E01" : episodeCode
-            return "\(show) - \(code) - \(episodeTitle).\(ext)"
-        case .movie, .documentary:
-            let editionTag = edition.map { " {edition-\($0.plexSafeName)}" } ?? ""
-            return "\(title.plexSafeName) (\(year))\(editionTag).\(ext)"
-        case .all:
-            return "\(title.plexSafeName).\(ext)"
-        }
-    }
-}
-
-enum SonderSection: String, CaseIterable, Identifiable {
-    case library
-    case tvShows
-    case continueWatching
-    case collections
-    case server
-    case about
-
-    var id: String { rawValue }
-}
-
-enum SonderMediaKind: String, Codable, CaseIterable, Identifiable {
-    case all
-    case movie
-    case tvShow
-    case documentary
-
-    var id: String { rawValue }
-
-    static var mediaCases: [SonderMediaKind] {
-        [.movie, .tvShow, .documentary]
-    }
-
-    var label: String {
-        switch self {
-        case .all: "All"
-        case .movie: "Movie"
-        case .tvShow: "TV Show"
-        case .documentary: "Documentary"
-        }
-    }
-
-    var shortLabel: String {
-        switch self {
-        case .all: "ALL"
-        case .movie: "FILM"
-        case .tvShow: "TV"
-        case .documentary: "DOC"
-        }
-    }
-
-    var icon: String {
-        switch self {
-        case .all: "rectangle.stack"
-        case .movie: "film"
-        case .tvShow: "tv"
-        case .documentary: "camera.metering.matrix"
-        }
-    }
-
-    var gradient: [Color] {
-        switch self {
-        case .all: [SonderTheme.accentMuted, SonderTheme.surfaceDeep]
-        case .movie: [Color(red: 0.27, green: 0.32, blue: 0.18), SonderTheme.surfaceDeep]
-        case .tvShow: [Color(red: 0.19, green: 0.29, blue: 0.31), SonderTheme.surfaceDeep]
-        case .documentary: [Color(red: 0.31, green: 0.24, blue: 0.18), SonderTheme.surfaceDeep]
-        }
-    }
-}
-
-enum SonderMediaFormat: String, Codable {
-    case mp4
-    case mov
-    case m4v
-    case mkv
-    case webm
-    case avi
-    case mpg
-    case mpeg
-    case ts
-    case m2ts
-    case unknown
-
-    static var importTypes: [UTType] {
-        [
-            .movie,
-            .mpeg4Movie,
-            .quickTimeMovie,
-            UTType(filenameExtension: "mkv") ?? .data,
-            UTType(filenameExtension: "webm") ?? .data,
-            UTType(filenameExtension: "avi") ?? .data,
-            UTType(filenameExtension: "mpg") ?? .data,
-            UTType(filenameExtension: "mpeg") ?? .data,
-            UTType(filenameExtension: "ts") ?? .data,
-            UTType(filenameExtension: "m2ts") ?? .data
-        ]
-    }
-
-    nonisolated init(url: URL) {
-        switch url.pathExtension.lowercased() {
-        case "mp4": self = .mp4
-        case "mov": self = .mov
-        case "m4v": self = .m4v
-        case "mkv": self = .mkv
-        case "webm": self = .webm
-        case "avi": self = .avi
-        case "mpg": self = .mpg
-        case "mpeg": self = .mpeg
-        case "ts": self = .ts
-        case "m2ts": self = .m2ts
-        default: self = .unknown
-        }
-    }
-
-    nonisolated static func isSupported(url: URL) -> Bool {
-        switch url.pathExtension.lowercased() {
-        case "mp4", "mov", "m4v", "mkv", "webm", "avi", "mpg", "mpeg", "ts", "m2ts":
-            return true
-        default:
-            return false
-        }
-    }
-
-    nonisolated var contentType: String {
-        switch self {
-        case .mp4, .m4v: "video/mp4"
-        case .mov: "video/quicktime"
-        case .mkv: "video/x-matroska"
-        case .webm: "video/webm"
-        case .avi: "video/x-msvideo"
-        case .mpg, .mpeg: "video/mpeg"
-        case .ts, .m2ts: "video/mp2t"
-        case .unknown: "application/octet-stream"
-        }
-    }
-}
-
-struct SonderProgress: Codable, Identifiable, Hashable {
-    var id = UUID()
-    var itemID: UUID
-    var seconds: Double
-    var duration: Double
-    var updatedAt = Date()
-
-    var percent: Double {
-        guard duration > 0 else { return 0 }
-        return min(max(seconds / duration, 0), 1)
-    }
-}
-
-struct SonderCollection: Codable, Identifiable, Hashable {
-    var id = UUID()
-    var name: String
-    var kind: SonderCollectionKind = .collection
-    var itemIDs: [UUID]
-}
-
-struct SonderMediaDirectory: Codable, Identifiable, Hashable {
-    var id = UUID()
-    var name: String
-    var path: String
-    var bookmark: Data
-    var kind: SonderLibraryImportKind = .movies
-    var libraryID: UUID = SonderLibraryImportKind.movies.defaultLibraryID
-    var lastIndexedCount = 0
-    var lastScannedFileCount = 0
-    var lastUnsupportedCount = 0
-    var lastSkippedDuplicateCount = 0
-    var lastParseFailureCount = 0
-    var lastScannedAt: Date?
-
-    var scanSummary: String {
-        "unsupported \(lastUnsupportedCount) - duplicates \(lastSkippedDuplicateCount) - parse issues \(lastParseFailureCount)"
-    }
-}
-
-struct SonderTVShowGroup: Identifiable, Hashable {
-    var id: String { name }
-    var name: String
-    var seasons: [SonderTVSeasonGroup]
-    var episodeCount: Int {
-        seasons.map(\.episodes.count).reduce(0, +)
-    }
-}
-
-struct SonderTVSeasonGroup: Identifiable, Hashable {
-    var id: Int { seasonNumber }
-    var seasonNumber: Int
-    var episodes: [SonderMediaItem]
-
-    var label: String {
-        seasonNumber == 0 ? "Specials" : "Season \(seasonNumber)"
-    }
-}
-
-struct SonderLibraryDefinition: Codable, Identifiable, Hashable {
-    var id: UUID
-    var name: String
-    var kind: SonderLibraryImportKind
-    var createdAt = Date()
-
-    static let defaults = [
-        SonderLibraryDefinition(id: SonderLibraryImportKind.movies.defaultLibraryID, name: "Movies", kind: .movies),
-        SonderLibraryDefinition(id: SonderLibraryImportKind.tvShows.defaultLibraryID, name: "TV Shows", kind: .tvShows)
-    ]
-}
-
-enum SonderLibraryImportKind: String, Codable, CaseIterable, Identifiable {
-    case movies
-    case tvShows
-
-    var id: String { rawValue }
-
-    nonisolated var label: String {
-        switch self {
-        case .movies: "Movies"
-        case .tvShows: "TV Shows"
-        }
-    }
-
-    nonisolated var tag: String {
-        switch self {
-        case .movies: "movies"
-        case .tvShows: "tv"
-        }
-    }
-
-    nonisolated var icon: String {
-        switch self {
-        case .movies: "film"
-        case .tvShows: "tv"
-        }
-    }
-
-    nonisolated var defaultLibraryID: UUID {
-        switch self {
-        case .movies: UUID(uuidString: "11111111-1111-4111-8111-111111111111")!
-        case .tvShows: UUID(uuidString: "22222222-2222-4222-8222-222222222222")!
-        }
-    }
-}
-
-struct SonderScanDiagnostics: Hashable {
-    var mediaCount: Int
-    var fileCount: Int
-    var unsupportedCount: Int
-    var skippedDuplicateCount: Int
-    var parseFailureCount: Int
-    var scannedAt: Date
-}
-
-struct SonderScanProgress: Identifiable, Hashable {
-    var id = UUID()
-    var phase: SonderScanPhase = .fastTitles
-    var title: String
-    var detail: String
-    var filesSeen: Int
-    var mediaFound: Int
-    var indexedCount: Int
-    var directoriesDone: Int
-    var directoriesTotal: Int
-
-    var fraction: Double {
-        guard directoriesTotal > 0 else { return 0 }
-        return min(Double(directoriesDone) / Double(directoriesTotal), 0.98)
-    }
-}
-
-enum SonderScanPhase: String, Codable, Hashable {
-    case fastTitles
-    case localAssets
-    case metadata
-
-    var label: String {
-        switch self {
-        case .fastTitles: "Indexing titles"
-        case .localAssets: "Finding artwork"
-        case .metadata: "Refreshing metadata"
-        }
-    }
-}
-
-struct SonderServerSettings: Codable, Hashable {
-    var isEnabled: Bool
-    var allowLAN: Bool
-    var port: Int
-
-    static let `default` = SonderServerSettings(isEnabled: false, allowLAN: false, port: 8797)
-
-    var statusLabel: String {
-        guard isEnabled else { return "Web server is off." }
-        return allowLAN ? "Web server is available on the LAN." : "Web server is local-only."
-    }
-}
-
-extension Notification.Name {
-    static let sonderServerSettingsDidChange = Notification.Name("SonderServerSettingsDidChange")
-}
-
-struct SonderMediaScanResult: Sendable {
-    var files: [SonderScannedMediaFile]
-    var filesSeen: Int
-    var mediaFound: Int
-    var unsupportedMediaCount: Int
-}
-
-struct SonderLocalAssetUpdate: Sendable {
-    var posterPath: String?
-    var backdropPath: String?
-    var subtitlePaths: [String]
-}
-
-struct SonderScannedMediaFile: Sendable {
-    var url: URL
-    var bookmark: Data?
-}
-
-enum SonderCollectionKind: String, Codable, CaseIterable, Identifiable {
-    case collection
-    case playlist
-
-    var id: String { rawValue }
-
-    var label: String {
-        switch self {
-        case .collection: "Collection"
-        case .playlist: "Playlist"
-        }
-    }
-
-    var icon: String {
-        switch self {
-        case .collection: "folder.badge.plus"
-        case .playlist: "music.note.list"
-        }
-    }
-}
-
-struct SonderConversionJob: Codable, Identifiable, Hashable {
-    var id = UUID()
-    var title: String
-    var detail: String
-    var status: SonderConversionStatus
-    var createdAt = Date()
-}
-
-enum SonderConversionStatus: String, Codable {
-    case running
-    case completed
-    case failed
-
-    var label: String {
-        switch self {
-        case .running: "Running"
-        case .completed: "Done"
-        case .failed: "Failed"
-        }
-    }
-
-    var icon: String {
-        switch self {
-        case .running: "arrow.triangle.2.circlepath"
-        case .completed: "checkmark.circle"
-        case .failed: "exclamationmark.triangle"
-        }
-    }
-}
-
-struct SonderActivityEvent: Codable, Identifiable, Hashable {
-    var id = UUID()
-    var title: String
-    var detail: String
-    var icon: String
-    var date = Date()
-}
-
-enum SonderSeed {
-    static let catalog: [SonderMediaItem] = [
-        SonderMediaItem(
-            title: "Northstar",
-            subtitle: "Feature Film - 2022",
-            kind: .movie,
-            studio: "Local Archive",
-            year: 2022,
-            durationSeconds: 6840,
-            format: .mp4,
-            tags: ["feature", "drama", "4k"],
-            summary: "A placeholder feature entry for validating poster density, filtering, detail metadata, and watch progress."
-        ),
-        SonderMediaItem(
-            title: "The Last Signal",
-            subtitle: "Feature Film - 2019",
-            kind: .movie,
-            studio: "Local Archive",
-            year: 2019,
-            durationSeconds: 6120,
-            format: .m4v,
-            tags: ["sci-fi", "feature"],
-            summary: "A science-fiction library sample that demonstrates Sonder's movie catalog flow and local streaming route."
-        ),
-        SonderMediaItem(
-            title: "Workshop Sessions",
-            subtitle: "Season 1 - 8 episodes",
-            kind: .tvShow,
-            studio: "Home Studio",
-            year: 2024,
-            durationSeconds: 2880,
-            format: .mp4,
-            tags: ["series", "education", "workshop"],
-            summary: "A TV-style series entry for grouping episodic media and keeping active titles in Continue Watching."
-        ),
-        SonderMediaItem(
-            title: "Archive Road",
-            subtitle: "Documentary - 2021",
-            kind: .documentary,
-            studio: "Field Notes",
-            year: 2021,
-            durationSeconds: 5340,
-            format: .mov,
-            tags: ["documentary", "history", "travel"],
-            summary: "A documentary sample used to tune the Alexandria-inspired management dashboard and tag analytics."
-        ),
-        SonderMediaItem(
-            title: "Deep Workbench",
-            subtitle: "Documentary Series - 3 parts",
-            kind: .documentary,
-            studio: "Independent",
-            year: 2023,
-            durationSeconds: 4020,
-            format: .mp4,
-            tags: ["documentary", "craft", "series"],
-            summary: "A multi-part documentary concept showing how collections can separate films, shows, and documentary shelves."
-        ),
-        SonderMediaItem(
-            title: "Night Harbor",
-            subtitle: "Feature Film - 2020",
-            kind: .movie,
-            studio: "Local Archive",
-            year: 2020,
-            durationSeconds: 7020,
-            format: .mkv,
-            tags: ["thriller", "feature"],
-            summary: "A long-form feature sample with MKV metadata for testing non-MP4 catalog entries and detail state."
-        )
-    ]
-}
-
-struct SonderParsedMedia {
-    var title: String
-    var subtitle: String
-    var kind: SonderMediaKind
-    var year: Int?
-    var showTitle: String?
-    var season: Int?
-    var episode: Int?
-    var metadataIDSource: String?
-    var metadataID: String?
-    var edition: String?
-    var splitPart: String?
-    var localPosterPath: String?
-    var localBackdropPath: String?
-    var subtitlePaths: [String] = []
-}
-
-enum SonderMediaParser {
-    nonisolated static func parseTitle(url: URL, libraryKind: SonderLibraryImportKind? = nil) -> SonderParsedMedia {
-        parse(url: url, libraryKind: libraryKind, includeLocalAssets: false)
-    }
-
-    nonisolated static func parse(url: URL, libraryKind: SonderLibraryImportKind? = nil) -> SonderParsedMedia {
-        parse(url: url, libraryKind: libraryKind, includeLocalAssets: true)
-    }
-
-    nonisolated private static func parse(url: URL, libraryKind: SonderLibraryImportKind? = nil, includeLocalAssets: Bool) -> SonderParsedMedia {
-        let raw = url.deletingPathExtension().lastPathComponent.cleanedMediaTitle
-        let parent = url.deletingLastPathComponent().lastPathComponent.cleanedMediaTitle
-        let grandparent = url.deletingLastPathComponent().deletingLastPathComponent().lastPathComponent.cleanedMediaTitle
-        let assets = includeLocalAssets ? localAssets(near: url) : (poster: nil, backdrop: nil, subtitles: [])
-        let metadataTag = extractMetadataTag(from: raw) ?? extractMetadataTag(from: parent)
-        let edition = extractEdition(from: raw) ?? extractEdition(from: parent)
-        let splitPart = extractSplitPart(from: raw)
-        let movieFolderCandidate = extractMovieNameAndYear(from: parent)
-        let movieFileCandidate = extractMovieNameAndYear(from: raw)
-        let nsRange = NSRange(raw.startIndex..<raw.endIndex, in: raw)
-        let patterns = [
-            #"(?i)^(.+?)[\s._-]+S(\d{1,2})E(\d{1,2})(?:[\s._-]*E?(\d{1,2}))?[\s._-]*(.*)$"#,
-            #"(?i)^S(\d{1,2})E(\d{1,2})(?:[\s._-]*E?(\d{1,2}))?[\s._-]*(.*)$"#,
-            #"(?i)^(.+?)[\s._-]+(\d{1,2})x(\d{1,2})[\s._-]*(.*)$"#
-        ]
-
-        for pattern in patterns {
-            guard let regex = try? NSRegularExpression(pattern: pattern),
-                  let match = regex.firstMatch(in: raw, range: nsRange) else {
-                continue
-            }
-            let hasShowPrefix = match.numberOfRanges >= 5
-            let showRangeIndex = hasShowPrefix ? 1 : nil
-            let seasonIndex = hasShowPrefix ? 2 : 1
-            let episodeIndex = hasShowPrefix ? 3 : 2
-            let titleIndex = match.numberOfRanges - 1
-            guard let seasonRange = Range(match.range(at: seasonIndex), in: raw),
-                  let episodeRange = Range(match.range(at: episodeIndex), in: raw) else {
-                continue
-            }
-            let episodeTitle = Range(match.range(at: titleIndex), in: raw).map { String(raw[$0]).cleanedMediaTitle } ?? ""
-            let folderShow = parent.localizedCaseInsensitiveContains("season") ? grandparent : parent
-            let show = showRangeIndex.flatMap { Range(match.range(at: $0), in: raw).map { String(raw[$0]).cleanedMediaTitle } } ?? folderShow
-            let season = Int(raw[seasonRange]) ?? 1
-            let episode = Int(raw[episodeRange]) ?? 1
-            return SonderParsedMedia(
-                title: episodeTitle.isEmpty ? "Episode \(episode)" : episodeTitle,
-                subtitle: "\(show) - S\(String(format: "%02d", season))E\(String(format: "%02d", episode))",
-                kind: .tvShow,
-                year: extractYear(from: raw) ?? extractYear(from: show),
-                showTitle: show,
-                season: season,
-                episode: episode,
-                metadataIDSource: metadataTag?.source,
-                metadataID: metadataTag?.id,
-                edition: edition,
-                localPosterPath: assets.poster?.path,
-                localBackdropPath: assets.backdrop?.path,
-                subtitlePaths: assets.subtitles.map(\.path)
-            )
-        }
-
-        if libraryKind == .tvShows {
-            let show = parent.localizedCaseInsensitiveContains("season") ? grandparent : parent
-            let season = extractSeason(from: parent)
-            return SonderParsedMedia(
-                title: raw,
-                subtitle: season.map { "\(show) - Season \($0)" } ?? show,
-                kind: .tvShow,
-                year: extractYear(from: raw) ?? extractYear(from: show),
-                showTitle: show,
-                season: season,
-                episode: nil,
-                metadataIDSource: metadataTag?.source,
-                metadataID: metadataTag?.id,
-                edition: edition,
-                localPosterPath: assets.poster?.path,
-                localBackdropPath: assets.backdrop?.path,
-                subtitlePaths: assets.subtitles.map(\.path)
-            )
-        }
-
-        if libraryKind == .movies, let movie = movieFolderCandidate ?? movieFileCandidate {
-            return SonderParsedMedia(
-                title: movie.title,
-                subtitle: movie.year.map { "Movie - \($0)" } ?? "Movie",
-                kind: .movie,
-                year: movie.year,
-                metadataIDSource: metadataTag?.source,
-                metadataID: metadataTag?.id,
-                edition: edition,
-                splitPart: splitPart,
-                localPosterPath: assets.poster?.path,
-                localBackdropPath: assets.backdrop?.path,
-                subtitlePaths: assets.subtitles.map(\.path)
-            )
-        }
-
-        let lower = raw.lowercased()
-        let kind: SonderMediaKind = lower.contains("documentary") || lower.contains("docu") ? .documentary : .movie
-        return SonderParsedMedia(
-            title: movieFileCandidate?.title ?? raw.removingPlexTags.cleanedMediaTitle,
-            subtitle: "Imported local media",
-            kind: kind,
-            year: extractYear(from: raw),
-            metadataIDSource: metadataTag?.source,
-            metadataID: metadataTag?.id,
-            edition: edition,
-            splitPart: splitPart,
-            localPosterPath: assets.poster?.path,
-            localBackdropPath: assets.backdrop?.path,
-            subtitlePaths: assets.subtitles.map(\.path)
-        )
-    }
-
-    nonisolated private static func extractMovieNameAndYear(from value: String) -> (title: String, year: Int?)? {
-        guard let year = extractYear(from: value) else { return nil }
-        let title = value
-            .replacingOccurrences(of: #"\(\d{4}\)"#, with: "", options: .regularExpression)
-            .replacingOccurrences(of: #"\b\d{4}\b"#, with: "", options: .regularExpression)
-            .removingPlexTags
-            .removingSplitSuffix
-            .cleanedMediaTitle
-        return (title.isEmpty ? value : title, year)
-    }
-
-    nonisolated private static func extractMetadataTag(from value: String) -> (source: String, id: String)? {
-        guard let match = value.firstMatch(pattern: #"\{(imdb|tmdb)-([^}]+)\}"#) else { return nil }
-        return (match[0], match[1])
-    }
-
-    nonisolated private static func extractEdition(from value: String) -> String? {
-        value.firstMatch(pattern: #"\{edition-([^}]{1,32})\}"#)?.first
-    }
-
-    nonisolated private static func extractSplitPart(from value: String) -> String? {
-        value.firstMatch(pattern: #"(?i)(?:^|[\s._-])(cd\d+|disc\d+|disk\d+|dvd\d+|part\d+|pt\d+)$"#)?.first
-    }
-
-    nonisolated static func localAssets(near url: URL) -> (poster: URL?, backdrop: URL?, subtitles: [URL]) {
-        let folder = url.deletingLastPathComponent()
-        let base = url.deletingPathExtension().lastPathComponent
-        let posterNames = ["poster.jpg", "poster.png", "folder.jpg", "\(base).jpg", "\(base).png"]
-        let backdropNames = ["background.jpg", "background.png", "fanart.jpg", "fanart.png", "backdrop.jpg", "backdrop.png"]
-        let poster = posterNames.map { folder.appendingPathComponent($0) }.first { FileManager.default.fileExists(atPath: $0.path) }
-        let backdrop = backdropNames.map { folder.appendingPathComponent($0) }.first { FileManager.default.fileExists(atPath: $0.path) }
-        let subtitles = (try? FileManager.default.contentsOfDirectory(at: folder, includingPropertiesForKeys: nil))
-            .map { urls in urls.filter { ["srt", "vtt", "ass", "ssa"].contains($0.pathExtension.lowercased()) && $0.deletingPathExtension().lastPathComponent.hasPrefix(base) } } ?? []
-        return (poster, backdrop, subtitles)
-    }
-
-    nonisolated private static func extractYear(from value: String) -> Int? {
-        guard let range = value.range(of: #"(19|20)\d{2}"#, options: .regularExpression) else { return nil }
-        return Int(value[range])
-    }
-
-    nonisolated private static func extractSeason(from value: String) -> Int? {
-        guard let range = value.range(of: #"(?i)season[\s._-]*(\d{1,2})"#, options: .regularExpression) else { return nil }
-        let digits = value[range].filter(\.isNumber)
-        return Int(String(digits))
-    }
-}
-
-enum SonderTheme {
-    static let background = Color(red: 0.06, green: 0.075, blue: 0.055)
-    static let sidebar = Color(red: 0.08, green: 0.10, blue: 0.07)
-    static let surface = Color(red: 0.10, green: 0.13, blue: 0.085)
-    static let surfaceDeep = Color(red: 0.045, green: 0.055, blue: 0.04)
-    static let border = Color(red: 0.20, green: 0.25, blue: 0.16)
-    static let accent = Color(red: 0.71, green: 0.84, blue: 0.43)
-    static let accentStrong = Color(red: 0.55, green: 0.69, blue: 0.28)
-    static let accentMuted = Color(red: 0.18, green: 0.25, blue: 0.12)
-    static let text = Color(red: 0.92, green: 0.95, blue: 0.88)
-    static let textLight = Color(red: 0.66, green: 0.70, blue: 0.61)
-    static let darkText = Color(red: 0.06, green: 0.08, blue: 0.05)
-}
-
-enum SonderTime {
-    static func format(_ seconds: Double) -> String {
-        let safeSeconds = max(0, Int(seconds))
-        let hours = safeSeconds / 3600
-        let minutes = (safeSeconds % 3600) / 60
-        if hours > 0 {
-            return "\(hours)h \(minutes)m"
-        }
-        return "\(minutes)m"
-    }
-}
-
-extension JSONEncoder {
-    static var sonder: JSONEncoder {
-        let encoder = JSONEncoder()
-        encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
-        encoder.dateEncodingStrategy = .iso8601
-        return encoder
-    }
-}
-
-extension JSONDecoder {
-    static var sonder: JSONDecoder {
-        let decoder = JSONDecoder()
-        decoder.dateDecodingStrategy = .iso8601
-        return decoder
-    }
-}
-
-private extension String {
-    nonisolated var cleanedMediaTitle: String {
-        replacingOccurrences(of: ".", with: " ")
-            .replacingOccurrences(of: "_", with: " ")
-            .trimmingCharacters(in: .whitespacesAndNewlines)
-    }
-
-    nonisolated var plexSafeName: String {
-        let illegal = CharacterSet(charactersIn: "/:\\?%*|\"<>")
-        return components(separatedBy: illegal)
-            .joined(separator: " ")
-            .replacingOccurrences(of: "\\s+", with: " ", options: .regularExpression)
-            .trimmingCharacters(in: .whitespacesAndNewlines)
-    }
-
-    nonisolated var removingPlexTags: String {
-        replacingOccurrences(of: #"\{(?:imdb|tmdb)-[^}]+\}"#, with: "", options: [.regularExpression, .caseInsensitive])
-            .replacingOccurrences(of: #"\{edition-[^}]+\}"#, with: "", options: [.regularExpression, .caseInsensitive])
-    }
-
-    nonisolated var removingSplitSuffix: String {
-        replacingOccurrences(of: #"(?i)[\s._-]+(?:cd\d+|disc\d+|disk\d+|dvd\d+|part\d+|pt\d+)$"#, with: "", options: .regularExpression)
-    }
-
-    nonisolated func firstMatch(pattern: String) -> [String]? {
-        guard let regex = try? NSRegularExpression(pattern: pattern, options: [.caseInsensitive]) else { return nil }
-        let nsRange = NSRange(startIndex..<endIndex, in: self)
-        guard let match = regex.firstMatch(in: self, range: nsRange), match.numberOfRanges > 1 else { return nil }
-        return (1..<match.numberOfRanges).compactMap { index in
-            guard let range = Range(match.range(at: index), in: self) else { return nil }
-            return String(self[range]).cleanedMediaTitle
-        }
-    }
+    static let seeded = startupPlaceholder
 }
 
 #Preview {
