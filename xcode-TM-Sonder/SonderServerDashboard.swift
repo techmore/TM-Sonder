@@ -88,18 +88,61 @@ struct ServerDashboard: View {
                         Button {
                             library.importPlexContextIfAvailable(force: true)
                         } label: {
-                            Label("Import Now", systemImage: "arrow.down.doc")
+                            Label(library.plexImportStatus.isRunning ? "Importing" : "Import Now", systemImage: library.plexImportStatus.isRunning ? "hourglass" : "arrow.down.doc")
                         }
+                        .disabled(library.plexImportStatus.isRunning)
                     }
                     Text("Workflow: install/run Plex Media Server on this Mac, let Plex scan your TV library, then use Import Now. Sonder reads Plex's local database and TV metadata cache, then writes per-show `.sonder/sonder-context.json` caches beside matched show roots so later boots read local context first.")
                         .font(.caption)
                         .foregroundStyle(SonderTheme.textLight)
                         .fixedSize(horizontal: false, vertical: true)
+
+                    if library.plexImportStatus.isRunning {
+                        VStack(alignment: .leading, spacing: 6) {
+                            HStack {
+                                Label(library.plexImportStatus.lastMessage, systemImage: "arrow.down.doc")
+                                Spacer()
+                                if library.plexImportStatus.totalCount > 0 {
+                                    Text("\(library.plexImportStatus.processedCount)/\(library.plexImportStatus.totalCount) shows")
+                                        .font(.caption.monospacedDigit())
+                                        .foregroundStyle(SonderTheme.textLight)
+                                }
+                            }
+                            if library.plexImportStatus.totalCount > 0 {
+                                ProgressView(value: library.plexImportStatus.progressFraction)
+                                    .tint(SonderTheme.accentStrong)
+                            } else {
+                                ProgressView()
+                                    .controlSize(.small)
+                            }
+                            HStack {
+                                Label("\(library.plexImportStatus.importedCount) imported", systemImage: "tray.and.arrow.down")
+                                Label("\(library.plexImportStatus.unchangedCount) unchanged", systemImage: "checkmark.circle")
+                                Label("\(library.plexImportStatus.skippedCount) skipped", systemImage: "forward.end")
+                                Spacer()
+                            }
+                            .font(.caption.monospacedDigit())
+                            .foregroundStyle(SonderTheme.textLight)
+                            if let currentTitle = library.plexImportStatus.currentTitle {
+                                Text(currentTitle)
+                                    .font(.caption)
+                                    .foregroundStyle(SonderTheme.textLight)
+                                    .lineLimit(1)
+                                    .truncationMode(.middle)
+                            }
+                        }
+                    }
+
                     HStack {
                         Text(library.plexImportStatus.lastMessage)
                             .font(.caption)
-                            .foregroundStyle(SonderTheme.textLight)
+                            .foregroundStyle(library.plexImportStatus.isRunning ? SonderTheme.accent : SonderTheme.textLight)
                         Spacer()
+                        if library.plexImportStatus.isRunning == false {
+                            Text("\(library.plexImportStatus.importedCount) imported / \(library.plexImportStatus.unchangedCount) unchanged / \(library.plexImportStatus.skippedCount) skipped")
+                                .font(.caption2.monospacedDigit())
+                                .foregroundStyle(SonderTheme.textLight.opacity(0.85))
+                        }
                         if let lastRunAt = library.plexImportStatus.lastRunAt {
                             Text("Last run \(lastRunAt.formatted(date: .abbreviated, time: .shortened))")
                                 .font(.caption2.monospacedDigit())

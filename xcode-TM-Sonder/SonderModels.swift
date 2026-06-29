@@ -552,7 +552,7 @@ enum SonderCollectionKind: String, Codable, CaseIterable, Identifiable {
     }
 }
 
-struct SonderConversionJob: Codable, Identifiable, Hashable {
+nonisolated struct SonderConversionJob: Codable, Identifiable, Hashable {
     var id = UUID()
     var title: String
     var detail: String

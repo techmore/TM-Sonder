@@ -49,7 +49,7 @@ final class SonderAppDelegate: NSObject, NSApplicationDelegate {
         let item = NSStatusBar.system.statusItem(withLength: NSStatusItem.squareLength)
         item.button?.image = statusIcon()
         item.button?.imagePosition = .imageOnly
-        item.button?.toolTip = "TM Sonder"
+        item.button?.toolTip = "TM Sonder menu bar controls. Click to open the app menu."
 
         let menu = NSMenu()
         let openItem = NSMenuItem(title: "Open Sonder", action: #selector(openSonder), keyEquivalent: "")
@@ -93,8 +93,8 @@ final class SonderAppDelegate: NSObject, NSApplicationDelegate {
     }
 
     @objc private func openWebInterface() {
-        let port = httpServer?.port ?? UInt16(library.serverSettings.port)
-        NSWorkspace.shared.open(URL(string: "http://127.0.0.1:\(port)")!)
+        let port = httpServer?.port ?? safeServerPort
+        SonderSystemServices.shared.openLocalWebInterface(port: port)
     }
 
     @objc private func importPlexContext() {
@@ -109,9 +109,13 @@ final class SonderAppDelegate: NSObject, NSApplicationDelegate {
         NSApp.terminate(nil)
     }
 
+    private var safeServerPort: UInt16 {
+        UInt16(clamping: min(max(library.serverSettings.port, 1024), 65535))
+    }
+
     private func applyServerSettings() {
         if library.serverSettings.isEnabled {
-            httpServer?.start(port: UInt16(library.serverSettings.port), allowLAN: library.serverSettings.allowLAN, pairingToken: library.serverSettings.pairingToken)
+            httpServer?.start(port: safeServerPort, allowLAN: library.serverSettings.allowLAN, pairingToken: library.serverSettings.pairingToken)
         } else {
             httpServer?.stop()
         }
@@ -187,7 +191,11 @@ nonisolated final class SonderHTTPServer: @unchecked Sendable {
         stop()
 
         do {
-            let listener = try NWListener(using: .tcp, on: NWEndpoint.Port(rawValue: port)!)
+            guard let endpointPort = NWEndpoint.Port(rawValue: port) else {
+                NSLog("TM Sonder server received invalid port \(port).")
+                return
+            }
+            let listener = try NWListener(using: .tcp, on: endpointPort)
             if allowLAN {
                 listener.service = NWListener.Service(
                     name: serverName,
@@ -201,6 +209,7 @@ nonisolated final class SonderHTTPServer: @unchecked Sendable {
                         "library": "/api/library",
                         "discovery": "/api/discovery",
                         "books": "1",
+                        "audiobooks": "1",
                         "theme": "earthy"
                     ])
                 )
@@ -301,6 +310,8 @@ nonisolated final class SonderHTTPServer: @unchecked Sendable {
         switch request.path {
         case "/", "/index.html":
             send(connection, response: makeResponse(status: "200 OK", contentType: "text/html; charset=utf-8", body: Data(webInterface.utf8)))
+        case "/audiobooks", "/audiobooks.html":
+            send(connection, response: makeResponse(status: "200 OK", contentType: "text/html; charset=utf-8", body: Data(SonderWebInterface.audiobooksHTML.utf8)))
         case "/health", "/api/health":
             send(connection, response: makeJSONResponse([
                 "status": "ok",
@@ -309,12 +320,14 @@ nonisolated final class SonderHTTPServer: @unchecked Sendable {
                 "id": "tm-sonder",
                 "service": serviceType,
                 "library": "/api/library",
+                "audiobooks": "/api/audiobooks",
+                "audiobookBrowser": "/audiobooks",
                 "allowLAN": allowLAN ? "true" : "false"
             ]))
         case "/api/library", "/library.json":
             sendLibrary(connection)
         case "/api/audiobooks":
-            sendAudiobooks(connection)
+            sendAudiobooks(connection, query: request.queryItems["q"])
         case let path where path.hasPrefix("/api/audiobooks/"):
             sendAudiobookDetail(connection, path: path)
         case "/api/discovery":
@@ -372,27 +385,16 @@ nonisolated final class SonderHTTPServer: @unchecked Sendable {
         }
     }
 
-    private func sendAudiobooks(_ connection: NWConnection) {
+    private func sendAudiobooks(_ connection: NWConnection, query: String? = nil) {
         Task { @MainActor in
-            let audiobooks = self.library.audiobookItems().map { item in
-                let metadata = self.library.audiobookMetadata(for: item.id)
-                return SonderAudiobookItem(
-                    item,
-                    chapterCount: self.library.audiobookChapters(for: item.id).count,
-                    author: metadata?.author,
-                    series: metadata?.series,
-                    narrator: metadata?.narrator
-                )
-            }
-            let response = SonderAudiobookResponse(items: audiobooks, count: audiobooks.count, theme: SonderThemeSnapshot(
-                preset: self.library.serverSettings.themePreset,
-                background: SonderTheme.background.hexString,
-                sidebar: SonderTheme.sidebar.hexString,
-                surface: SonderTheme.surface.hexString,
-                border: SonderTheme.border.hexString,
-                accent: SonderTheme.accent.hexString,
-                text: SonderTheme.text.hexString
-            ), generatedAt: Date())
+            let normalizedQuery = query?.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+            let audiobooks = self.library.audiobookItems()
+                .map { self.makeAudiobookItem($0) }
+                .filter { item in
+                    guard let normalizedQuery, normalizedQuery.isEmpty == false else { return true }
+                    return item.searchText.localizedCaseInsensitiveContains(normalizedQuery)
+                }
+            let response = SonderAudiobookResponse(items: audiobooks, count: audiobooks.count, theme: self.themeSnapshot, generatedAt: Date())
             let encoder = JSONEncoder()
             encoder.dateEncodingStrategy = .iso8601
             let encoded = (try? encoder.encode(response)) ?? Data("{}".utf8)
@@ -411,22 +413,46 @@ nonisolated final class SonderHTTPServer: @unchecked Sendable {
                 self.send(connection, response: self.makeJSONResponse(["error": "Audiobook not found"], status: "404 Not Found"))
                 return
             }
-            let chapters = self.library.audiobookChapters(for: id).map {
-                SonderAudiobookChapter(index: $0.index, title: $0.title, startSeconds: $0.startSeconds, endSeconds: $0.endSeconds)
-            }
-            let metadata = self.library.audiobookMetadata(for: id)
-            let response = SonderAudiobookDetail(item: SonderAudiobookItem(
-                item,
-                chapterCount: chapters.count,
-                author: metadata?.author,
-                series: metadata?.series,
-                narrator: metadata?.narrator
-            ), chapters: chapters)
+            let chapters = SonderAudiobookPlaybackModel
+                .resolvedChapters(self.library.audiobookChapters(for: id), duration: item.durationSeconds)
+                .map { SonderAudiobookChapter(index: $0.index, title: $0.title, startSeconds: $0.startSeconds, endSeconds: $0.endSeconds) }
+            let response = SonderAudiobookDetail(item: self.makeAudiobookItem(item), chapters: chapters)
             let encoder = JSONEncoder()
             encoder.dateEncodingStrategy = .iso8601
             let encoded = (try? encoder.encode(response)) ?? Data("{}".utf8)
             self.send(connection, response: self.makeResponse(status: "200 OK", contentType: "application/json", body: encoded))
         }
+    }
+
+    @MainActor
+    private func makeAudiobookItem(_ item: SonderMediaItem) -> SonderAudiobookItem {
+        let metadata = library.audiobookMetadata(for: item.id)
+        let chapters = library.audiobookChapters(for: item.id)
+        return SonderAudiobookItem(
+            item,
+            chapterCount: chapters.count,
+            author: metadata?.author,
+            series: metadata?.series,
+            narrator: metadata?.narrator,
+            playback: SonderAudiobookPlaybackModel.playback(
+                progress: library.progressRecord(for: item),
+                itemDuration: item.durationSeconds,
+                chapters: chapters
+            )
+        )
+    }
+
+    @MainActor
+    private var themeSnapshot: SonderThemeSnapshot {
+        SonderThemeSnapshot(
+            preset: library.serverSettings.themePreset,
+            background: SonderTheme.background.hexString,
+            sidebar: SonderTheme.sidebar.hexString,
+            surface: SonderTheme.surface.hexString,
+            border: SonderTheme.border.hexString,
+            accent: SonderTheme.accent.hexString,
+            text: SonderTheme.text.hexString
+        )
     }
 
     private func sendDiscovery(_ connection: NWConnection) {
@@ -460,6 +486,8 @@ nonisolated final class SonderHTTPServer: @unchecked Sendable {
                 endpoints: SonderDiscoveryEndpoints(
                     health: "/api/health",
                     library: "/api/library",
+                    audiobooks: "/api/audiobooks",
+                    audiobookBrowser: "/audiobooks",
                     discovery: "/api/discovery",
                     progress: "/api/progress/{id}",
                     stream: "/stream/{id}"
@@ -690,123 +718,4 @@ nonisolated final class SonderHTTPServer: @unchecked Sendable {
 
     private var webInterface: String { SonderWebInterface.html }
 
-}
-
-struct SonderLibraryResponse: Codable, Sendable {
-    var items: [SonderMediaItem]
-    var progress: [SonderProgress]
-    var serverSettings: SonderServerSettings?
-    var theme: SonderThemeSnapshot?
-}
-
-struct SonderThemeSnapshot: Codable, Sendable {
-    var preset: String
-    var background: String
-    var sidebar: String
-    var surface: String
-    var border: String
-    var accent: String
-    var text: String
-}
-
-struct SonderDiscoveryResponse: Codable, Sendable {
-    var app: String
-    var name: String
-    var version: String
-    var build: String
-    var isEnabled: Bool
-    var allowLAN: Bool
-    var port: UInt16
-    var localURL: String
-    var lanURL: String?
-    var discoveryMethods: [String]
-    var tailscaleHint: String
-    var capabilities: SonderDiscoveryCapabilities
-    var endpoints: SonderDiscoveryEndpoints
-    var theme: SonderThemeSnapshot
-}
-
-struct SonderDiscoveryCapabilities: Codable, Sendable {
-    var books: Bool
-    var audiobooks: Bool
-    var themes: Bool
-    var progressSync: Bool
-    var mediaStreaming: Bool
-    var remoteCatalog: Bool
-}
-
-struct SonderDiscoveryEndpoints: Codable, Sendable {
-    var health: String
-    var library: String
-    var discovery: String
-    var progress: String
-    var stream: String
-}
-
-struct SonderAudiobookResponse: Codable, Sendable {
-    var items: [SonderAudiobookItem]
-    var count: Int
-    var theme: SonderThemeSnapshot
-    var generatedAt: Date
-}
-
-struct SonderAudiobookDetail: Codable, Sendable {
-    var item: SonderAudiobookItem
-    var chapters: [SonderAudiobookChapter]
-}
-
-struct SonderAudiobookChapter: Codable, Sendable {
-    var index: Int
-    var title: String
-    var startSeconds: Double
-    var endSeconds: Double?
-}
-
-struct SonderAudiobookItem: Codable, Sendable, Identifiable {
-    var id: UUID
-    var title: String
-    var subtitle: String
-    var author: String?
-    var series: String?
-    var narrator: String?
-    var summary: String
-    var studio: String
-    var year: Int
-    var durationSeconds: Double
-    var chapterCount: Int
-    var posterURL: String?
-    var backdropURL: String?
-    var sourcePath: String?
-    var tags: [String]
-
-    init(_ item: SonderMediaItem) {
-        id = item.id
-        title = item.title
-        subtitle = item.subtitle
-        author = nil
-        series = item.showTitle
-        narrator = nil
-        summary = item.summary
-        studio = item.studio
-        year = item.year
-        durationSeconds = item.durationSeconds
-        chapterCount = 0
-        posterURL = item.posterURL
-        backdropURL = item.backdropURL
-        sourcePath = item.sourcePath
-        tags = item.tags
-    }
-
-    init(_ item: SonderMediaItem, chapterCount: Int, author: String?, series: String?, narrator: String?) {
-        self.init(item)
-        self.chapterCount = chapterCount
-        self.author = author
-        self.series = series
-        self.narrator = narrator
-    }
-}
-
-nonisolated struct SonderProgressUpdate: Codable, Sendable {
-    var seconds: Double
-    var duration: Double
 }

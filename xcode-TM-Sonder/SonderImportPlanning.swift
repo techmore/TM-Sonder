@@ -26,7 +26,7 @@ nonisolated enum SonderManagedImportFactory {
             return "Imported book copied into Sonder's managed library storage."
         case .audiobook:
             return "Imported audiobook copied into Sonder's managed library storage."
-        case .movie, .documentary, .tvShow:
+        case .all, .movie, .documentary, .tvShow:
             return "Imported video copied into Sonder's managed library storage."
         }
     }

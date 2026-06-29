@@ -61,13 +61,6 @@ struct ContentView: View {
                     Label("Storage", systemImage: "externaldrive")
                 }
                 .help("Choose where imported media is stored.")
-
-                Button {
-                    library.seedDemoLibrary()
-                } label: {
-                    Label("Seed", systemImage: "sparkles.tv")
-                }
-                .help("Load sample media for layout and feature testing.")
             }
         }
     }

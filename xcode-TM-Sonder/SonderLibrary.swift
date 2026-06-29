@@ -42,11 +42,7 @@ final class SonderLibrary: ObservableObject {
         scanProgress != nil || plexImportStatus.isRunning || audiobookImportStatus.isRunning
     }
 
-    static let defaultCollections = [
-        SonderCollection(name: "Saturday Feature Queue", kind: .playlist, itemIDs: Array(SonderSeed.catalog.filter { $0.kind == .movie }.prefix(4).map(\.id))),
-        SonderCollection(name: "Documentary Shelf", kind: .collection, itemIDs: Array(SonderSeed.catalog.filter { $0.kind == .documentary }.map(\.id))),
-        SonderCollection(name: "Shows in Rotation", kind: .playlist, itemIDs: Array(SonderSeed.catalog.filter { $0.kind == .tvShow }.map(\.id)))
-    ]
+    static let defaultCollections: [SonderCollection] = []
 
     init(store: SonderStore? = nil, systemServices: SonderSystemServicing? = nil) {
         let resolvedStore = store ?? SonderStore()
@@ -295,22 +291,6 @@ final class SonderLibrary: ObservableObject {
         mediaKindCounts = derivedData.mediaKindCounts
         inProgressItems = derivedData.inProgressItems
         tvShowGroups = derivedData.tvShowGroups
-    }
-
-    func seedDemoLibrary() {
-        items = SonderSeed.catalog
-        progressRecords = [
-            SonderProgress(itemID: SonderSeed.catalog[0].id, seconds: 2380, duration: SonderSeed.catalog[0].durationSeconds),
-            SonderProgress(itemID: SonderSeed.catalog[3].id, seconds: 1120, duration: SonderSeed.catalog[3].durationSeconds)
-        ]
-        collections = Self.defaultCollections
-        conversionJobs = []
-        libraryDefinitions = SonderLibraryDefinition.defaults
-        mediaDirectories = []
-        scanProgress = nil
-        serverSettings = .default
-        addActivity("Seeded demo library", detail: "Loaded movies, shows, and documentaries for layout testing.", icon: "sparkles.tv")
-        commitLibraryMutation()
     }
 
     func updateServerSettings(isEnabled: Bool? = nil, allowLAN: Bool? = nil, port: Int? = nil, pairingToken: String? = nil) {
