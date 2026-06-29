@@ -1,0 +1,151 @@
+import CryptoKit
+import Foundation
+
+nonisolated struct SonderMetadataEnrichment: Sendable {
+    var summary: String?
+    var publisher: String?
+    var posterPath: String?
+    var backdropPath: String?
+    var tags: [String]?
+}
+
+actor SonderMetadataEnricher {
+    private let cacheRoot: URL
+    private let session: URLSession
+
+    init(cacheRoot: URL) {
+        self.cacheRoot = cacheRoot
+        self.session = URLSession(configuration: .ephemeral)
+        try? FileManager.default.createDirectory(at: cacheRoot, withIntermediateDirectories: true)
+    }
+
+    func enrich(item: SonderMediaItem) async -> SonderMetadataEnrichment? {
+        let query = makeQuery(for: item)
+        guard query.isEmpty == false else { return nil }
+        let cacheKey = SHA256.hash(data: Data(query.utf8)).map { String(format: "%02x", $0) }.joined()
+        let cachedJSON = cacheRoot.appendingPathComponent("\(cacheKey).json")
+        let cachedPoster = cacheRoot.appendingPathComponent("\(cacheKey).jpg")
+        let cachedBackdrop = cacheRoot.appendingPathComponent("\(cacheKey)-backdrop.jpg")
+        if let data = try? Data(contentsOf: cachedJSON),
+           let decoded = try? JSONDecoder().decode(SonderCachedMetadata.self, from: data) {
+            return decoded.toEnrichment(posterPath: FileManager.default.fileExists(atPath: cachedPoster.path) ? cachedPoster.path : nil, backdropPath: FileManager.default.fileExists(atPath: cachedBackdrop.path) ? cachedBackdrop.path : nil)
+        }
+
+        guard let result = await wikipediaSearch(query: query) else { return nil }
+        if let imageURL = result.thumbnailURL, let imageData = await download(url: imageURL) {
+            try? imageData.write(to: cachedPoster, options: .atomic)
+        }
+        if let backdropURL = result.originalImageURL, let imageData = await download(url: backdropURL) {
+            try? imageData.write(to: cachedBackdrop, options: .atomic)
+        }
+        let payload = SonderCachedMetadata(summary: result.extract, publisher: result.publisher, tags: result.tags)
+        if let encoded = try? JSONEncoder().encode(payload) {
+            try? encoded.write(to: cachedJSON, options: .atomic)
+        }
+        return payload.toEnrichment(
+            posterPath: FileManager.default.fileExists(atPath: cachedPoster.path) ? cachedPoster.path : nil,
+            backdropPath: FileManager.default.fileExists(atPath: cachedBackdrop.path) ? cachedBackdrop.path : nil
+        )
+    }
+
+    private func makeQuery(for item: SonderMediaItem) -> String {
+        let year = item.year == 0 ? nil : String(item.year)
+        switch item.kind {
+        case .movie:
+            return [item.title, item.edition, year, "film", "Wikipedia"].compactMap { $0 }.joined(separator: " ")
+        case .documentary:
+            return [item.title, item.edition, year, "documentary", "Wikipedia"].compactMap { $0 }.joined(separator: " ")
+        case .tvShow:
+            let show = item.showTitle ?? item.title
+            if let season = item.seasonNumber, let episode = item.episodeNumber {
+                let code = String(format: "S%02dE%02d", season, episode)
+                return [show, code, item.title, "episode", "Wikipedia"].joined(separator: " ")
+            }
+            return [show, "television series", "Wikipedia"].joined(separator: " ")
+        case .ebook:
+            return [item.title, item.edition, item.studio, year, "book", "Wikipedia"].compactMap { $0 }.joined(separator: " ")
+        case .audiobook:
+            return [item.title, item.edition, item.studio, year, "audiobook", "Wikipedia"].compactMap { $0 }.joined(separator: " ")
+        case .all:
+            return ""
+        }
+    }
+
+    private func wikipediaSearch(query: String) async -> SonderWikipediaLookupResult? {
+        var components = URLComponents(string: "https://en.wikipedia.org/w/api.php")
+        components?.queryItems = [
+            URLQueryItem(name: "action", value: "query"),
+            URLQueryItem(name: "generator", value: "search"),
+            URLQueryItem(name: "gsrsearch", value: query),
+            URLQueryItem(name: "gsrlimit", value: "1"),
+            URLQueryItem(name: "prop", value: "extracts|pageimages|info|categories"),
+            URLQueryItem(name: "exintro", value: "1"),
+            URLQueryItem(name: "explaintext", value: "1"),
+            URLQueryItem(name: "inprop", value: "url"),
+            URLQueryItem(name: "piprop", value: "thumbnail|original"),
+            URLQueryItem(name: "pithumbsize", value: "800"),
+            URLQueryItem(name: "cllimit", value: "10"),
+            URLQueryItem(name: "format", value: "json"),
+            URLQueryItem(name: "origin", value: "*")
+        ]
+        guard let url = components?.url,
+              let (data, _) = try? await session.data(from: url),
+              let decoded = try? JSONDecoder().decode(SonderWikipediaResponse.self, from: data),
+              let page = decoded.query.pages.values.first else { return nil }
+        return SonderWikipediaLookupResult(
+            extract: page.extract,
+            publisher: page.description,
+            tags: page.categories?.compactMap { $0.title.split(separator: ":").last.map(String.init) }.prefix(6).map { $0.lowercased() },
+            thumbnailURL: page.thumbnail?.source,
+            originalImageURL: page.originalimage?.source
+        )
+    }
+
+    private func download(url: URL) async -> Data? {
+        guard let (data, response) = try? await session.data(from: url),
+              (response as? HTTPURLResponse)?.statusCode ?? 200 < 400 else { return nil }
+        return data
+    }
+}
+
+nonisolated private struct SonderCachedMetadata: Codable {
+    var summary: String?
+    var publisher: String?
+    var tags: [String]?
+
+    func toEnrichment(posterPath: String?, backdropPath: String?) -> SonderMetadataEnrichment {
+        SonderMetadataEnrichment(summary: summary, publisher: publisher, posterPath: posterPath, backdropPath: backdropPath, tags: tags)
+    }
+}
+
+nonisolated private struct SonderWikipediaResponse: Codable {
+    var query: SonderWikipediaQuery
+}
+
+nonisolated private struct SonderWikipediaQuery: Codable {
+    var pages: [String: SonderWikipediaPage]
+}
+
+nonisolated private struct SonderWikipediaPage: Codable {
+    var extract: String?
+    var description: String?
+    var thumbnail: SonderWikipediaImage?
+    var originalimage: SonderWikipediaImage?
+    var categories: [SonderWikipediaCategory]?
+}
+
+nonisolated private struct SonderWikipediaImage: Codable {
+    var source: URL?
+}
+
+nonisolated private struct SonderWikipediaCategory: Codable {
+    var title: String
+}
+
+nonisolated private struct SonderWikipediaLookupResult {
+    var extract: String?
+    var publisher: String?
+    var tags: [String]?
+    var thumbnailURL: URL?
+    var originalImageURL: URL?
+}
