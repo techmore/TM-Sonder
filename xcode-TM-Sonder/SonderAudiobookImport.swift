@@ -19,6 +19,36 @@ nonisolated struct SonderAudiobookImportSummary: Sendable, Hashable {
     var message: String = "Audiobook index is current."
 }
 
+nonisolated struct SonderAudiobookImportResult: Sendable, Hashable {
+    var status: SonderAudiobookImportStatus
+    var activity: SonderLibraryActivityDraft
+}
+
+nonisolated struct SonderAudiobookImportService: Sendable {
+    var store: SonderStore
+
+    func refreshIndex(items: [SonderMediaItem], mediaDirectories: [SonderMediaDirectory]) async -> SonderAudiobookImportResult {
+        let importer = SonderAudiobookImporter(store: store)
+        let summary = await importer.refreshIndex(items: items, mediaDirectories: mediaDirectories)
+        return SonderAudiobookImportResult(
+            status: SonderAudiobookImportStatus(
+                lastRunAt: Date(),
+                importedCount: summary.importedCount,
+                updatedCount: summary.updatedCount,
+                unchangedCount: summary.unchangedCount,
+                skippedCount: summary.skippedCount,
+                lastMessage: summary.message,
+                isRunning: false
+            ),
+            activity: SonderLibraryActivityDraft(
+                title: "Refreshed audiobook index",
+                detail: summary.message,
+                icon: "headphones"
+            )
+        )
+    }
+}
+
 nonisolated struct SonderAudiobookIndex: Codable, Hashable, Sendable {
     var schemaVersion: Int
     var generatedAt: Date

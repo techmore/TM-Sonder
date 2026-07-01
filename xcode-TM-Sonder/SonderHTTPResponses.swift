@@ -1,8 +1,11 @@
 import Foundation
 
-struct SonderLibraryResponse: Codable, Sendable {
+nonisolated struct SonderLibraryResponse: Codable, Sendable {
     var items: [SonderMediaItem]
     var progress: [SonderProgress]
+    var mediaDirectories: [SonderMediaDirectory]
+    var scanProgress: SonderScanProgress?
+    var activity: [SonderActivityEvent]
     var serverSettings: SonderServerSettings?
     var theme: SonderThemeSnapshot?
 }
@@ -15,6 +18,20 @@ struct SonderThemeSnapshot: Codable, Sendable {
     var border: String
     var accent: String
     var text: String
+}
+
+nonisolated struct SonderStatusResponse: Codable, Sendable {
+    var itemCount: Int
+    var playableCount: Int
+    var mediaDirectoryCount: Int
+    var scanProgress: SonderScanProgress?
+    var activeScanDirectoryPath: String?
+    var activeScanStartedAt: Date?
+    var activeScanUpdatedAt: Date?
+    var queuedScanDirectoryCount: Int
+    var queuedScanDirectorySummaries: [String]
+    var isLoadingPersistedLibrary: Bool
+    var isBusy: Bool
 }
 
 struct SonderDiscoveryResponse: Codable, Sendable {
@@ -50,6 +67,7 @@ struct SonderDiscoveryEndpoints: Codable, Sendable {
     var audiobookBrowser: String
     var discovery: String
     var progress: String
+    var playback: String
     var stream: String
 }
 
@@ -123,7 +141,32 @@ struct SonderAudiobookItem: Codable, Sendable, Identifiable {
     }
 }
 
+nonisolated struct SonderPlaybackTrack: Codable, Sendable, Hashable {
+    var id: String
+    var label: String
+    var languageCode: String?
+    var kind: String
+    var url: String?
+}
+
+nonisolated struct SonderPlaybackSessionResponse: Codable, Sendable {
+    var itemID: UUID
+    var streamURL: String
+    var seconds: Double
+    var duration: Double
+    var percent: Double
+    var updatedAt: Date?
+    var audioTrackID: String?
+    var subtitleTrackID: String?
+    var subtitlesEnabled: Bool
+    var audioTracks: [SonderPlaybackTrack]
+    var subtitleTracks: [SonderPlaybackTrack]
+}
+
 nonisolated struct SonderProgressUpdate: Codable, Sendable {
     var seconds: Double
     var duration: Double
+    var audioTrackID: String?
+    var subtitleTrackID: String?
+    var subtitlesEnabled: Bool?
 }

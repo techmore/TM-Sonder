@@ -31,6 +31,11 @@ actor SonderMetadataEnricher {
             return decoded.toEnrichment(posterPath: FileManager.default.fileExists(atPath: cachedPoster.path) ? cachedPoster.path : nil, backdropPath: FileManager.default.fileExists(atPath: cachedBackdrop.path) ? cachedBackdrop.path : nil)
         }
 
+        if item.kind == .audiobook,
+           let result = await audnexusLookup(item: item, cachedJSON: cachedJSON, cachedPoster: cachedPoster) {
+            return result
+        }
+
         guard let result = await wikipediaSearch(query: query) else { return nil }
         if let imageURL = result.thumbnailURL, let imageData = await download(url: imageURL) {
             try? imageData.write(to: cachedPoster, options: .atomic)
@@ -69,6 +74,37 @@ actor SonderMetadataEnricher {
         case .all:
             return ""
         }
+    }
+
+    private func audnexusLookup(item: SonderMediaItem, cachedJSON: URL, cachedPoster: URL) async -> SonderMetadataEnrichment? {
+        guard let source = item.metadataIDSource?.lowercased(),
+              ["audible", "audnexus"].contains(source),
+              let asin = item.metadataID?.trimmingCharacters(in: .whitespacesAndNewlines),
+              asin.isEmpty == false else { return nil }
+
+        var components = URLComponents(string: "https://api.audnex.us/books/\(asin)")
+        components?.queryItems = [URLQueryItem(name: "region", value: "us")]
+        guard let url = components?.url,
+              let (data, response) = try? await session.data(from: url),
+              (response as? HTTPURLResponse)?.statusCode ?? 500 < 400,
+              let book = try? JSONDecoder().decode(SonderAudnexusBook.self, from: data) else { return nil }
+
+        if let imageURL = book.image, let imageData = await download(url: imageURL) {
+            try? imageData.write(to: cachedPoster, options: .atomic)
+        }
+
+        let payload = SonderCachedMetadata(
+            summary: book.description,
+            publisher: book.publisher,
+            tags: book.genreNames + book.authorNames + book.narratorNames
+        )
+        if let encoded = try? JSONEncoder().encode(payload) {
+            try? encoded.write(to: cachedJSON, options: .atomic)
+        }
+        return payload.toEnrichment(
+            posterPath: FileManager.default.fileExists(atPath: cachedPoster.path) ? cachedPoster.path : nil,
+            backdropPath: nil
+        )
     }
 
     private func wikipediaSearch(query: String) async -> SonderWikipediaLookupResult? {
@@ -116,6 +152,41 @@ nonisolated private struct SonderCachedMetadata: Codable {
     func toEnrichment(posterPath: String?, backdropPath: String?) -> SonderMetadataEnrichment {
         SonderMetadataEnrichment(summary: summary, publisher: publisher, posterPath: posterPath, backdropPath: backdropPath, tags: tags)
     }
+}
+
+nonisolated private struct SonderAudnexusBook: Codable {
+    var asin: String?
+    var title: String?
+    var subtitle: String?
+    var description: String?
+    var publisher: String?
+    var image: URL?
+    var authors: [SonderAudnexusPerson]?
+    var narrators: [SonderAudnexusPerson]?
+    var genres: [SonderAudnexusGenre]?
+
+    var authorNames: [String] {
+        authors?.compactMap(\.name).filter { $0.isEmpty == false } ?? []
+    }
+
+    var narratorNames: [String] {
+        narrators?.compactMap(\.name).filter { $0.isEmpty == false } ?? []
+    }
+
+    var genreNames: [String] {
+        genres?.compactMap(\.name).filter { $0.isEmpty == false }.map { $0.lowercased() } ?? []
+    }
+}
+
+nonisolated private struct SonderAudnexusPerson: Codable {
+    var asin: String?
+    var name: String?
+}
+
+nonisolated private struct SonderAudnexusGenre: Codable {
+    var asin: String?
+    var name: String?
+    var type: String?
 }
 
 nonisolated private struct SonderWikipediaResponse: Codable {

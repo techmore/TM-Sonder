@@ -148,6 +148,113 @@ struct StatRow: View {
     }
 }
 
+struct PhaseCard: View {
+    let title: String
+    let subtitle: String
+    let progress: Double
+    let stateLabel: String
+    let isActive: Bool
+    let isComplete: Bool
+    let isQueued: Bool
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            HStack(alignment: .firstTextBaseline) {
+                Text(title)
+                    .font(.subheadline.weight(.semibold))
+                Spacer()
+                Text(stateLabel)
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(isComplete ? Color.green : (isActive ? SonderTheme.accent : SonderTheme.textLight))
+            }
+            Text(subtitle)
+                .font(.caption2)
+                .foregroundStyle(SonderTheme.textLight)
+                .fixedSize(horizontal: false, vertical: true)
+
+            ProgressView(value: progress)
+                .tint(isComplete ? Color.green : (isActive ? SonderTheme.accentStrong : SonderTheme.border))
+
+            Text("\(Int(progress * 100))%")
+                .font(.caption2.monospacedDigit())
+                .foregroundStyle(SonderTheme.textLight)
+        }
+        .padding(12)
+        .frame(width: 220, alignment: .leading)
+        .background(backgroundFill, in: RoundedRectangle(cornerRadius: 10))
+        .overlay(RoundedRectangle(cornerRadius: 10).stroke(borderColor))
+    }
+
+    private var backgroundFill: some ShapeStyle {
+        if isComplete {
+            return AnyShapeStyle(Color.green.opacity(0.12))
+        }
+        if isActive {
+            return AnyShapeStyle(SonderTheme.surface)
+        }
+        if isQueued {
+            return AnyShapeStyle(SonderTheme.accentMuted.opacity(0.25))
+        }
+        return AnyShapeStyle(SonderTheme.accentMuted.opacity(0.35))
+    }
+
+    private var borderColor: Color {
+        if isComplete { return Color.green.opacity(0.45) }
+        if isActive { return SonderTheme.accentStrong.opacity(0.55) }
+        if isQueued { return SonderTheme.border.opacity(0.8) }
+        return SonderTheme.border
+    }
+}
+
+struct MonitorPhaseCard: View {
+    let title: String
+    let subtitle: String
+    let detail: String
+    let stateLabel: String
+    let isActive: Bool
+    let isComplete: Bool
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            HStack(alignment: .firstTextBaseline) {
+                Text(title)
+                    .font(.subheadline.weight(.semibold))
+                Spacer()
+                Text(stateLabel)
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(isComplete ? Color.green : (isActive ? SonderTheme.accent : SonderTheme.textLight))
+            }
+            Text(subtitle)
+                .font(.caption2)
+                .foregroundStyle(SonderTheme.textLight)
+                .fixedSize(horizontal: false, vertical: true)
+            Text(detail)
+                .font(.caption2.monospacedDigit())
+                .foregroundStyle(SonderTheme.textLight)
+            if isActive || isComplete {
+                ProgressView()
+                    .tint(isComplete ? Color.green : SonderTheme.accentStrong)
+            }
+        }
+        .padding(12)
+        .frame(width: 220, alignment: .leading)
+        .background(backgroundFill, in: RoundedRectangle(cornerRadius: 10))
+        .overlay(RoundedRectangle(cornerRadius: 10).stroke(borderColor))
+    }
+
+    private var backgroundFill: some ShapeStyle {
+        if isComplete { return AnyShapeStyle(Color.green.opacity(0.12)) }
+        if isActive { return AnyShapeStyle(SonderTheme.surface) }
+        return AnyShapeStyle(SonderTheme.accentMuted.opacity(0.25))
+    }
+
+    private var borderColor: Color {
+        if isComplete { return Color.green.opacity(0.45) }
+        if isActive { return SonderTheme.accentStrong.opacity(0.55) }
+        return SonderTheme.border.opacity(0.8)
+    }
+}
+
 struct AboutPanel: View {
     let title: String
     let icon: String

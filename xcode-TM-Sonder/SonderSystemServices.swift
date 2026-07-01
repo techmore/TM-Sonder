@@ -8,6 +8,7 @@ protocol SonderSystemServicing: AnyObject {
     func openLocalWebInterface(port: UInt16, path: String)
     func chooseMediaLibraryRoot() -> URL?
     func chooseMediaDirectories(kind: SonderLibraryImportKind) -> [URL]
+    func chooseCustomMediaDirectory(name: String, kind: SonderLibraryImportKind) -> URL?
 }
 
 @MainActor
@@ -49,7 +50,8 @@ final class SonderSystemServices: SonderSystemServicing {
         panel.canChooseDirectories = true
         panel.allowsMultipleSelection = false
         panel.canCreateDirectories = false
-        panel.resolvesAliases = true
+        panel.resolvesAliases = false
+        panel.directoryURL = FileManager.default.homeDirectoryForCurrentUser
 
         guard panel.runModal() == .OK else { return nil }
         return panel.urls.first
@@ -64,9 +66,26 @@ final class SonderSystemServices: SonderSystemServicing {
         panel.canChooseDirectories = true
         panel.allowsMultipleSelection = true
         panel.canCreateDirectories = false
-        panel.resolvesAliases = true
+        panel.resolvesAliases = false
+        panel.directoryURL = FileManager.default.homeDirectoryForCurrentUser
 
         guard panel.runModal() == .OK else { return [] }
         return panel.urls
+    }
+
+    func chooseCustomMediaDirectory(name: String, kind: SonderLibraryImportKind) -> URL? {
+        let panel = NSOpenPanel()
+        panel.title = "Add \(name)"
+        panel.prompt = "Add"
+        panel.message = "Choose one folder for this custom \(kind.label.lowercased())-style library. Sonder will show it as its own category."
+        panel.canChooseFiles = false
+        panel.canChooseDirectories = true
+        panel.allowsMultipleSelection = false
+        panel.canCreateDirectories = false
+        panel.resolvesAliases = false
+        panel.directoryURL = FileManager.default.homeDirectoryForCurrentUser
+
+        guard panel.runModal() == .OK else { return nil }
+        return panel.urls.first
     }
 }

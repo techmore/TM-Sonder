@@ -3,14 +3,13 @@ import Foundation
 
 /// Probes a media file's real duration, dimensions, codec, and bitrate using
 /// `AVURLAsset`. Runs off the main actor; results are merged into `SonderMediaItem`
-/// at scan/import time so the UI and progress bar reflect reality instead of the old
-/// hardcoded 5400-second placeholder.
+/// at scan/import time so the UI and progress bar reflect the probed runtime.
 ///
 /// App Store-safe: `AVURLAsset` reads user-selected/security-scoped files without
 /// requiring extra entitlements, and `load(.duration)` etc. are the async metadata
 /// APIs available on macOS 12+.
-struct SonderMediaProbe: Sendable {
-    struct Result: Sendable {
+nonisolated struct SonderMediaProbe: Sendable {
+    nonisolated struct Result: Sendable {
         var durationSeconds: Double
         var width: Int?
         var height: Int?

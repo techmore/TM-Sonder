@@ -7,15 +7,20 @@ struct TVShowsView: View {
     @State private var searchText = ""
     @State private var selectedShowName: String?
 
+    private var tvShowGroups: [SonderTVShowGroup] {
+        let defaultItems = library.items.filter { $0.kind == .tvShow && ($0.libraryID == nil || $0.libraryID == SonderLibraryImportKind.tvShows.defaultLibraryID) }
+        return SonderDerivedData.make(items: defaultItems, progressRecords: library.progressRecords).tvShowGroups
+    }
+
     private var selectedShow: SonderTVShowGroup? {
         guard let selectedShowName else { return nil }
-        return library.tvShowGroups.first { $0.name == selectedShowName }
+        return tvShowGroups.first { $0.name == selectedShowName }
     }
 
     private var filteredShows: [SonderTVShowGroup] {
         let trimmed = searchText.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard trimmed.isEmpty == false else { return library.tvShowGroups }
-        return library.tvShowGroups.compactMap { show in
+        guard trimmed.isEmpty == false else { return tvShowGroups }
+        return tvShowGroups.compactMap { show in
             if show.name.localizedCaseInsensitiveContains(trimmed) {
                 return show
             }
@@ -128,7 +133,7 @@ struct TVShowDetailPage: View {
     }
 
     private var representativeEpisode: SonderMediaItem? {
-        episodes.first { $0.localPosterPath != nil } ?? realEpisodes.first ?? episodes.first
+        realEpisodes.first { $0.localPosterPath != nil } ?? realEpisodes.first
     }
 
     private var playableCount: Int {
@@ -225,8 +230,7 @@ struct TVSeasonDetailSection: View {
     let selectEpisode: (SonderMediaItem) -> Void
 
     private var visibleEpisodes: [SonderMediaItem] {
-        let realEpisodes = season.episodes.filter { $0.isPlaceholder == false }
-        return realEpisodes.isEmpty ? season.episodes : realEpisodes
+        season.episodes.filter { $0.isPlaceholder == false }
     }
 
     var body: some View {
@@ -287,7 +291,8 @@ struct TVShowCard: View {
     }
 
     private var representativeEpisode: SonderMediaItem? {
-        episodes.first { $0.localPosterPath != nil } ?? episodes.first
+        let realEpisodes = episodes.filter { $0.isPlaceholder == false }
+        return realEpisodes.first { $0.localPosterPath != nil } ?? realEpisodes.first
     }
 
     private var seasonCount: Int {

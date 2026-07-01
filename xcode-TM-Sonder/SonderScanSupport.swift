@@ -1,6 +1,6 @@
 import Foundation
 
-struct SonderScanDiagnostics: Hashable {
+nonisolated struct SonderScanDiagnostics: Codable, Hashable, Sendable {
     var mediaCount: Int
     var fileCount: Int
     var unsupportedCount: Int
@@ -9,7 +9,7 @@ struct SonderScanDiagnostics: Hashable {
     var scannedAt: Date
 }
 
-struct SonderScanProgress: Identifiable, Hashable {
+nonisolated struct SonderScanProgress: Codable, Identifiable, Hashable, Sendable {
     var id = UUID()
     var phase: SonderScanPhase = .fastTitles
     var title: String
@@ -19,14 +19,16 @@ struct SonderScanProgress: Identifiable, Hashable {
     var indexedCount: Int
     var directoriesDone: Int
     var directoriesTotal: Int
+    var workDone: Int
+    var workTotal: Int
 
     var fraction: Double {
-        guard directoriesTotal > 0 else { return 0 }
-        return min(Double(directoriesDone) / Double(directoriesTotal), 0.98)
+        guard workTotal > 0 else { return 0 }
+        return min(Double(workDone) / Double(workTotal), 0.98)
     }
 }
 
-enum SonderScanPhase: String, Codable, Hashable {
+nonisolated enum SonderScanPhase: String, Codable, Hashable {
     case fastTitles
     case localAssets
     case metadata
@@ -50,7 +52,32 @@ nonisolated enum SonderScanProgressFactory {
             mediaFound: 0,
             indexedCount: 0,
             directoriesDone: 0,
-            directoriesTotal: directoriesTotal
+            directoriesTotal: directoriesTotal,
+            workDone: 0,
+            workTotal: max(directoriesTotal, 1)
+        )
+    }
+
+    static func discovering(
+        directory: SonderMediaDirectory,
+        detail: String,
+        filesSeen: Int,
+        mediaFound: Int,
+        indexedCount: Int,
+        directoriesDone: Int,
+        directoriesTotal: Int
+    ) -> SonderScanProgress {
+        SonderScanProgress(
+            phase: .fastTitles,
+            title: "Discovering \(directory.kind.label)",
+            detail: detail,
+            filesSeen: filesSeen,
+            mediaFound: mediaFound,
+            indexedCount: indexedCount,
+            directoriesDone: directoriesDone,
+            directoriesTotal: directoriesTotal,
+            workDone: max(directoriesDone - 1, 0),
+            workTotal: max(directoriesTotal, 1)
         )
     }
 
@@ -71,27 +98,9 @@ nonisolated enum SonderScanProgressFactory {
             mediaFound: mediaFound,
             indexedCount: indexedCount,
             directoriesDone: directoriesDone,
-            directoriesTotal: directoriesTotal
-        )
-    }
-
-    static func discoveredRootTitles(
-        count: Int,
-        directory: SonderMediaDirectory,
-        filesSeen: Int,
-        mediaFound: Int,
-        indexedCount: Int,
-        directoriesDone: Int,
-        directoriesTotal: Int
-    ) -> SonderScanProgress {
-        indexing(
-            directory: directory,
-            detail: "Discovered \(count) root title(s). Deep scan continues.",
-            filesSeen: filesSeen,
-            mediaFound: mediaFound,
-            indexedCount: indexedCount,
-            directoriesDone: directoriesDone,
-            directoriesTotal: directoriesTotal
+            directoriesTotal: directoriesTotal,
+            workDone: max(directoriesDone - 1, 0),
+            workTotal: max(directoriesTotal, 1)
         )
     }
 
@@ -104,12 +113,48 @@ nonisolated enum SonderScanProgressFactory {
             mediaFound: 0,
             indexedCount: 0,
             directoriesDone: 0,
-            directoriesTotal: max(directoriesTotal, 1)
+            directoriesTotal: max(directoriesTotal, 1),
+            workDone: 0,
+            workTotal: max(directoriesTotal, 1)
+        )
+    }
+
+    static func localAssets(
+        completed: Int,
+        total: Int,
+        detail: String
+    ) -> SonderScanProgress {
+        SonderScanProgress(
+            phase: .localAssets,
+            title: "Finding local artwork",
+            detail: detail,
+            filesSeen: completed,
+            mediaFound: total,
+            indexedCount: completed,
+            directoriesDone: 0,
+            directoriesTotal: max(total, 1),
+            workDone: completed,
+            workTotal: max(total, 1)
+        )
+    }
+
+    static func completed(title: String, detail: String) -> SonderScanProgress {
+        SonderScanProgress(
+            phase: .metadata,
+            title: title,
+            detail: detail,
+            filesSeen: 0,
+            mediaFound: 0,
+            indexedCount: 0,
+            directoriesDone: 1,
+            directoriesTotal: 1,
+            workDone: 1,
+            workTotal: 1
         )
     }
 }
 
-struct SonderServerSettings: Codable, Hashable {
+nonisolated struct SonderServerSettings: Codable, Hashable, Sendable {
     var isEnabled: Bool
     var allowLAN: Bool
     var port: Int
@@ -177,26 +222,32 @@ struct SonderRootMaterial: Sendable {
         case .ebooks: .ebook
         }
     }
-
-    nonisolated var placeholderSubtitle: String {
-        switch kind {
-        case .movies: "Movie placeholder"
-        case .tvShows: "Show placeholder"
-        case .audiobooks: "Audiobook placeholder"
-        case .ebooks: "Book placeholder"
-        }
-    }
 }
 
-struct SonderLocalAssetUpdate: Sendable {
+nonisolated struct SonderLocalAssetUpdate: Sendable {
     var posterPath: String?
     var backdropPath: String?
     var subtitlePaths: [String]
 }
 
+nonisolated struct SonderContextMetadataUpdate: Sendable, Hashable {
+    var title: String?
+    var subtitle: String?
+    var showTitle: String?
+    var summary: String?
+    var studio: String?
+    var year: Int?
+    var tags: [String]
+    var metadataIDSource: String?
+    var metadataID: String?
+    var posterPath: String?
+    var backdropPath: String?
+}
+
 nonisolated struct SonderAssetRefreshResult: Sendable {
     var itemID: UUID
     var assetUpdate: SonderLocalAssetUpdate
+    var contextUpdate: SonderContextMetadataUpdate?
     var probe: SonderMediaProbe.Result
 }
 
@@ -212,16 +263,35 @@ actor SonderAssetRefreshCollector {
     }
 }
 
+actor SonderConcurrentCounter {
+    private var value = 0
+    private var lastPublishAt = Date.distantPast
+
+    func increment() -> Int {
+        value += 1
+        return value
+    }
+
+    func incrementAndShouldPublish(total: Int, minInterval: TimeInterval) -> (value: Int, shouldPublish: Bool) {
+        value += 1
+        let now = Date()
+        let isFinished = value >= total
+        let shouldPublish = isFinished || now.timeIntervalSince(lastPublishAt) >= minInterval
+        if shouldPublish {
+            lastPublishAt = now
+        }
+        return (value, shouldPublish)
+    }
+}
+
 actor SonderScanIndexState {
     private var scannedPaths: Set<String>
-    private var materialKeys: Set<String>
     private var allDiscoveredIDs = Set<UUID>()
     private var directoryIndexedCount = 0
     private var directorySkippedDuplicateCount = 0
 
-    init(existingPaths: Set<String>, existingMaterialKeys: Set<String>) {
+    init(existingPaths: Set<String>) {
         self.scannedPaths = existingPaths
-        self.materialKeys = existingMaterialKeys
     }
 
     func beginDirectory() {
@@ -241,41 +311,6 @@ actor SonderScanIndexState {
         Array(allDiscoveredIDs)
     }
 
-    func placeholders(from materials: [SonderRootMaterial], directory: SonderMediaDirectory) -> [SonderMediaItem] {
-        var placeholders: [SonderMediaItem] = []
-        placeholders.reserveCapacity(materials.count)
-
-        for material in materials {
-            let key = Self.materialKey(kind: material.mediaKind, title: material.name)
-            guard materialKeys.contains(key) == false else { continue }
-            materialKeys.insert(key)
-
-            let localAssets = SonderMediaParser.localAssets(inMaterialFolder: material.url)
-            let item = SonderMediaItem(
-                title: material.name,
-                subtitle: material.placeholderSubtitle,
-                kind: material.mediaKind,
-                studio: "Remote Library",
-                year: Calendar.current.component(.year, from: Date()),
-                durationSeconds: 0,
-                format: .unknown,
-                tags: ["remote", directory.kind.tag, "placeholder"],
-                summary: "Indexed from the root folder. Detailed metadata, artwork, and playable files are still scanning.",
-                sourcePath: nil,
-                showTitle: material.mediaKind == .tvShow ? material.name : nil,
-                seasonNumber: nil,
-                episodeNumber: nil,
-                localPosterPath: localAssets.poster?.path,
-                localBackdropPath: localAssets.backdrop?.path,
-                isPlaceholder: true
-            )
-            placeholders.append(item)
-            directoryIndexedCount += 1
-        }
-
-        return placeholders
-    }
-
     func index(_ scannedFiles: [SonderScannedMediaFile], directory: SonderMediaDirectory) -> [SonderMediaItem] {
         var newItems: [SonderMediaItem] = []
         newItems.reserveCapacity(scannedFiles.count)
@@ -288,7 +323,6 @@ actor SonderScanIndexState {
             scannedPaths.insert(scannedFile.url.path)
             let parsed = SonderMediaParser.parseTitle(url: scannedFile.url, libraryKind: directory.kind)
             let format = SonderMediaFormat(url: scannedFile.url)
-            materialKeys.insert(Self.materialKey(kind: parsed.kind, title: (parsed.kind == .tvShow ? parsed.showTitle : nil) ?? parsed.title))
             let item = SonderMediaItem(
                 title: parsed.title,
                 subtitle: parsed.subtitle,
@@ -297,6 +331,7 @@ actor SonderScanIndexState {
                 year: parsed.year ?? Calendar.current.component(.year, from: Date()),
                 durationSeconds: parsed.kind == .ebook ? 0 : 5400,
                 format: format,
+                libraryID: directory.libraryID,
                 tags: ["remote", directory.kind.tag, format.rawValue.lowercased()],
                 summary: "Indexed from a user-selected \(directory.kind.label.lowercased()) directory.",
                 sourcePath: scannedFile.url.path,
@@ -318,9 +353,5 @@ actor SonderScanIndexState {
         }
 
         return newItems
-    }
-
-    private static func materialKey(kind: SonderMediaKind, title: String) -> String {
-        "\(kind.rawValue)|\(title.cleanedMediaTitle.lowercased())"
     }
 }

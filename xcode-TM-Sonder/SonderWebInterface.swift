@@ -106,20 +106,24 @@ enum SonderWebInterface {
     function renderEpisodeRow(i) {
       const ext = (i.format || "").toLowerCase();
       const playable = i.hasFile && BROWSER_PLAYABLE.has(ext);
+      const progress = progressFor(i.id);
+      const resume = resumeButton(i, playable, progress);
       const label = i.seasonNumber != null && i.episodeNumber != null ? `S${String(i.seasonNumber).padStart(2, "0")}E${String(i.episodeNumber).padStart(2, "0")} - ${escapeHTML(i.title)}` : escapeHTML(i.title);
       const action = playable
-        ? `<video controls src="/stream/${i.id}" data-id="${i.id}" onloadedmetadata="resumeProgress(this)" ontimeupdate="saveProgress('${i.id}', this.currentTime, this.duration)"></video>`
+        ? `${resume}<video controls src="/stream/${i.id}" data-id="${i.id}" onloadedmetadata="resumeProgress(this)" ontimeupdate="saveProgress('${i.id}', this.currentTime, this.duration)" onpause="saveProgress('${i.id}', this.currentTime, this.duration, true)" onended="saveProgress('${i.id}', this.duration, this.duration, true)"></video>`
         : i.hasFile
           ? `<a class="button" href="/stream/${i.id}" target="_blank">Open stream</a>`
           : `<span>File unavailable</span>`;
-      return `<div class="episode"><div><strong>${label}</strong><p>${escapeHTML(i.subtitle)}</p><progress max="${Math.max(i.durationSeconds, 1)}" value="${progressFor(i.id).seconds}"></progress></div>${action}</div>`;
+      return `<div class="episode"><div><strong>${label}</strong><p>${escapeHTML(i.subtitle)}</p><progress max="${Math.max(progress.duration || i.durationSeconds, 1)}" value="${progress.seconds}"></progress><p>${progressSummary(progress)}</p></div>${action}</div>`;
     }
 
     function renderMediaCard(i) {
       const ext = (i.format || "").toLowerCase();
       const playable = i.hasFile && BROWSER_PLAYABLE.has(ext);
+      const progress = progressFor(i.id);
+      const resume = resumeButton(i, playable, progress);
       const player = playable
-        ? `<video controls src="/stream/${i.id}" data-id="${i.id}" onloadedmetadata="resumeProgress(this)" ontimeupdate="saveProgress('${i.id}', this.currentTime, this.duration)"></video>`
+        ? `${resume}<video controls src="/stream/${i.id}" data-id="${i.id}" onloadedmetadata="resumeProgress(this)" ontimeupdate="saveProgress('${i.id}', this.currentTime, this.duration)" onpause="saveProgress('${i.id}', this.currentTime, this.duration, true)" onended="saveProgress('${i.id}', this.duration, this.duration, true)"></video>`
         : i.hasFile
           ? `<p>Format <strong>${escapeHTML(ext || "unknown").toUpperCase()}</strong> is not playable in a browser. <a href="/stream/${i.id}" target="_blank">Open in a native player</a>.</p>`
           : `<p>Import a playable file in the Mac app to stream here.</p>`;
@@ -131,7 +135,8 @@ enum SonderWebInterface {
           ${i.hasFile && !playable ? `<span class="badge">CATALOG ONLY</span>` : ""}
           <h2>${escapeHTML(i.title)}</h2>
           <p>${escapeHTML(i.subtitle)}</p>
-          <progress max="${Math.max(i.durationSeconds, 1)}" value="${progressFor(i.id).seconds}"></progress>
+          <progress max="${Math.max(progress.duration || i.durationSeconds, 1)}" value="${progress.seconds}"></progress>
+          <p>${progressSummary(progress)}</p>
           ${player}
         </div>
       </article>`;
@@ -146,14 +151,14 @@ enum SonderWebInterface {
     }
     function groupShows() {
       const map = new Map();
-      items.filter(i => kindLabel(i.kind) === "TV Show").forEach(item => {
+      items.filter(i => kindLabel(i.kind) === "TV Show" && i.isPlaceholder !== true).forEach(item => {
         const name = item.showTitle || item.title;
         const show = map.get(name) || { name, seasonsByNumber:new Map(), seasons:[], episodeCount:0 };
         const seasonNumber = item.seasonNumber ?? -1;
         const season = show.seasonsByNumber.get(seasonNumber) || { number:seasonNumber, episodes:[] };
         season.episodes.push(item);
         show.seasonsByNumber.set(seasonNumber, season);
-        show.episodeCount += item.isPlaceholder ? 0 : 1;
+        show.episodeCount += 1;
         map.set(name, show);
       });
       return Array.from(map.values()).map(show => {
@@ -181,19 +186,46 @@ enum SonderWebInterface {
     function progressFor(id) {
       return progressByID.get(id) ?? { seconds:0, duration:1 };
     }
+    function progressSummary(progress) {
+      if (!progress || progress.seconds <= 5) return "Not started";
+      const percent = progress.duration > 0 ? progress.seconds / progress.duration : 0;
+      if (percent >= 0.96) return "Watched";
+      return `Resume at ${formatTime(progress.seconds)}`;
+    }
+    function resumeButton(item, playable, progress) {
+      if (!playable || !progress || progress.seconds <= 5 || progress.seconds >= Math.max((progress.duration || item.durationSeconds || 0) - 8, 0)) return "";
+      return `<button onclick="resumeAndPlay('${item.id}')">Resume ${formatTime(progress.seconds)}</button>`;
+    }
     function resumeProgress(video) {
       const progress = progressFor(video.dataset.id);
       if (progress.seconds > 5 && progress.seconds < Math.max(video.duration - 8, 0)) {
         video.currentTime = progress.seconds;
       }
     }
-    async function saveProgress(id, seconds, duration) {
-      if (!duration || Math.floor(seconds) % 15 !== 0) return;
+    function resumeAndPlay(id) {
+      const video = document.querySelector(`video[data-id="${id}"]`);
+      if (!video) return;
+      const progress = progressFor(id);
+      if (progress.seconds > 5) video.currentTime = progress.seconds;
+      video.play();
+    }
+    function formatTime(seconds) {
+      const total = Math.max(0, Math.floor(seconds || 0));
+      const hours = Math.floor(total / 3600);
+      const minutes = Math.floor((total % 3600) / 60);
+      const secs = total % 60;
+      return hours > 0 ? `${hours}:${String(minutes).padStart(2, "0")}:${String(secs).padStart(2, "0")}` : `${minutes}:${String(secs).padStart(2, "0")}`;
+    }
+    async function saveProgress(id, seconds, duration, force = false) {
+      if (!duration || !Number.isFinite(seconds) || !Number.isFinite(duration)) return;
+      const previous = progressFor(id);
+      if (!force && Math.abs(seconds - previous.seconds) < 15) return;
+      progressByID.set(id, { itemID:id, seconds, duration, updatedAt:new Date().toISOString() });
       await fetch(`/api/progress/${id}`, { method:"POST", headers:{"Content-Type":"application/json"}, body:JSON.stringify({seconds, duration}) });
     }
     const progressByID = new Map();
     fetch("/api/library").then(r => r.json()).then(data => {
-      items = data.items;
+      items = (data.items ?? []).filter(i => i.isPlaceholder !== true);
       (data.progress ?? []).forEach(p => progressByID.set(p.itemID, p));
       render();
     });

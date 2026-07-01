@@ -40,6 +40,12 @@ nonisolated struct SonderAuthSnapshot: Sendable {
     }
 }
 
+nonisolated enum SonderHTTPRouteID {
+    static func uuid(from path: String) -> UUID? {
+        UUID(uuidString: URL(fileURLWithPath: path).lastPathComponent)
+    }
+}
+
 nonisolated struct HTTPRequest {
     var method = "GET"
     var path = "/"

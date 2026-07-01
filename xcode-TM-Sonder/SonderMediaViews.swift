@@ -1,3 +1,4 @@
+import AppKit
 import SwiftUI
 
 struct MediaDetailView: View {
@@ -12,6 +13,16 @@ struct MediaDetailView: View {
         let progress = library.progressRecord(for: item)
         _seconds = State(initialValue: progress?.seconds ?? item.progressSeconds)
         _duration = State(initialValue: progress?.duration ?? item.durationSeconds)
+    }
+
+    private var playbackButtonTitle: String {
+        guard item.hasFile else { return "Locate File" }
+        guard let progress = library.progressRecord(for: item), progress.seconds > 5, progress.percent < 0.96 else { return "Play" }
+        return "Resume"
+    }
+
+    private var playbackButtonIcon: String {
+        item.hasFile ? "play.fill" : "folder"
     }
 
     var body: some View {
@@ -37,7 +48,7 @@ struct MediaDetailView: View {
                             Button {
                                 library.play(item)
                             } label: {
-                                Label(item.hasFile ? "Play" : "Locate File", systemImage: item.hasFile ? "play.fill" : "folder")
+                                Label(playbackButtonTitle, systemImage: playbackButtonIcon)
                             }
                             .buttonStyle(.borderedProminent)
 
@@ -202,6 +213,13 @@ struct MediaCard: View {
         .background(SonderTheme.surface, in: RoundedRectangle(cornerRadius: 8))
         .overlay(RoundedRectangle(cornerRadius: 8).stroke(SonderTheme.border))
         .clipShape(RoundedRectangle(cornerRadius: 8))
+    }
+}
+
+private extension SonderMediaItem {
+    var localPosterImage: NSImage? {
+        guard let localPosterPath else { return nil }
+        return NSImage(contentsOfFile: localPosterPath)
     }
 }
 

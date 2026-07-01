@@ -5,6 +5,7 @@ struct ContentView: View {
     @EnvironmentObject private var library: SonderLibrary
     @State private var selection: SonderSection? = .library
     @State private var selectedItemID: UUID?
+    @State private var selectedCustomLibraryID: UUID?
     @State private var searchText = ""
     @State private var selectedKind: SonderMediaKind?
     @State private var selectedTag: String?
@@ -17,13 +18,14 @@ struct ContentView: View {
 
     var body: some View {
         NavigationSplitView {
-            Sidebar(selection: $selection, library: library)
+            Sidebar(selection: $selection, selectedCustomLibraryID: $selectedCustomLibraryID, library: library)
                 .navigationSplitViewColumnWidth(min: 220, ideal: 240, max: 280)
         } detail: {
             contentView
         }
         .tint(SonderTheme.accent)
         .foregroundStyle(SonderTheme.text)
+        .preferredColorScheme(.light)
         .frame(minWidth: 1040, idealWidth: 1240, minHeight: 820, idealHeight: 920)
         .fileImporter(
             isPresented: $showingImporter,
@@ -38,6 +40,11 @@ struct ContentView: View {
             allowsMultipleSelection: false
         ) { result in
             library.setStorageFolder(result)
+        }
+        .onChange(of: selection) { _, newSelection in
+            if newSelection != nil {
+                selectedCustomLibraryID = nil
+            }
         }
         .toolbar {
             ToolbarItemGroup(placement: .primaryAction) {
@@ -67,7 +74,15 @@ struct ContentView: View {
 
     @ViewBuilder
     private var contentView: some View {
-        switch selection ?? .library {
+        if let nowPlayingItem = library.nowPlayingItem {
+            SonderVideoPlayerView(item: nowPlayingItem, library: library) {
+                library.closePlayer()
+            }
+        } else if let selectedCustomLibraryID,
+                  let definition = library.libraryDefinitions.first(where: { $0.id == selectedCustomLibraryID }) {
+            CustomLibraryView(library: library, definition: definition, selectedItemID: $selectedItemID)
+        } else {
+            switch selection ?? .library {
         case .library:
             LibraryView(
                 items: filteredItems,
@@ -99,10 +114,16 @@ struct ContentView: View {
         }
     }
 }
+}
 
 struct Sidebar: View {
     @Binding var selection: SonderSection?
+    @Binding var selectedCustomLibraryID: UUID?
     @ObservedObject var library: SonderLibrary
+
+    private var customLibraries: [SonderLibraryDefinition] {
+        library.libraryDefinitions.filter { $0.isDefault == false }
+    }
 
     var body: some View {
         List(selection: $selection) {
@@ -116,6 +137,21 @@ struct Sidebar: View {
                 .tag(SonderSection.audiobooks)
             Label("Books", systemImage: "book")
                 .tag(SonderSection.ebooks)
+
+            if customLibraries.isEmpty == false {
+                Section("Other") {
+                    ForEach(customLibraries) { definition in
+                        Button {
+                            selection = nil
+                            selectedCustomLibraryID = definition.id
+                        } label: {
+                            Label(definition.name, systemImage: definition.kind.icon)
+                        }
+                        .buttonStyle(.plain)
+                    }
+                }
+            }
+
             Label("Continue Watching", systemImage: "play.rectangle")
                 .tag(SonderSection.continueWatching)
             Label("Collections", systemImage: "folder")
@@ -168,6 +204,66 @@ struct ActivityLogView: View {
                     title: "Log",
                     subtitle: "A running feed of imports, discovery, conversions, and library mutations."
                 )
+
+                DashboardPanel(title: "Live Status") {
+                    VStack(alignment: .leading, spacing: 10) {
+                        if let scanProgress = library.scanProgress {
+                            HStack(alignment: .top, spacing: 12) {
+                                ProgressView(value: scanProgress.fraction)
+                                    .tint(SonderTheme.accentStrong)
+                                    .frame(width: 42)
+                                VStack(alignment: .leading, spacing: 4) {
+                                    Text(scanProgress.title)
+                                        .font(.headline)
+                                    Text(scanProgress.detail)
+                                        .foregroundStyle(SonderTheme.textLight)
+                                        .fixedSize(horizontal: false, vertical: true)
+                                    Text("\(scanProgress.filesSeen) files seen, \(scanProgress.mediaFound) items found, \(scanProgress.indexedCount) indexed")
+                                        .font(.caption2.monospacedDigit())
+                                        .foregroundStyle(SonderTheme.textLight)
+                                }
+                                Spacer()
+                            }
+                        } else if library.plexImportStatus.isRunning {
+                            HStack(alignment: .top, spacing: 12) {
+                                ProgressView(value: library.plexImportStatus.progressFraction)
+                                    .tint(SonderTheme.accentStrong)
+                                    .frame(width: 42)
+                                VStack(alignment: .leading, spacing: 4) {
+                                    Text("Plex import running")
+                                        .font(.headline)
+                                    Text(library.plexImportStatus.lastMessage)
+                                        .foregroundStyle(SonderTheme.textLight)
+                                        .fixedSize(horizontal: false, vertical: true)
+                                    if let currentTitle = library.plexImportStatus.currentTitle {
+                                        Text(currentTitle)
+                                            .font(.caption2.monospacedDigit())
+                                            .foregroundStyle(SonderTheme.textLight)
+                                    }
+                                }
+                                Spacer()
+                            }
+                        } else if library.audiobookImportStatus.isRunning {
+                            HStack(alignment: .top, spacing: 12) {
+                                ProgressView()
+                                    .controlSize(.small)
+                                    .frame(width: 42)
+                                VStack(alignment: .leading, spacing: 4) {
+                                    Text("Audiobook index running")
+                                        .font(.headline)
+                                    Text(library.audiobookImportStatus.lastMessage)
+                                        .foregroundStyle(SonderTheme.textLight)
+                                        .fixedSize(horizontal: false, vertical: true)
+                                }
+                                Spacer()
+                            }
+                        } else {
+                            Text("Nothing is actively scanning right now. Start a library import or Plex sync and the live state will appear here.")
+                                .foregroundStyle(SonderTheme.textLight)
+                                .fixedSize(horizontal: false, vertical: true)
+                        }
+                    }
+                }
 
                 DashboardPanel(title: "Recent Activity") {
                     if library.activity.isEmpty {

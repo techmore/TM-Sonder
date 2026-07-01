@@ -21,18 +21,18 @@ enum SonderTheme {
     static var darkText: Color { palette.darkText }
 }
 
-enum SonderThemePreset: String, Codable, CaseIterable, Identifiable {
+enum SonderThemePreset: String, Codable, CaseIterable, Identifiable, Sendable {
     case earthy
 
     var id: String { rawValue }
 
-    var label: String {
+    nonisolated var label: String {
         switch self {
         case .earthy: "Earthy Tones"
         }
     }
 
-    var description: String {
+    nonisolated var description: String {
         switch self {
         case .earthy: "Gentle sage leads the palette, with creamy white, sandy taupe, warm mauve-pink accents, and organic charcoal."
         }

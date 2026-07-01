@@ -26,17 +26,146 @@ struct xcode_TM_SonderTests {
         #expect(parsed.edition == "directors cut")
     }
 
+    @Test func parserRecognizesAudnexusCompatibleAudiobookTags() async throws {
+        let url = URL(fileURLWithPath: "/Media/Audiobooks/Andy Weir/Project Hail Mary {audible-B08G9PRS1K}.m4b")
+        let parsed = SonderMediaParser.parseTitle(url: url, libraryKind: .audiobooks)
+
+        #expect(parsed.kind == .audiobook)
+        #expect(parsed.title == "Project Hail Mary")
+        #expect(parsed.metadataIDSource == "audible")
+        #expect(parsed.metadataID == "B08G9PRS1K")
+    }
+
+    @Test func parserRecognizesAnimeStyleAbsoluteEpisodeNumbers() async throws {
+        let releaseGroupURL = URL(fileURLWithPath: "/Media/TV Shows/Escaflowne/[Fansub] Escaflowne - 01 [BD 1080p AAC].mkv")
+        let numberedURL = URL(fileURLWithPath: "/Media/TV Shows/Escaflowne/02 - The Girl From Mystic Moon.mkv")
+        let seasonFolderURL = URL(fileURLWithPath: "/Media/TV Shows/Escaflowne/Season 01/03 - The Gallant Swordsman.mkv")
+
+        let releaseGroup = SonderMediaParser.parseTitle(url: releaseGroupURL, libraryKind: .tvShows)
+        let numbered = SonderMediaParser.parseTitle(url: numberedURL, libraryKind: .tvShows)
+        let seasonFolder = SonderMediaParser.parseTitle(url: seasonFolderURL, libraryKind: .tvShows)
+
+        #expect(releaseGroup.kind == .tvShow)
+        #expect(releaseGroup.showTitle == "Escaflowne")
+        #expect(releaseGroup.season == 1)
+        #expect(releaseGroup.episode == 1)
+        #expect(releaseGroup.title == "Episode 1")
+        #expect(numbered.showTitle == "Escaflowne")
+        #expect(numbered.season == 1)
+        #expect(numbered.episode == 2)
+        #expect(numbered.title == "The Girl From Mystic Moon")
+        #expect(seasonFolder.showTitle == "Escaflowne")
+        #expect(seasonFolder.season == 1)
+        #expect(seasonFolder.episode == 3)
+    }
+
+    @Test func sonderContextResolverAppliesPlexShowAndEpisodeContext() async throws {
+        let rootURL = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: rootURL) }
+        let showURL = rootURL.appendingPathComponent("Escaflowne", isDirectory: true)
+        let seasonURL = showURL.appendingPathComponent("Season 01", isDirectory: true)
+        let cacheURL = showURL.appendingPathComponent(".sonder", isDirectory: true)
+        try FileManager.default.createDirectory(at: seasonURL, withIntermediateDirectories: true)
+        try FileManager.default.createDirectory(at: cacheURL, withIntermediateDirectories: true)
+        let mediaURL = seasonURL.appendingPathComponent("Escaflowne - S01E01.mkv")
+        let posterURL = cacheURL.appendingPathComponent("poster.jpg")
+        let backdropURL = cacheURL.appendingPathComponent("background.jpg")
+        try Data([1]).write(to: mediaURL)
+        try Data([2]).write(to: posterURL)
+        try Data([3]).write(to: backdropURL)
+
+        let context = SonderContext(
+            schemaVersion: 2,
+            source: SonderContextSource(provider: "plex", metadataItemID: 10, guid: "plex://show/10", librarySectionID: 1, sourceDBPath: nil, sourceBundlePath: nil),
+            media: SonderContextMedia(title: "Escaflowne", summary: "A transported student meets a young king.", tagline: nil, studio: "Sunrise", year: 1996, rating: 8.2, genres: ["Anime", "Adventure"]),
+            artwork: [
+                SonderContextAsset(path: "poster.jpg", sourceURL: nil, kind: "poster"),
+                SonderContextAsset(path: "background.jpg", sourceURL: nil, kind: "art")
+            ],
+            episodes: [
+                SonderContextEpisode(metadataItemID: 101, title: "Fateful Confession", summary: "Hitomi sees a vision of battle.", seasonNumber: 1, episodeNumber: 1, guid: "plex://episode/101", rating: 7.8, mediaFiles: [mediaURL.path])
+            ],
+            fileMapping: SonderContextFileMapping(rootFolder: showURL.path, matchedFiles: [mediaURL.path]),
+            timestamps: SonderContextTimestamps(importedAt: Date(), updatedAt: Date(), sourceRefreshedAt: Date()),
+            hashes: SonderContextHashes(sourceFingerprint: "abc", contentFingerprint: "abc")
+        )
+        try JSONEncoder.sonder.encode(context).write(to: cacheURL.appendingPathComponent("sonder-context.json"), options: .atomic)
+
+        let target = SonderAssetRefreshTarget(
+            id: UUID(),
+            url: mediaURL,
+            kind: .tvShow,
+            title: "Episode 1",
+            showTitle: "Escaflowne",
+            seasonNumber: 1,
+            episodeNumber: 1
+        )
+        let update = SonderContextResolver.metadataUpdate(for: target)
+
+        #expect(update?.title == "Fateful Confession")
+        #expect(update?.showTitle == "Escaflowne")
+        #expect(update?.summary == "Hitomi sees a vision of battle.")
+        #expect(update?.studio == "Sunrise")
+        #expect(update?.year == 1996)
+        #expect(update?.posterPath == posterURL.path)
+        #expect(update?.backdropPath == backdropURL.path)
+        #expect(update?.metadataID == "101")
+        #expect(update?.tags.contains("anime") == true)
+        #expect(update?.tags.contains("plex") == true)
+    }
+
+    @Test func snapshotFactoryCapturesPersistedLibraryState() async throws {
+        let item = makeItem(id: UUID(), title: "Beacon")
+        let progress = SonderProgress(itemID: item.id, seconds: 10, duration: 100)
+        let collection = SonderCollection(name: "Queue", itemIDs: [item.id])
+        let activity = SonderActivityEvent(title: "Updated", detail: "Detail", icon: "checkmark")
+        let job = SonderConversionJob(title: "Beacon", detail: "Convert", status: .running)
+        let directory = SonderMediaDirectory(
+            name: "Movies",
+            path: "/Media/Movies",
+            bookmark: Data([1]),
+            kind: .movies,
+            libraryID: SonderLibraryImportKind.movies.defaultLibraryID
+        )
+        let snapshot = SonderSnapshot.libraryState(
+            items: [item],
+            progressRecords: [progress],
+            collections: [collection],
+            activity: [activity],
+            storagePath: "/Media",
+            storageBookmark: Data([2]),
+            conversionJobs: [job],
+            libraryDefinitions: SonderLibraryDefinition.defaults,
+            mediaDirectories: [directory],
+            serverSettings: .default
+        )
+
+        #expect(snapshot.items.map(\.id) == [item.id])
+        #expect(snapshot.progress.map(\.itemID) == [item.id])
+        #expect(snapshot.collections.first?.itemIDs == [item.id])
+        #expect(snapshot.activity.first?.title == "Updated")
+        #expect(snapshot.storagePath == "/Media")
+        #expect(snapshot.storageBookmark == Data([2]))
+        #expect(snapshot.conversionJobs?.first?.title == "Beacon")
+        #expect(snapshot.mediaDirectories?.first?.path == "/Media/Movies")
+        #expect(snapshot.serverSettings == .default)
+    }
+
     @Test func storeSanitizeRemovesDuplicateAndDanglingReferences() async throws {
         let keptID = UUID()
         let duplicate = makeItem(id: keptID, title: "Kept")
+        let placeholderID = UUID()
+        var placeholder = makeItem(id: placeholderID, title: "Placeholder")
+        placeholder.isPlaceholder = true
         let danglingID = UUID()
         let snapshot = SonderSnapshot(
-            items: [duplicate, duplicate, makeItem(id: UUID(), title: "Other")],
+            items: [duplicate, duplicate, placeholder, makeItem(id: UUID(), title: "Other")],
             progress: [
                 SonderProgress(itemID: keptID, seconds: 10, duration: 100),
+                SonderProgress(itemID: placeholderID, seconds: 10, duration: 100),
                 SonderProgress(itemID: danglingID, seconds: 10, duration: 100)
             ],
-            collections: [SonderCollection(name: "Queue", itemIDs: [keptID, keptID, danglingID])],
+            collections: [SonderCollection(name: "Queue", itemIDs: [keptID, keptID, placeholderID, danglingID])],
             activity: [],
             storagePath: nil,
             storageBookmark: nil,
@@ -67,6 +196,14 @@ struct xcode_TM_SonderTests {
         #expect(suffix.isPartial)
     }
 
+    @Test func httpRouteIDRejectsMalformedIDs() async throws {
+        let id = UUID()
+
+        #expect(SonderHTTPRouteID.uuid(from: "/api/progress/\(id.uuidString)") == id)
+        #expect(SonderHTTPRouteID.uuid(from: "/api/progress/not-a-uuid") == nil)
+        #expect(SonderHTTPRouteID.uuid(from: "/stream/") == nil)
+    }
+
     @Test func serverSettingsAuthSnapshotRequiresTokenWhenConfigured() async throws {
         let snapshot = SonderAuthSnapshot(allowLAN: true, pairingToken: "secret")
 
@@ -74,6 +211,52 @@ struct xcode_TM_SonderTests {
         #expect(snapshot.isAuthorized(localhost: false, bearer: "secret", queryToken: nil))
         #expect(snapshot.isAuthorized(localhost: false, bearer: nil, queryToken: "secret"))
         #expect(snapshot.isAuthorized(localhost: false, bearer: nil, queryToken: nil) == false)
+    }
+
+    @Test func serverSettingsPlannerClampsPortAndAutoGeneratesLANToken() async throws {
+        let settings = SonderServerSettings(isEnabled: false, allowLAN: false, port: 8797, themePreset: SonderThemePreset.earthy.rawValue, pairingToken: "")
+
+        let mutation = SonderServerSettingsPlanner.updating(
+            settings,
+            isEnabled: true,
+            allowLAN: true,
+            port: 99,
+            tokenGenerator: { "paired" }
+        )
+
+        #expect(mutation.settings.isEnabled)
+        #expect(mutation.settings.allowLAN)
+        #expect(mutation.settings.port == 1024)
+        #expect(mutation.settings.pairingToken == "paired")
+        #expect(mutation.activity.title == "Updated server settings")
+        #expect(mutation.postsServerNotification)
+    }
+
+    @Test func serverSettingsPlannerAppliesThemeAndRotatesToken() async throws {
+        let settings = SonderServerSettings.default
+
+        let theme = SonderServerSettingsPlanner.applyingTheme(.earthy, to: settings)
+        let rotated = SonderServerSettingsPlanner.rotatingPairingToken(in: settings) { "new-token" }
+
+        #expect(theme.settings.themePreset == SonderThemePreset.earthy.rawValue)
+        #expect(theme.themePreset == .earthy)
+        #expect(theme.postsServerNotification == false)
+        #expect(rotated.settings.pairingToken == "new-token")
+        #expect(rotated.activity.title == "Rotated LAN pairing token")
+        #expect(rotated.postsServerNotification)
+    }
+
+    @Test func derivedDataDoesNotCountTVPlaceholdersAsEpisodes() async throws {
+        var placeholder = makeItem(id: UUID(), title: "Escaflowne")
+        placeholder.kind = .tvShow
+        placeholder.showTitle = "Escaflowne"
+        placeholder.isPlaceholder = true
+        placeholder.sourcePath = nil
+
+        let derivedData = SonderDerivedData.make(items: [placeholder], progressRecords: [])
+
+        #expect(derivedData.tvShowGroups.first?.episodeCount == 0)
+        #expect(derivedData.tvShowGroups.first?.displayCount == 0)
     }
 
     @Test func derivedDataBuildsTagsProgressAndTVGroups() async throws {
@@ -125,6 +308,57 @@ struct xcode_TM_SonderTests {
         #expect(playback.percent == 0.25)
     }
 
+    @Test func audiobookChapterServicePrefersCachedIndexAndReadsSidecars() async throws {
+        let rootURL = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: rootURL) }
+        try FileManager.default.createDirectory(at: rootURL, withIntermediateDirectories: true)
+        let mediaFolder = rootURL.appendingPathComponent("Books", isDirectory: true)
+        try FileManager.default.createDirectory(at: mediaFolder, withIntermediateDirectories: true)
+        let mediaURL = mediaFolder.appendingPathComponent("Beacon.m4b")
+        try Data([1]).write(to: mediaURL)
+
+        let itemID = UUID()
+        var audiobook = makeItem(id: itemID, title: "Beacon")
+        audiobook.kind = .audiobook
+        audiobook.sourcePath = mediaURL.path
+        let sidecarChapter = SonderAudiobookChapterRecord(index: 1, title: "Sidecar", startSeconds: 0, endSeconds: 60)
+        let cachedChapter = SonderAudiobookChapterRecord(index: 1, title: "Cached", startSeconds: 0, endSeconds: 120)
+        let sidecar = SonderAudiobookChapterFile(chapters: [sidecarChapter])
+        try JSONEncoder.sonder.encode(sidecar).write(to: mediaFolder.appendingPathComponent("Beacon.chapters.json"), options: .atomic)
+
+        let service = SonderAudiobookChapterService(storeRootURL: rootURL)
+        let sidecarResult = service.chapters(for: audiobook)
+        let cacheRoot = rootURL.appendingPathComponent("AudiobookImport", isDirectory: true)
+        try FileManager.default.createDirectory(at: cacheRoot, withIntermediateDirectories: true)
+        let index = SonderAudiobookIndex(
+            schemaVersion: 1,
+            generatedAt: Date(),
+            items: [SonderAudiobookIndexEntry(
+                id: itemID,
+                itemID: itemID,
+                title: "Beacon",
+                subtitle: "Audiobook",
+                author: nil,
+                series: nil,
+                narrator: nil,
+                studio: nil,
+                year: nil,
+                sourcePath: mediaURL.path,
+                sourceFingerprint: "fingerprint",
+                artworkPath: nil,
+                chapters: [cachedChapter],
+                importedAt: Date(),
+                updatedAt: Date()
+            )]
+        )
+        try JSONEncoder.sonder.encode(index).write(to: cacheRoot.appendingPathComponent("audiobook-index.json"), options: .atomic)
+
+        let cachedResult = service.chapters(for: audiobook)
+
+        #expect(sidecarResult == [sidecarChapter])
+        #expect(cachedResult == [cachedChapter])
+    }
+
     @Test func audiobookMetadataDerivesAuthorAndSeriesFromFolderLayout() async throws {
         let item = makeItem(id: UUID(), title: "Beacon")
         var audiobook = item
@@ -154,7 +388,8 @@ struct xcode_TM_SonderTests {
         audiobook.sourcePath = mediaURL.path
         audiobook.durationSeconds = 1800
 
-        let importer = SonderAudiobookImporter(store: SonderStore(rootURL: rootURL))
+        let store = await MainActor.run { SonderStore(rootURL: rootURL) }
+        let importer = SonderAudiobookImporter(store: store)
         let summary = await importer.refreshIndex(items: [audiobook], mediaDirectories: [])
 
         #expect(summary.importedCount == 1)
@@ -190,6 +425,61 @@ struct xcode_TM_SonderTests {
         #expect(detected.map { $0.url.lastPathComponent } == ["TV Shows", "Movies", "Books", "Audio Books"])
     }
 
+    @Test func customLibraryPlannerBuildsDefinitionsForSupportedKinds() async throws {
+        let id = UUID()
+        let plan = SonderCustomLibraryPlanner.plan(named: "  Family Movies  ", kind: .movies) { id }
+        let unsupported = SonderCustomLibraryPlanner.plan(named: "Audio", kind: .audiobooks) { UUID() }
+        let blank = SonderCustomLibraryPlanner.plan(named: "   ", kind: .tvShows) { UUID() }
+
+        #expect(plan?.definition.id == id)
+        #expect(plan?.definition.name == "Family Movies")
+        #expect(plan?.definition.kind == .movies)
+        #expect(plan?.activity.title == "Added custom library")
+        #expect(plan?.activity.detail == "Family Movies scans as movies.")
+        #expect(unsupported == nil)
+        #expect(blank == nil)
+    }
+
+    @Test func mediaDirectoryPlannerUpsertsExistingDirectory() async throws {
+        let libraryID = UUID()
+        let url = URL(fileURLWithPath: "/Media/Movies", isDirectory: true)
+        let existing = SonderMediaDirectory(
+            name: "Old Movies",
+            path: url.path,
+            bookmark: Data([1]),
+            kind: .movies,
+            libraryID: libraryID
+        )
+
+        let mutation = SonderMediaDirectoryPlanner.upserting(
+            urls: [url],
+            kind: .movies,
+            libraryID: libraryID,
+            in: [existing]
+        ) { _ in Data([2]) }
+
+        #expect(mutation.directories.count == 1)
+        #expect(mutation.addedDirectories.count == 1)
+        #expect(mutation.failures.isEmpty)
+        #expect(mutation.directories.first?.name == "Movies")
+        #expect(mutation.directories.first?.bookmark == Data([2]))
+    }
+
+    @Test func mediaDirectoryPlannerMigratesUnknownLibraryIDs() async throws {
+        let unknownID = UUID()
+        let directory = SonderMediaDirectory(
+            name: "TV Shows",
+            path: "/Media/TV Shows",
+            bookmark: Data(),
+            kind: .tvShows,
+            libraryID: unknownID
+        )
+
+        let migrated = SonderMediaDirectoryPlanner.migrated([directory], libraries: SonderLibraryDefinition.defaults)
+
+        #expect(migrated.first?.libraryID == SonderLibraryImportKind.tvShows.defaultLibraryID)
+    }
+
     @Test func scanProgressFactoryBuildsStableProgressSnapshots() async throws {
         let directory = SonderMediaDirectory(
             name: "TV Shows",
@@ -209,15 +499,6 @@ struct xcode_TM_SonderTests {
             directoriesDone: 1,
             directoriesTotal: 4
         )
-        let discovered = SonderScanProgressFactory.discoveredRootTitles(
-            count: 2,
-            directory: directory,
-            filesSeen: 0,
-            mediaFound: 0,
-            indexedCount: 2,
-            directoriesDone: 0,
-            directoriesTotal: 4
-        )
         let localAssets = SonderScanProgressFactory.localAssets(directoriesTotal: 0)
 
         #expect(preparing.phase == .fastTitles)
@@ -227,9 +508,28 @@ struct xcode_TM_SonderTests {
         #expect(indexing.filesSeen == 20)
         #expect(indexing.mediaFound == 6)
         #expect(indexing.indexedCount == 3)
-        #expect(discovered.detail == "Discovered 2 root title(s). Deep scan continues.")
         #expect(localAssets.phase == .localAssets)
         #expect(localAssets.directoriesTotal == 1)
+    }
+
+    @Test func managedImportServiceCopiesAndBuildsItems() async throws {
+        let rootURL = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: rootURL) }
+        try FileManager.default.createDirectory(at: rootURL, withIntermediateDirectories: true)
+        let sourceURL = rootURL.appendingPathComponent("Beacon.m4b")
+        try Data([1]).write(to: sourceURL)
+        let storageURL = rootURL.appendingPathComponent("Managed", isDirectory: true)
+        let service = SonderManagedImportService(store: SonderStore(rootURL: rootURL))
+
+        let imported = service.importFiles(.success([sourceURL]), storagePath: storageURL.path, storageBookmark: nil)
+        let cancelled = service.importFiles(.success([]), storagePath: storageURL.path, storageBookmark: nil)
+
+        #expect(imported.importedCount == 1)
+        #expect(imported.importedItems.first?.item.title == "Beacon")
+        #expect(imported.importedItems.first?.managedURL.deletingLastPathComponent().path == storageURL.path)
+        #expect(imported.activities.last?.title == "Imported media")
+        #expect(cancelled.importedItems.isEmpty)
+        #expect(cancelled.activities.isEmpty)
     }
 
     @Test func managedImportFactoryBuildsItemDefaultsFromParsedMedia() async throws {
@@ -306,6 +606,33 @@ struct xcode_TM_SonderTests {
         #expect(SonderLibraryQueries.priorityAssetTargetIDs(for: movie.id, in: [movie], maxItems: 10).isEmpty)
     }
 
+    @Test func collectionPlannerCreatesAndAddsWithoutDuplicates() async throws {
+        let item = makeItem(id: UUID(), title: "Beacon")
+        let created = SonderCollectionPlanner.creating(
+            named: "  Weekend Queue  ",
+            kind: .playlist,
+            in: []
+        )
+        guard let collection = created.collections.first else {
+            Issue.record("Expected created collection")
+            return
+        }
+
+        let added = SonderCollectionPlanner.adding(item: item, to: collection, in: created.collections)
+        let duplicate = SonderCollectionPlanner.adding(item: item, to: collection, in: added.collections)
+        let emptyName = SonderCollectionPlanner.creating(named: "   ", kind: .collection, in: [])
+
+        #expect(created.didMutate)
+        #expect(created.collections.first?.name == "Weekend Queue")
+        #expect(created.collections.first?.kind == .playlist)
+        #expect(created.activity?.title == "Created playlist")
+        #expect(added.didMutate)
+        #expect(added.collections.first?.itemIDs == [item.id])
+        #expect(duplicate.didMutate == false)
+        #expect(duplicate.collections.first?.itemIDs == [item.id])
+        #expect(emptyName.didMutate == false)
+    }
+
     @Test func conversionPlannerSelectsPlayableNonMP4ItemsAndBuildsJob() async throws {
         let rootURL = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
         defer { try? FileManager.default.removeItem(at: rootURL) }
@@ -336,6 +663,122 @@ struct xcode_TM_SonderTests {
         #expect(plan?.job.title == "Beacon")
         #expect(plan?.job.detail == "Beacon.mkv -> Beacon.mp4")
         #expect(SonderConversionPlanner.plan(for: alreadyMP4, outputURL: outputURL) == nil)
+    }
+
+    @Test func storageCommandServiceBuildsSuccessAndFailureResults() async throws {
+        let rootURL = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: rootURL) }
+        try FileManager.default.createDirectory(at: rootURL, withIntermediateDirectories: true)
+        let storageURL = rootURL.appendingPathComponent("Media", isDirectory: true)
+        try FileManager.default.createDirectory(at: storageURL, withIntermediateDirectories: true)
+        let service = SonderStorageCommandService(store: SonderStore(rootURL: rootURL))
+
+        let success = service.storageUpdate(from: .success([storageURL]))
+        let cancelled = service.storageUpdate(from: .success([]))
+
+        #expect(success.didUpdate)
+        #expect(success.storagePath == storageURL.path)
+        #expect(success.storageBookmark != nil)
+        #expect(success.activity.title == "Updated storage")
+        #expect(cancelled.didUpdate == false)
+        #expect(cancelled.storagePath == nil)
+        #expect(cancelled.activity.title == "Storage unchanged")
+    }
+
+    @Test func playbackCommandsClampProgressAndFormatLabels() async throws {
+        let itemID = UUID()
+        let item = {
+            var item = makeItem(id: itemID, title: "Beacon")
+            item.progressSeconds = 12
+            item.durationSeconds = 120
+            return item
+        }()
+        let existing = [SonderProgress(itemID: itemID, seconds: 150, duration: 100)]
+
+        let update = SonderPlaybackCommands.progressUpdate(
+            itemID: itemID,
+            seconds: 250,
+            duration: 120,
+            records: existing
+        )
+        let label = await MainActor.run {
+            SonderPlaybackCommands.progressLabel(for: item, record: update.records.first)
+        }
+
+        #expect(update.seconds == 120)
+        #expect(update.duration == 120)
+        #expect(SonderPlaybackCommands.progress(for: item, record: update.records.first) == 1)
+        #expect(label == "2m of 2m")
+    }
+
+    @Test func fileAndConversionCommandsBuildPlans() async throws {
+        let rootURL = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: rootURL) }
+        try FileManager.default.createDirectory(at: rootURL, withIntermediateDirectories: true)
+        let mkvURL = rootURL.appendingPathComponent("Signal Path.mkv")
+        try Data([1]).write(to: mkvURL)
+
+        var item = makeItem(id: UUID(), title: "Signal Path")
+        item.format = .mkv
+        item.sourcePath = mkvURL.path
+        item.year = 2026
+
+        let renamePlan = SonderFileCommandPlanner.renameForPlexPlan(for: item)
+        let outputURL = rootURL.appendingPathComponent("Signal Path.mp4")
+        let conversionPlan = SonderConversionCommands.plan(for: item, outputURL: outputURL)
+
+        #expect(renamePlan?.sourceURL.path == mkvURL.path)
+        #expect(renamePlan?.destinationURL.lastPathComponent == item.plexFileName)
+        #expect(SonderConversionCommands.candidates(from: [item]).map(\.id) == [item.id])
+        #expect(conversionPlan?.itemID == item.id)
+        #expect(conversionPlan?.outputURL.path == outputURL.path)
+    }
+
+    @Test func fileCommandServiceRenamesForPlexAndReturnsItemPatch() async throws {
+        let rootURL = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: rootURL) }
+        try FileManager.default.createDirectory(at: rootURL, withIntermediateDirectories: true)
+        let sourceURL = rootURL.appendingPathComponent("Signal Path.mkv")
+        try Data([1]).write(to: sourceURL)
+
+        var item = makeItem(id: UUID(), title: "Signal Path")
+        item.format = .mkv
+        item.sourcePath = sourceURL.path
+        item.year = 2026
+        let service = SonderFileCommandService(store: SonderStore(rootURL: rootURL))
+
+        let result = service.renameForPlex(item)
+
+        #expect(result.didRename)
+        #expect(result.itemID == item.id)
+        #expect(result.sourcePath?.hasSuffix("Signal Path (2026).mkv") == true)
+        #expect(result.format == .mkv)
+        #expect(FileManager.default.fileExists(atPath: result.sourcePath ?? ""))
+        #expect(FileManager.default.fileExists(atPath: sourceURL.path) == false)
+    }
+
+    @Test func scanIndexStateDeduplicatesDiscoveredFiles() async throws {
+        let rootURL = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: rootURL) }
+        try FileManager.default.createDirectory(at: rootURL, withIntermediateDirectories: true)
+        let mediaURL = rootURL.appendingPathComponent("North Pier S01E01.mkv")
+        try Data([1]).write(to: mediaURL)
+        let directory = SonderMediaDirectory(
+            name: "TV Shows",
+            path: rootURL.path,
+            bookmark: Data(),
+            kind: .tvShows,
+            libraryID: SonderLibraryImportKind.tvShows.defaultLibraryID
+        )
+        let state = SonderScanIndexState(existingPaths: [])
+
+        let first = await state.index([SonderScannedMediaFile(url: mediaURL, bookmark: nil)], directory: directory)
+        let second = await state.index([SonderScannedMediaFile(url: mediaURL, bookmark: nil)], directory: directory)
+
+        #expect(first.count == 1)
+        #expect(second.isEmpty)
+        #expect(await state.currentDirectoryIndexedCount() == 1)
+        #expect(await state.currentDirectorySkippedDuplicateCount() == 1)
     }
 
     @Test func progressRecordsClampAndUpdateExistingRecords() async throws {

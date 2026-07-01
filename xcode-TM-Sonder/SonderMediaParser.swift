@@ -1,6 +1,6 @@
 import Foundation
 
-struct SonderParsedMedia {
+nonisolated struct SonderParsedMedia {
     var title: String
     var subtitle: String
     var kind: SonderMediaKind
@@ -57,25 +57,34 @@ enum SonderMediaParser {
                   let episodeRange = Range(match.range(at: episodeIndex), in: raw) else {
                 continue
             }
-            let episodeTitle = Range(match.range(at: titleIndex), in: raw).map { String(raw[$0]).cleanedMediaTitle } ?? ""
-            let folderShow = parent.localizedCaseInsensitiveContains("season") ? grandparent : parent
-            let show = showRangeIndex.flatMap { Range(match.range(at: $0), in: raw).map { String(raw[$0]).cleanedMediaTitle } } ?? folderShow
+            let episodeTitle = Range(match.range(at: titleIndex), in: raw).map { cleanEpisodeTitle(String(raw[$0])) } ?? ""
+            let folderShow = tvShowName(parent: parent, grandparent: grandparent)
+            let parsedShow = showRangeIndex.flatMap { Range(match.range(at: $0), in: raw).map { cleanShowTitle(String(raw[$0])) } }
+            let show = libraryKind == .tvShows ? folderShow : (parsedShow?.isEmpty == false ? parsedShow! : folderShow)
             let season = Int(raw[seasonRange]) ?? 1
             let episode = Int(raw[episodeRange]) ?? 1
-            return SonderParsedMedia(
-                title: episodeTitle.isEmpty ? "Episode \(episode)" : episodeTitle,
-                subtitle: "\(show) - S\(String(format: "%02d", season))E\(String(format: "%02d", episode))",
-                kind: .tvShow,
-                year: extractYear(from: raw) ?? extractYear(from: show),
-                showTitle: show,
+            return tvParsedMedia(
+                show: show,
                 season: season,
                 episode: episode,
-                metadataIDSource: metadataTag?.source,
-                metadataID: metadataTag?.id,
+                episodeTitle: episodeTitle,
+                raw: raw,
+                metadataTag: metadataTag,
                 edition: edition,
-                localPosterPath: assets.poster?.path,
-                localBackdropPath: assets.backdrop?.path,
-                subtitlePaths: assets.subtitles.map(\.path)
+                assets: assets
+            )
+        }
+
+        if libraryKind == .tvShows, let absoluteEpisode = parseAbsoluteEpisode(raw: raw, parent: parent, grandparent: grandparent) {
+            return tvParsedMedia(
+                show: absoluteEpisode.show,
+                season: absoluteEpisode.season,
+                episode: absoluteEpisode.episode,
+                episodeTitle: absoluteEpisode.title,
+                raw: raw,
+                metadataTag: metadataTag,
+                edition: edition,
+                assets: assets
             )
         }
 
@@ -154,7 +163,7 @@ enum SonderMediaParser {
         } else if lower.contains("book") || lower.contains("ebook") || ["epub", "pdf", "m4b", "mp3", "m4a"].contains(url.pathExtension.lowercased()) {
             kind = .ebook
         } else {
-            kind = lower.contains("documentary") || lower.contains("docu") ? .documentary : .movie
+            kind = .movie
         }
         return SonderParsedMedia(
             title: movieFileCandidate?.title ?? raw.removingPlexTags.cleanedMediaTitle,
@@ -171,6 +180,98 @@ enum SonderMediaParser {
         )
     }
 
+    private struct AbsoluteEpisodeMatch {
+        var show: String
+        var season: Int
+        var episode: Int
+        var title: String
+    }
+
+    nonisolated private static func tvParsedMedia(
+        show: String,
+        season: Int,
+        episode: Int,
+        episodeTitle: String,
+        raw: String,
+        metadataTag: (source: String, id: String)?,
+        edition: String?,
+        assets: (poster: URL?, backdrop: URL?, subtitles: [URL])
+    ) -> SonderParsedMedia {
+        SonderParsedMedia(
+            title: episodeTitle.isEmpty ? "Episode \(episode)" : episodeTitle,
+            subtitle: "\(show) - S\(String(format: "%02d", season))E\(String(format: "%02d", episode))",
+            kind: .tvShow,
+            year: extractYear(from: raw) ?? extractYear(from: show),
+            showTitle: show,
+            season: season,
+            episode: episode,
+            metadataIDSource: metadataTag?.source,
+            metadataID: metadataTag?.id,
+            edition: edition,
+            localPosterPath: assets.poster?.path,
+            localBackdropPath: assets.backdrop?.path,
+            subtitlePaths: assets.subtitles.map(\.path)
+        )
+    }
+
+    nonisolated private static func parseAbsoluteEpisode(raw: String, parent: String, grandparent: String) -> AbsoluteEpisodeMatch? {
+        let folderShow = tvShowName(parent: parent, grandparent: grandparent)
+        let season = extractSeason(from: parent) ?? 1
+        let normalized = raw
+            .replacingOccurrences(of: #"^\[[^\]]+\][\s._-]*"#, with: "", options: .regularExpression)
+            .cleanedMediaTitle
+        let patterns = [
+            #"(?i)^(.+?)[\s._-]+(?:episode|ep)?[\s._-]*(\d{1,3})(?:v\d+)?(?:[\s._-]+(.+))?$"#,
+            #"(?i)^(?:episode|ep)?[\s._-]*(\d{1,3})(?:v\d+)?(?:[\s._-]+(.+))?$"#
+        ]
+
+        for pattern in patterns {
+            guard let regex = try? NSRegularExpression(pattern: pattern),
+                  let match = regex.firstMatch(in: normalized, range: NSRange(normalized.startIndex..<normalized.endIndex, in: normalized)) else { continue }
+            let hasShowPrefix = match.numberOfRanges == 4
+            let episodeIndex = hasShowPrefix ? 2 : 1
+            let titleIndex = hasShowPrefix ? 3 : 2
+            guard let episodeRange = Range(match.range(at: episodeIndex), in: normalized),
+                  let episode = Int(normalized[episodeRange]),
+                  isPlausibleAbsoluteEpisode(episode) else { continue }
+            let parsedShow = hasShowPrefix ? Range(match.range(at: 1), in: normalized).map { cleanShowTitle(String(normalized[$0])) } : nil
+            let title = Range(match.range(at: titleIndex), in: normalized).map { cleanEpisodeTitle(String(normalized[$0])) } ?? ""
+            return AbsoluteEpisodeMatch(
+                show: parsedShow?.isEmpty == false ? parsedShow! : folderShow,
+                season: season,
+                episode: episode,
+                title: title
+            )
+        }
+        return nil
+    }
+
+    nonisolated private static func isPlausibleAbsoluteEpisode(_ value: Int) -> Bool {
+        (1...200).contains(value)
+    }
+
+    nonisolated private static func tvShowName(parent: String, grandparent: String) -> String {
+        parent.localizedCaseInsensitiveContains("season") ? grandparent : parent
+    }
+
+    nonisolated private static func cleanShowTitle(_ value: String) -> String {
+        value
+            .replacingOccurrences(of: #"^\[[^\]]+\][\s._-]*"#, with: "", options: .regularExpression)
+            .removingPlexTags
+            .cleanedMediaTitle
+    }
+
+    nonisolated private static func cleanEpisodeTitle(_ value: String) -> String {
+        let cleaned = value
+            .replacingOccurrences(of: #"\[[^\]]*(?:720|1080|2160|x264|x265|h\.264|h\.265|hevc|aac|flac|bd|bluray|web|webrip|dvd|dual audio)[^\]]*\]"#, with: "", options: [.regularExpression, .caseInsensitive])
+            .replacingOccurrences(of: #"\([^)]*(?:720|1080|2160|x264|x265|h\.264|h\.265|hevc|aac|flac|bd|bluray|web|webrip|dvd|dual audio)[^)]*\)"#, with: "", options: [.regularExpression, .caseInsensitive])
+            .replacingOccurrences(of: #"\[[A-F0-9]{8}\]"#, with: "", options: [.regularExpression, .caseInsensitive])
+            .removingPlexTags
+            .cleanedMediaTitle
+            .trimmingCharacters(in: CharacterSet(charactersIn: "- "))
+        return cleaned
+    }
+
     nonisolated private static func extractMovieNameAndYear(from value: String) -> (title: String, year: Int?)? {
         guard let year = extractYear(from: value) else { return nil }
         let title = value
@@ -183,7 +284,7 @@ enum SonderMediaParser {
     }
 
     nonisolated private static func extractMetadataTag(from value: String) -> (source: String, id: String)? {
-        guard let match = value.firstMatch(pattern: #"\{(imdb|tmdb)-([^}]+)\}"#) else { return nil }
+        guard let match = value.firstMatch(pattern: #"\{(imdb|tmdb|audible|audnexus)-([^}]+)\}"#) else { return nil }
         return (match[0], match[1])
     }
 

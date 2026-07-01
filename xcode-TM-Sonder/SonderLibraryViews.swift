@@ -9,31 +9,75 @@ struct LibraryView: View {
     @Binding var selectedItemID: UUID?
     @ObservedObject var library: SonderLibrary
     @State private var cardMinimumWidth = 230.0
+    @State private var selectedShowName: String?
 
     private var posterHeight: CGFloat {
         CGFloat(cardMinimumWidth * 1.44)
     }
 
-    var body: some View {
-        ScrollView {
-            LazyVStack(alignment: .leading, spacing: 18) {
-                catalogHeader
-                filterBar
+    private var nonTVItems: [SonderMediaItem] {
+        items.filter { $0.kind != .tvShow }
+    }
 
-                LazyVGrid(columns: [GridItem(.adaptive(minimum: cardMinimumWidth, maximum: cardMinimumWidth + 28), spacing: 18)], spacing: 18) {
-                    ForEach(items) { item in
-                        MediaCard(item: item, progress: library.progress(for: item), posterHeight: posterHeight) {
-                            selectedItemID = item.id
-                        } play: {
-                            library.play(item)
+    private var tvShowGroups: [SonderTVShowGroup] {
+        SonderDerivedData.make(items: items, progressRecords: library.progressRecords).tvShowGroups
+    }
+
+    private var selectedShow: SonderTVShowGroup? {
+        guard let selectedShowName else { return nil }
+        return tvShowGroups.first { $0.name == selectedShowName }
+    }
+
+    var body: some View {
+        Group {
+            if let selectedShow {
+                TVShowDetailPage(show: selectedShow, library: library) { item in
+                    selectedItemID = item.id
+                } back: {
+                    selectedShowName = nil
+                }
+            } else {
+                ScrollView {
+                    LazyVStack(alignment: .leading, spacing: 18) {
+                        catalogHeader
+                        filterBar
+
+                        if tvShowGroups.isEmpty && nonTVItems.isEmpty {
+                            EmptyLibraryMessage(text: "No titles match the current filters.")
+                        }
+
+                        if tvShowGroups.isEmpty == false {
+                            LibrarySectionHeader(title: "TV Shows", detail: "\(tvShowGroups.count) shows")
+                            LazyVGrid(columns: [GridItem(.adaptive(minimum: cardMinimumWidth, maximum: cardMinimumWidth + 28), spacing: 18)], spacing: 18) {
+                                ForEach(tvShowGroups) { show in
+                                    TVShowCard(show: show, library: library) {
+                                        selectedShowName = show.name
+                                    } play: { item in
+                                        library.play(item)
+                                    }
+                                }
+                            }
+                        }
+
+                        if nonTVItems.isEmpty == false {
+                            LibrarySectionHeader(title: selectedKind == nil ? "Titles" : selectedKind?.label ?? "Titles", detail: "\(nonTVItems.count) titles")
+                            LazyVGrid(columns: [GridItem(.adaptive(minimum: cardMinimumWidth, maximum: cardMinimumWidth + 28), spacing: 18)], spacing: 18) {
+                                ForEach(nonTVItems) { item in
+                                    MediaCard(item: item, progress: library.progress(for: item), posterHeight: posterHeight) {
+                                        selectedItemID = item.id
+                                    } play: {
+                                        library.play(item)
+                                    }
+                                }
+                            }
                         }
                     }
+                    .padding(20)
                 }
             }
-            .padding(20)
         }
         .background(SonderTheme.background)
-        .navigationTitle("Library")
+        .navigationTitle(selectedShow?.name ?? "Library")
     }
 
     private var catalogHeader: some View {
@@ -112,6 +156,23 @@ struct LibraryView: View {
         .padding(12)
         .background(SonderTheme.surface, in: RoundedRectangle(cornerRadius: 8))
         .overlay(RoundedRectangle(cornerRadius: 8).stroke(SonderTheme.border))
+    }
+}
+
+private struct LibrarySectionHeader: View {
+    let title: String
+    let detail: String
+
+    var body: some View {
+        HStack(alignment: .firstTextBaseline) {
+            Text(title)
+                .font(.title3.weight(.semibold))
+                .foregroundStyle(SonderTheme.text)
+            Spacer()
+            Text(detail)
+                .font(.caption.monospacedDigit())
+                .foregroundStyle(SonderTheme.textLight)
+        }
     }
 }
 

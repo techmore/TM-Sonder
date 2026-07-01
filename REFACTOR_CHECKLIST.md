@@ -15,10 +15,10 @@ Track the maintainability refactor in small, reviewable steps.
 
 Deferred larger follow-ups:
 
-- [ ] Break `SonderLibrary` into smaller services.
+- [x] Break `SonderLibrary` into smaller services.
 - [x] Extract pure derived-data building from `SonderLibrary`.
-- [ ] Extract scan/import orchestration from `SonderLibrary`.
-- [ ] Extract playback/conversion commands from `SonderLibrary`.
+- [x] Extract scan/import orchestration from `SonderLibrary`.
+- [x] Extract playback/conversion commands from `SonderLibrary`.
 - [x] Move `NSOpenPanel` and `NSWorkspace` interactions behind UI/app services.
 - [x] Replace repeated library mutation/save/cache patterns with a single mutation helper.
 - [x] Move library snapshot and HTTP cache support types out of `ContentView.swift`.
@@ -43,14 +43,14 @@ Clean-code roadmap:
 - [x] Extract conversion candidate and job planning out of `SonderLibrary`.
 - [x] Extract search, audiobook, and priority asset query helpers out of `SonderLibrary`.
 - [x] Extract scan progress snapshot builders out of `SonderLibrary`.
-- [ ] Extract scan/import orchestration from `SonderLibrary` into a coordinator/service.
-- [ ] Extract playback/progress/conversion commands from `SonderLibrary`.
-- [ ] Move `SonderHTTPServer` out of `xcode_TM_SonderApp.swift`.
+- [x] Extract scan/import orchestration from `SonderLibrary` into a coordinator/service.
+- [x] Extract playback/progress/conversion commands from `SonderLibrary`.
+- [x] Move `SonderHTTPServer` out of `xcode_TM_SonderApp.swift`.
 - [x] Move HTTP response DTOs out of `xcode_TM_SonderApp.swift`.
 - [x] Move metadata enrichment into its own file.
 - [x] Move audiobook import into its own file.
 - [x] Rename remaining Plex import context to `SonderPlexImport.swift`.
-- [ ] Add route/service tests for audiobook search, progress updates, malformed HTTP IDs, and scan deduplication.
+- [x] Add route/service tests for audiobook search, progress updates, malformed HTTP IDs, and scan deduplication.
 
 Audiobook feature follow-ups:
 
@@ -58,4 +58,4 @@ Audiobook feature follow-ups:
 - [x] Add searchable audiobook API support with `/api/audiobooks?q=...`.
 - [x] Add a pure chapter-aware playback snapshot model.
 - [x] Surface current chapter, chapter jumping, resume, and progress sync in the web browser.
-- [ ] Add richer audiobook metadata matching against an external Audnexus-compatible provider.
+- [x] Add richer audiobook metadata matching against an external Audnexus-compatible provider.

@@ -2,6 +2,9 @@ import SwiftUI
 
 struct ServerDashboard: View {
     @ObservedObject var library: SonderLibrary
+    @State private var customLibraryName = ""
+    @State private var customLibraryStyle: SonderLibraryImportKind = .movies
+    @State private var showingResetDatabaseConfirmation = false
 
     var body: some View {
         ScrollView {
@@ -75,6 +78,24 @@ struct ServerDashboard: View {
                 DashboardPanel(title: "Storage") {
                     EndpointRow(label: "Media", value: library.storagePath)
                     Text("Use the Storage toolbar button to choose a mounted NAS, external disk, or synced folder. New imports copy there; the app database remains in Application Support.")
+                        .font(.caption)
+                        .foregroundStyle(SonderTheme.textLight)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+
+                DashboardPanel(title: "Testing Tools") {
+                    HStack {
+                        Label("Reset imported library database", systemImage: "trash")
+                            .foregroundStyle(SonderTheme.textLight)
+                        Spacer()
+                        Button(role: .destructive) {
+                            showingResetDatabaseConfirmation = true
+                        } label: {
+                            Label("Reset Database", systemImage: "trash")
+                        }
+                        .disabled(library.isBusy || library.isLoadingPersistedLibrary)
+                    }
+                    Text("Clears imported titles, watched progress, collections, scanned folders, queued scans, and conversion jobs for testing. It does not delete media files from disk.")
                         .font(.caption)
                         .foregroundStyle(SonderTheme.textLight)
                         .fixedSize(horizontal: false, vertical: true)
@@ -182,6 +203,7 @@ struct ServerDashboard: View {
 
                 DashboardPanel(title: "Remote Libraries") {
                     HStack {
+                        let pickerDisabled = library.isBusy || library.isLoadingPersistedLibrary
                         Label("\(library.libraryDefinitions.count) libraries / \(library.mediaDirectories.count) folders", systemImage: "network")
                             .foregroundStyle(SonderTheme.textLight)
                         Spacer()
@@ -190,32 +212,37 @@ struct ServerDashboard: View {
                         } label: {
                             Label("Media Library", systemImage: "externaldrive.badge.plus")
                         }
+                        .disabled(pickerDisabled)
                         Button {
                             library.chooseMediaDirectories(kind: .movies)
                         } label: {
                             Label("Movies Library", systemImage: "film")
                         }
+                        .disabled(pickerDisabled)
                         Button {
                             library.chooseMediaDirectories(kind: .tvShows)
                         } label: {
                             Label("TV Library", systemImage: "tv")
                         }
+                        .disabled(pickerDisabled)
                         Button {
                             library.chooseMediaDirectories(kind: .audiobooks)
                         } label: {
                             Label("Audio Library", systemImage: "headphones")
                         }
+                        .disabled(pickerDisabled)
                         Button {
                             library.chooseMediaDirectories(kind: .ebooks)
                         } label: {
                             Label("Books Library", systemImage: "book")
                         }
+                        .disabled(pickerDisabled)
                         Button {
                             library.rescanMediaDirectories()
                         } label: {
                             Label("Rescan", systemImage: "arrow.clockwise")
                         }
-                        .disabled(library.mediaDirectories.isEmpty)
+                        .disabled(library.mediaDirectories.isEmpty || pickerDisabled)
                     }
 
                     Text("Select a Media Library root to auto-detect TV Shows, Movies, Books, and Audiobooks folders, or add individual SMB/NFS/NAS folders manually. Sonder stores security-scoped bookmarks and only scans directories the user grants.")
@@ -223,33 +250,155 @@ struct ServerDashboard: View {
                         .foregroundStyle(SonderTheme.textLight)
                         .fixedSize(horizontal: false, vertical: true)
 
+                    DashboardPanel(title: "Other Import") {
+                        HStack(spacing: 10) {
+                            TextField("Category name", text: $customLibraryName)
+                                .textFieldStyle(.roundedBorder)
+                                .frame(minWidth: 180)
+                            Picker("Style", selection: $customLibraryStyle) {
+                                Text("Movie styled").tag(SonderLibraryImportKind.movies)
+                                Text("TV Show styled").tag(SonderLibraryImportKind.tvShows)
+                            }
+                            .pickerStyle(.segmented)
+                            .frame(width: 260)
+                            Button {
+                                library.chooseCustomMediaDirectory(named: customLibraryName, styledAs: customLibraryStyle)
+                                customLibraryName = ""
+                                customLibraryStyle = .movies
+                            } label: {
+                                Label("Choose Folder", systemImage: "folder.badge.plus")
+                            }
+                            .disabled(customLibraryName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || library.scanProgress != nil)
+                        }
+                    }
+
                     if let progress = library.scanProgress {
-                        VStack(alignment: .leading, spacing: 6) {
-                            HStack {
-                                Label(progress.title, systemImage: "magnifyingglass")
-                                Spacer()
-                                Text(progress.phase.label)
-                                    .font(.caption.weight(.semibold))
-                                    .foregroundStyle(SonderTheme.accent)
-                                Text("\(progress.filesSeen) files")
+                        DashboardPanel(title: "Import Monitor") {
+                            VStack(alignment: .leading, spacing: 10) {
+                                VStack(alignment: .leading, spacing: 5) {
+                                    HStack {
+                                        Label(progress.title, systemImage: "magnifyingglass")
+                                        Spacer()
+                                        Text(progress.phase.label)
+                                            .font(.caption.weight(.semibold))
+                                            .foregroundStyle(SonderTheme.accent)
+                                        Text("\(progress.filesSeen) files")
+                                            .font(.caption.monospacedDigit())
+                                            .foregroundStyle(SonderTheme.textLight)
+                                    }
+                                    HStack(spacing: 10) {
+                                        if let startedAt = library.activeScanStartedAt {
+                                            HStack(spacing: 4) {
+                                                Image(systemName: "timer")
+                                                Text("Started")
+                                                Text(startedAt, style: .relative)
+                                            }
+                                        }
+                                        if let updatedAt = library.activeScanUpdatedAt {
+                                            HStack(spacing: 4) {
+                                                Image(systemName: "dot.radiowaves.left.and.right")
+                                                Text("Updated")
+                                                Text(updatedAt, style: .relative)
+                                            }
+                                        }
+                                    }
+                                    .font(.caption2.monospacedDigit())
+                                    .foregroundStyle(SonderTheme.textLight.opacity(0.9))
+                                    ProgressView(value: progress.fraction)
+                                        .tint(SonderTheme.accentStrong)
+                                    HStack {
+                                        Label("\(progress.mediaFound) media", systemImage: "doc.richtext")
+                                        Label("\(progress.indexedCount) indexed", systemImage: "tray.and.arrow.down")
+                                        if library.queuedScanDirectoryCount > 0 {
+                                            Label("\(library.queuedScanDirectoryCount) queued", systemImage: "tray")
+                                        }
+                                        Spacer()
+                                        Text("\(progress.directoriesDone)/\(progress.directoriesTotal) folders")
+                                    }
                                     .font(.caption.monospacedDigit())
                                     .foregroundStyle(SonderTheme.textLight)
+                                    if let activePath = library.activeScanDirectoryPath {
+                                        Text("Active folder: \(activePath)")
+                                            .font(.caption)
+                                            .foregroundStyle(SonderTheme.textLight)
+                                            .lineLimit(1)
+                                            .truncationMode(.middle)
+                                    }
+                                    Text("Current: \(progress.detail)")
+                                        .font(.caption)
+                                        .foregroundStyle(SonderTheme.textLight)
+                                        .lineLimit(1)
+                                        .truncationMode(.middle)
+                                    if library.queuedScanDirectorySummaries.isEmpty == false {
+                                        VStack(alignment: .leading, spacing: 3) {
+                                            Text("Queued next")
+                                                .font(.caption2.weight(.semibold))
+                                                .foregroundStyle(SonderTheme.textLight)
+                                            ForEach(Array(library.queuedScanDirectorySummaries.prefix(4)), id: \.self) { summary in
+                                                Label(summary, systemImage: "tray")
+                                                    .font(.caption2)
+                                                    .foregroundStyle(SonderTheme.textLight)
+                                                    .lineLimit(1)
+                                                    .truncationMode(.middle)
+                                            }
+                                            if library.queuedScanDirectorySummaries.count > 4 {
+                                                Text("+\(library.queuedScanDirectorySummaries.count - 4) more queued")
+                                                    .font(.caption2.monospacedDigit())
+                                                    .foregroundStyle(SonderTheme.textLight.opacity(0.85))
+                                            }
+                                        }
+                                        .padding(8)
+                                        .background(SonderTheme.surfaceDeep, in: RoundedRectangle(cornerRadius: 6))
+                                    }
+                                }
+
+                                ScrollView(.horizontal, showsIndicators: false) {
+                                    HStack(alignment: .top, spacing: 10) {
+                                        ForEach(Array(SonderMediaKind.mediaCases.enumerated()), id: \.element) { index, kind in
+                                            let count = library.mediaKindCounts[kind, default: 0]
+                                            let stage = library.scanStageState(for: kind)
+                                            let expected = library.expectedCount(for: kind)
+                                            let importedLabel = count == 1 ? "1 item" : "\(count) items"
+                                            let folderLabel = expected == 1 ? "1 folder" : "\(expected) folders"
+                                            let stateLabel = stage.isComplete ? "Discovered" : (stage.isActive ? "Discovering" : "Queued")
+                                            let subtitle = expected > 0
+                                                ? "Phase \(index + 1): \(importedLabel) from \(folderLabel)."
+                                                : (count > 0
+                                                    ? "Phase \(index + 1): \(importedLabel) already indexed."
+                                                    : "Phase \(index + 1): waiting for this media type.")
+                                            let detail = "\(count)/\(max(expected, count)) media folders"
+                                            MonitorPhaseCard(
+                                                title: kind.label,
+                                                subtitle: subtitle,
+                                                detail: detail,
+                                                stateLabel: stateLabel,
+                                                isActive: stage.isActive,
+                                                isComplete: stage.isComplete
+                                            )
+                                        }
+                                        MonitorPhaseCard(
+                                            title: "Indexing",
+                                            subtitle: "Phase \(SonderMediaKind.mediaCases.count + 1): build the catalog from discovered titles.",
+                                            detail: "Playable media records are being finalized now.",
+                                            stateLabel: library.scanProgress?.phase == .fastTitles ? "Indexing" : (library.scanProgress?.phase == .localAssets ? "Ready" : "Queued"),
+                                            isActive: library.scanProgress?.phase == .fastTitles,
+                                            isComplete: library.scanProgress?.phase == .localAssets
+                                        )
+                                        MonitorPhaseCard(
+                                            title: "Artwork",
+                                            subtitle: "Phase \(SonderMediaKind.mediaCases.count + 2): refresh posters, subtitles, and runtime details.",
+                                            detail: library.scanProgress?.phase == .localAssets ? "\(library.scanProgress?.indexedCount ?? 0)/\(library.scanProgress?.mediaFound ?? 0) titles" : "Waiting for indexing to finish.",
+                                            stateLabel: library.scanProgress?.phase == .localAssets ? "Refreshing art" : (library.scanProgress == nil ? "Ready" : "Queued"),
+                                            isActive: library.scanProgress?.phase == .localAssets,
+                                            isComplete: library.scanProgress == nil && library.items.isEmpty == false
+                                        )
+                                    }
+                                }
+                                Text("Import runs in stages: Sonder discovers media folders first, then indexes the catalog, then refreshes local artwork and runtime details.")
+                                    .font(.caption2)
+                                    .foregroundStyle(SonderTheme.textLight)
+                                    .fixedSize(horizontal: false, vertical: true)
                             }
-                            ProgressView(value: progress.fraction)
-                                .tint(SonderTheme.accentStrong)
-                            HStack {
-                                Label("\(progress.mediaFound) media", systemImage: "doc.richtext")
-                                Label("\(progress.indexedCount) indexed", systemImage: "tray.and.arrow.down")
-                                Spacer()
-                                Text("\(progress.directoriesDone)/\(progress.directoriesTotal) folders")
-                            }
-                            .font(.caption.monospacedDigit())
-                            .foregroundStyle(SonderTheme.textLight)
-                            Text(progress.detail)
-                                .font(.caption)
-                                .foregroundStyle(SonderTheme.textLight)
-                                .lineLimit(1)
-                                .truncationMode(.middle)
                         }
                     }
 
@@ -313,7 +462,7 @@ struct ServerDashboard: View {
                             Label("Convert Playable to MP4", systemImage: "arrow.triangle.2.circlepath")
                         }
                     }
-                    Text("Sonder only converts formats Apple frameworks can read and export. For MKV or uncommon codecs, keep this app as the catalog/server and use a companion workflow with recommended HandBrake settings.")
+                    Text("Best browser/server target: MP4 container, H.264 video for maximum compatibility or H.265/HEVC for smaller files on newer Apple devices, AAC stereo/5.1 audio, web-optimized start metadata, and SRT/VTT sidecar subtitles. Keep source files if you want archival quality; convert MKV/ASS/FLAC/DTS-heavy releases to MP4 for smooth in-browser playback and Plex-style naming like Show Name/Season 01/Show Name - S01E01 - Episode Title.mp4.")
                         .font(.caption)
                         .foregroundStyle(SonderTheme.textLight)
                         .fixedSize(horizontal: false, vertical: true)
@@ -361,5 +510,17 @@ struct ServerDashboard: View {
         }
         .background(SonderTheme.background)
         .navigationTitle("Server")
+        .confirmationDialog(
+            "Reset Sonder database?",
+            isPresented: $showingResetDatabaseConfirmation,
+            titleVisibility: .visible
+        ) {
+            Button("Reset Database", role: .destructive) {
+                library.resetLibraryDatabaseForTesting()
+            }
+            Button("Cancel", role: .cancel) {}
+        } message: {
+            Text("This clears imported titles, watched progress, collections, scanned folders, queued scans, and conversion jobs. Your media files remain untouched.")
+        }
     }
 }

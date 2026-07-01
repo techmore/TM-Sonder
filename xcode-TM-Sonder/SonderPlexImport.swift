@@ -26,6 +26,17 @@ nonisolated struct SonderContextMedia: Codable, Hashable, Sendable {
     var genres: [String]
 }
 
+nonisolated struct SonderContextEpisode: Codable, Hashable, Sendable {
+    var metadataItemID: Int
+    var title: String
+    var summary: String?
+    var seasonNumber: Int
+    var episodeNumber: Int
+    var guid: String?
+    var rating: Double?
+    var mediaFiles: [String]
+}
+
 nonisolated struct SonderContextFileMapping: Codable, Hashable, Sendable {
     var rootFolder: String
     var matchedFiles: [String]
@@ -47,6 +58,7 @@ nonisolated struct SonderContext: Codable, Hashable, Sendable {
     var source: SonderContextSource
     var media: SonderContextMedia
     var artwork: [SonderContextAsset]
+    var episodes: [SonderContextEpisode]?
     var fileMapping: SonderContextFileMapping
     var timestamps: SonderContextTimestamps
     var hashes: SonderContextHashes
@@ -67,6 +79,20 @@ nonisolated struct PlexMetadataRecord: Hashable, Sendable {
     var artURL: String?
     var clearLogoURL: String?
     var squareArtURL: String?
+    var mediaFiles: [String]
+    var directoryPath: String?
+    var refreshedAt: Date?
+}
+
+nonisolated struct PlexEpisodeRecord: Hashable, Sendable {
+    var showMetadataItemID: Int
+    var metadataItemID: Int
+    var title: String
+    var summary: String?
+    var seasonNumber: Int
+    var episodeNumber: Int
+    var guid: String?
+    var rating: Double?
     var mediaFiles: [String]
     var directoryPath: String?
     var refreshedAt: Date?
@@ -96,6 +122,110 @@ nonisolated struct PlexImportProgress: Sendable, Hashable {
     var importedCount: Int
     var unchangedCount: Int
     var skippedCount: Int
+}
+
+nonisolated struct SonderPlexImportResult: Sendable, Hashable {
+    var status: PlexImportStatus
+    var activity: SonderLibraryActivityDraft?
+}
+
+nonisolated struct SonderPlexImportService: Sendable {
+    var store: SonderStore
+
+    static func preparingStatus(previous: PlexImportStatus) -> PlexImportStatus {
+        PlexImportStatus(
+            lastRunAt: previous.lastRunAt,
+            importedCount: 0,
+            unchangedCount: 0,
+            skippedCount: 0,
+            lastMessage: "Preparing Plex import...",
+            isRunning: true,
+            processedCount: 0,
+            totalCount: 0,
+            currentTitle: nil
+        )
+    }
+
+    func importContexts(progress: @escaping @Sendable (PlexImportStatus) async -> Void) async -> SonderPlexImportResult {
+        let support = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first
+        let plexRoot = support?.appendingPathComponent("Plex Media Server", isDirectory: true)
+        let dbURL = plexRoot?.appendingPathComponent("Plug-in Support/Databases/com.plexapp.plugins.library.db")
+        let metadataRoot = plexRoot?.appendingPathComponent("Metadata/TV Shows", isDirectory: true)
+        guard let dbURL, let metadataRoot,
+              FileManager.default.fileExists(atPath: dbURL.path),
+              FileManager.default.fileExists(atPath: metadataRoot.path) else {
+            return SonderPlexImportResult(
+                status: PlexImportStatus(
+                    lastRunAt: Date(),
+                    importedCount: 0,
+                    unchangedCount: 0,
+                    skippedCount: 0,
+                    lastMessage: "Plex database or TV metadata cache was not found on this Mac."
+                ),
+                activity: nil
+            )
+        }
+
+        let importer = PlexImporter(dbURL: dbURL, bundleRootURL: metadataRoot)
+        let summary = await importer.importShowContexts { importProgress in
+            await progress(Self.runningStatus(from: importProgress))
+        }
+        guard summary.isEmpty == false else {
+            return SonderPlexImportResult(
+                status: PlexImportStatus(lastRunAt: Date(), importedCount: 0, unchangedCount: 0, skippedCount: 0, lastMessage: "No Plex show metadata found."),
+                activity: nil
+            )
+        }
+
+        writeImportIndex(for: summary)
+        let totalCount = summary.importedCount + summary.unchangedCount + summary.skippedCount
+        let message = summary.importedCount > 0 ? "Imported Plex context for \(summary.importedCount) show(s)." : "Plex context already up to date."
+        let status = PlexImportStatus(
+            lastRunAt: Date(),
+            importedCount: summary.importedCount,
+            unchangedCount: summary.unchangedCount,
+            skippedCount: summary.skippedCount,
+            lastMessage: message,
+            isRunning: false,
+            processedCount: totalCount,
+            totalCount: totalCount,
+            currentTitle: nil
+        )
+        let activity = SonderLibraryActivityDraft(
+            title: "Imported Plex context",
+            detail: "\(summary.importedCount) imported, \(summary.unchangedCount) unchanged, \(summary.skippedCount) skipped.",
+            icon: "externaldrive.badge.icloud"
+        )
+        return SonderPlexImportResult(status: status, activity: activity)
+    }
+
+    private static func runningStatus(from progress: PlexImportProgress) -> PlexImportStatus {
+        PlexImportStatus(
+            lastRunAt: nil,
+            importedCount: progress.importedCount,
+            unchangedCount: progress.unchangedCount,
+            skippedCount: progress.skippedCount,
+            lastMessage: progress.totalCount > 0 ? "Importing Plex context..." : "No Plex show metadata found.",
+            isRunning: true,
+            processedCount: progress.processedCount,
+            totalCount: progress.totalCount,
+            currentTitle: progress.currentTitle
+        )
+    }
+
+    private func writeImportIndex(for summary: PlexImportSummary) {
+        let cacheRoot = store.rootURL.appendingPathComponent("PlexImport", isDirectory: true)
+        try? FileManager.default.createDirectory(at: cacheRoot, withIntermediateDirectories: true)
+        let payload = [
+            "imported": summary.importedCount,
+            "unchanged": summary.unchangedCount,
+            "skipped": summary.skippedCount,
+            "capturedAt": ISO8601DateFormatter().string(from: Date())
+        ] as [String: Any]
+        if let data = try? JSONSerialization.data(withJSONObject: payload, options: [.prettyPrinted, .sortedKeys]) {
+            try? data.write(to: cacheRoot.appendingPathComponent("plex-import-index.json"), options: .atomic)
+        }
+    }
 }
 
 actor PlexDatabaseReader {
@@ -137,6 +267,35 @@ actor PlexDatabaseReader {
         """
         guard let output = await runSQL(sql) else { return [] }
         return output.compactMap(Self.parseRecord)
+    }
+
+    func discoverEpisodeRecords(limit: Int = 10_000) async -> [PlexEpisodeRecord] {
+        let sql = """
+        select
+          show.id,
+          e.id,
+          coalesce(e.title, ''),
+          e.summary,
+          coalesce(s."index", 1),
+          coalesce(e."index", 1),
+          e.guid,
+          e.rating,
+          coalesce(group_concat(distinct p.file), ''),
+          max(d.path),
+          e.refreshed_at
+        from metadata_items e
+        join metadata_items s on s.id = e.parent_id and s.deleted_at is null
+        join metadata_items show on show.id = s.parent_id and show.deleted_at is null
+        left join media_items mi on mi.metadata_item_id = e.id
+        left join media_parts p on p.media_item_id = mi.id and p.deleted_at is null
+        left join directories d on d.id = p.directory_id
+        where e.metadata_type = 4 and e.deleted_at is null
+        group by e.id
+        order by show.title, s."index", e."index"
+        limit \(limit);
+        """
+        guard let output = await runSQL(sql) else { return [] }
+        return output.compactMap(Self.parseEpisodeRecord)
     }
 
     private func runSQL(_ sql: String) async -> [String]? {
@@ -181,6 +340,27 @@ actor PlexDatabaseReader {
             mediaFiles: files,
             directoryPath: parts[15].isEmpty ? nil : parts[15],
             refreshedAt: Date(timeIntervalSince1970: Double(parts[16]) ?? 0)
+        )
+    }
+
+    private static func parseEpisodeRecord(_ line: String) -> PlexEpisodeRecord? {
+        let parts = line.split(separator: "\u{1f}", omittingEmptySubsequences: false).map(String.init)
+        guard parts.count >= 11,
+              let showID = Int(parts[0]),
+              let episodeID = Int(parts[1]) else { return nil }
+        let files = parts[8].split(separator: ",").map(String.init).filter { $0.isEmpty == false }
+        return PlexEpisodeRecord(
+            showMetadataItemID: showID,
+            metadataItemID: episodeID,
+            title: parts[2],
+            summary: parts[3].isEmpty ? nil : parts[3],
+            seasonNumber: Int(parts[4]) ?? 1,
+            episodeNumber: Int(parts[5]) ?? 1,
+            guid: parts[6].isEmpty ? nil : parts[6],
+            rating: Double(parts[7]),
+            mediaFiles: files,
+            directoryPath: parts[9].isEmpty ? nil : parts[9],
+            refreshedAt: Date(timeIntervalSince1970: Double(parts[10]) ?? 0)
         )
     }
 }
@@ -235,6 +415,7 @@ actor PlexImporter {
     func importShowContexts(progressHandler: (@Sendable (PlexImportProgress) async -> Void)? = nil) async -> PlexImportSummary {
         let reader = PlexDatabaseReader(databaseURL: dbURL)
         let records = await reader.discoverShowRecords(limit: 500)
+        let episodesByShow = Dictionary(grouping: await reader.discoverEpisodeRecords(), by: \.showMetadataItemID)
         var summary = PlexImportSummary()
         await progressHandler?(PlexImportProgress(
             processedCount: 0,
@@ -245,18 +426,14 @@ actor PlexImporter {
             skippedCount: 0
         ))
         for (index, record) in records.enumerated() {
-            let rootURL: URL
-            if let directoryPath = record.directoryPath {
-                rootURL = URL(fileURLWithPath: directoryPath, isDirectory: true)
-            } else if let firstFile = record.mediaFiles.first {
-                rootURL = URL(fileURLWithPath: firstFile).deletingLastPathComponent()
-            } else {
+            let episodes = episodesByShow[record.metadataItemID] ?? []
+            guard let rootURL = showRootURL(for: record, episodes: episodes) else {
                 summary.skippedCount += 1
                 await progressHandler?(Self.progress(for: summary, record: record, processedCount: index + 1, totalCount: records.count))
                 continue
             }
             let assets = localBundleAssets(for: record)
-            let context = buildContext(record: record, rootURL: rootURL, assets: assets)
+            let context = buildContext(record: record, episodes: episodes, rootURL: rootURL, assets: assets)
             let didWrite = (try? await SonderContextWriter().write(context, to: rootURL, assets: assets)) ?? false
             if didWrite {
                 summary.importedCount += 1
@@ -266,6 +443,21 @@ actor PlexImporter {
             await progressHandler?(Self.progress(for: summary, record: record, processedCount: index + 1, totalCount: records.count))
         }
         return summary
+    }
+
+    private func showRootURL(for record: PlexMetadataRecord, episodes: [PlexEpisodeRecord]) -> URL? {
+        if let directoryPath = record.directoryPath {
+            return URL(fileURLWithPath: directoryPath, isDirectory: true)
+        }
+        if let firstFile = record.mediaFiles.first {
+            return URL(fileURLWithPath: firstFile).deletingLastPathComponent()
+        }
+        guard let firstEpisodeFile = episodes.flatMap(\.mediaFiles).first else { return nil }
+        let episodeFolder = URL(fileURLWithPath: firstEpisodeFile).deletingLastPathComponent()
+        if episodeFolder.lastPathComponent.range(of: #"(?i)^(season|series|s)\s*\d+|specials$"#, options: .regularExpression) != nil {
+            return episodeFolder.deletingLastPathComponent()
+        }
+        return episodeFolder
     }
 
     private static func progress(for summary: PlexImportSummary, record: PlexMetadataRecord, processedCount: Int, totalCount: Int) -> PlexImportProgress {
@@ -322,12 +514,26 @@ actor PlexImporter {
         return nil
     }
 
-    private func buildContext(record: PlexMetadataRecord, rootURL: URL, assets: [SonderContextAsset]) -> SonderContext {
+    private func buildContext(record: PlexMetadataRecord, episodes: [PlexEpisodeRecord], rootURL: URL, assets: [SonderContextAsset]) -> SonderContext {
+        let contextEpisodes = episodes.map { episode in
+            SonderContextEpisode(
+                metadataItemID: episode.metadataItemID,
+                title: episode.title,
+                summary: episode.summary,
+                seasonNumber: episode.seasonNumber,
+                episodeNumber: episode.episodeNumber,
+                guid: episode.guid,
+                rating: episode.rating,
+                mediaFiles: episode.mediaFiles
+            )
+        }
         let assetFingerprint = assets.map { "\($0.kind):\($0.path)" }.sorted().joined(separator: "|")
-        let fingerprintData = "\(record.metadataItemID)|\(record.guid ?? "")|\(record.refreshedAt?.timeIntervalSince1970 ?? 0)|\(assetFingerprint)".data(using: .utf8) ?? Data()
+        let episodeFingerprint = contextEpisodes.map { "\($0.metadataItemID):S\($0.seasonNumber)E\($0.episodeNumber):\($0.title):\($0.mediaFiles.joined(separator: ","))" }.joined(separator: "|")
+        let fingerprintData = "\(record.metadataItemID)|\(record.guid ?? "")|\(record.refreshedAt?.timeIntervalSince1970 ?? 0)|\(assetFingerprint)|\(episodeFingerprint)".data(using: .utf8) ?? Data()
         let fingerprint = SHA256.hash(data: fingerprintData).map { String(format: "%02x", $0) }.joined()
+        let matchedFiles = Array(Set(record.mediaFiles + episodes.flatMap(\.mediaFiles))).sorted()
         return SonderContext(
-            schemaVersion: 1,
+            schemaVersion: 2,
             source: SonderContextSource(
                 provider: "plex",
                 metadataItemID: record.metadataItemID,
@@ -346,7 +552,8 @@ actor PlexImporter {
                 genres: record.genres
             ),
             artwork: assets,
-            fileMapping: SonderContextFileMapping(rootFolder: rootURL.path, matchedFiles: record.mediaFiles),
+            episodes: contextEpisodes,
+            fileMapping: SonderContextFileMapping(rootFolder: rootURL.path, matchedFiles: matchedFiles),
             timestamps: SonderContextTimestamps(importedAt: Date(), updatedAt: Date(), sourceRefreshedAt: record.refreshedAt),
             hashes: SonderContextHashes(sourceFingerprint: fingerprint, contentFingerprint: fingerprint)
         )

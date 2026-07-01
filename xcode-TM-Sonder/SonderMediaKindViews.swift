@@ -6,7 +6,9 @@ struct MoviesView: View {
     @State private var displayMode: LibraryDisplayMode = .grid
 
     private var items: [SonderMediaItem] {
-        library.items.filter { $0.kind == .movie }.sorted { $0.title.localizedStandardCompare($1.title) == .orderedAscending }
+        library.items
+            .filter { $0.kind == .movie && ($0.libraryID == nil || $0.libraryID == SonderLibraryImportKind.movies.defaultLibraryID) }
+            .sorted { $0.title.localizedStandardCompare($1.title) == .orderedAscending }
     }
 
     var body: some View {
@@ -63,6 +65,164 @@ struct BooksView: View {
             selectedItemID: $selectedItemID,
             displayMode: $displayMode
         )
+    }
+}
+
+struct CustomLibraryView: View {
+    @ObservedObject var library: SonderLibrary
+    let definition: SonderLibraryDefinition
+    @Binding var selectedItemID: UUID?
+    @State private var displayMode: LibraryDisplayMode = .grid
+    @State private var selectedShowName: String?
+
+    private var items: [SonderMediaItem] {
+        library.items
+            .filter { $0.libraryID == definition.id }
+            .sorted { $0.title.localizedStandardCompare($1.title) == .orderedAscending }
+    }
+
+    private var showGroups: [SonderTVShowGroup] {
+        SonderDerivedData.make(items: items, progressRecords: library.progressRecords).tvShowGroups
+    }
+
+    private var selectedShow: SonderTVShowGroup? {
+        guard let selectedShowName else { return nil }
+        return showGroups.first { $0.name == selectedShowName }
+    }
+
+    var body: some View {
+        if definition.kind == .tvShows {
+            CustomTVLibraryView(
+                title: definition.name,
+                showGroups: showGroups,
+                selectedShow: selectedShow,
+                selectedShowName: $selectedShowName,
+                selectedItemID: $selectedItemID,
+                displayMode: $displayMode,
+                library: library
+            )
+        } else {
+            MediaKindBrowser(
+                title: definition.name,
+                emptyText: "Add a folder to this custom library to browse it here.",
+                items: items,
+                detail: { library.progressLabel(for: $0) },
+                library: library,
+                selectedItemID: $selectedItemID,
+                displayMode: $displayMode
+            )
+        }
+    }
+}
+
+struct CustomTVLibraryView: View {
+    let title: String
+    let showGroups: [SonderTVShowGroup]
+    let selectedShow: SonderTVShowGroup?
+    @Binding var selectedShowName: String?
+    @Binding var selectedItemID: UUID?
+    @Binding var displayMode: LibraryDisplayMode
+    @ObservedObject var library: SonderLibrary
+    @State private var searchText = ""
+
+    private var filteredShows: [SonderTVShowGroup] {
+        let trimmed = searchText.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard trimmed.isEmpty == false else { return showGroups }
+        return showGroups.compactMap { show in
+            if show.name.localizedCaseInsensitiveContains(trimmed) {
+                return show
+            }
+            let seasons = show.seasons.compactMap { season -> SonderTVSeasonGroup? in
+                let matchingEpisodes = season.episodes.filter { $0.searchText.localizedCaseInsensitiveContains(trimmed) }
+                guard matchingEpisodes.isEmpty == false else { return nil }
+                return SonderTVSeasonGroup(seasonNumber: season.seasonNumber, episodes: matchingEpisodes)
+            }
+            guard seasons.isEmpty == false else { return nil }
+            return SonderTVShowGroup(name: show.name, seasons: seasons)
+        }
+    }
+
+    var body: some View {
+        Group {
+            if let selectedShow {
+                TVShowDetailPage(show: selectedShow, library: library) { item in
+                    selectedItemID = item.id
+                } back: {
+                    selectedShowName = nil
+                }
+            } else {
+                VStack(spacing: 0) {
+                    libraryModeBar(title: title, count: filteredShows.count, countLabel: "shows", mode: $displayMode, searchText: $searchText, searchPrompt: "Search \(title.lowercased())")
+                    switch displayMode {
+                    case .grid:
+                        ScrollView {
+                            if filteredShows.isEmpty {
+                                EmptyLibraryMessage(text: searchText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? "Add TV-style folders to browse shows here." : "No shows match this search.")
+                                    .padding(20)
+                            } else {
+                                LazyVGrid(columns: [GridItem(.adaptive(minimum: 240, maximum: 300), spacing: 16)], spacing: 16) {
+                                    ForEach(filteredShows) { show in
+                                        TVShowCard(show: show, library: library) {
+                                            selectedShowName = show.name
+                                        } play: { item in
+                                            library.play(item)
+                                        }
+                                    }
+                                }
+                                .padding(20)
+                            }
+                        }
+                    case .spreadsheet:
+                        List {
+                            ForEach(filteredShows) { show in
+                                DisclosureGroup {
+                                    ForEach(show.seasons) { season in
+                                        DisclosureGroup {
+                                            ForEach(season.episodes) { item in
+                                                MediaListRow(item: item, detail: library.progressLabel(for: item)) {
+                                                    selectedItemID = item.id
+                                                }
+                                            }
+                                        } label: {
+                                            HStack {
+                                                Label(season.label, systemImage: "rectangle.stack")
+                                                Spacer()
+                                                Text("\(season.episodes.count) episodes")
+                                                    .font(.caption.monospacedDigit())
+                                                    .foregroundStyle(SonderTheme.textLight)
+                                            }
+                                        }
+                                    }
+                                } label: {
+                                    HStack {
+                                        Label(show.name, systemImage: "tv")
+                                        Button {
+                                            selectedShowName = show.name
+                                        } label: {
+                                            Label("Open", systemImage: "arrow.right")
+                                        }
+                                        .buttonStyle(.borderless)
+                                        Spacer()
+                                        Text("\(show.seasons.count) seasons")
+                                            .font(.caption.monospacedDigit())
+                                            .foregroundStyle(SonderTheme.textLight)
+                                        Text("\(show.displayCount) episodes")
+                                            .font(.caption.monospacedDigit())
+                                            .foregroundStyle(SonderTheme.textLight)
+                                    }
+                                }
+                            }
+                            if filteredShows.isEmpty {
+                                EmptyLibraryMessage(text: searchText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? "Add TV-style folders to browse shows here." : "No shows match this search.")
+                            }
+                        }
+                        .scrollContentBackground(.hidden)
+                    }
+                }
+            }
+        }
+        .navigationTitle(selectedShow?.name ?? title)
+        .background(SonderTheme.background)
     }
 }
 
