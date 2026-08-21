@@ -1,4 +1,5 @@
 import AVKit
+import SonderAPI
 import SwiftUI
 
 struct SonderVideoPlayerView: View {
@@ -10,6 +11,7 @@ struct SonderVideoPlayerView: View {
     @State private var timeObserver: Any?
     @State private var itemStatusObservation: NSKeyValueObservation?
     @State private var playbackFailureObserver: NSObjectProtocol?
+    @State private var mediaSelectionTask: Task<Void, Never>?
     @State private var fullScreenCloseObserver: NSObjectProtocol?
     @State private var fullScreenExitObserver: NSObjectProtocol?
     @State private var fullScreenWindow: NSWindow?
@@ -104,11 +106,13 @@ struct SonderVideoPlayerView: View {
         didStartAccessing = url.startAccessingSecurityScopedResource()
         let playerItem = AVPlayerItem(url: url)
         let avPlayer = AVPlayer(playerItem: playerItem)
+        avPlayer.appliesMediaSelectionCriteriaAutomatically = false
 
         itemStatusObservation = playerItem.observe(\.status, options: [.initial, .new]) { observedItem, _ in
             DispatchQueue.main.async {
                 switch observedItem.status {
                 case .readyToPlay:
+                    applySavedMediaSelection(to: observedItem)
                     if let progress = library.progressRecord(for: item), progress.seconds > 0 {
                         avPlayer.seek(to: CMTime(seconds: progress.seconds, preferredTimescale: 600))
                     }
@@ -144,6 +148,35 @@ struct SonderVideoPlayerView: View {
         close()
     }
 
+    private func applySavedMediaSelection(to playerItem: AVPlayerItem) {
+        mediaSelectionTask?.cancel()
+        let currentItem = library.item(id: item.id) ?? item
+        let subtitleTracks = currentItem.embeddedSubtitleTracks
+        guard let session = library.playbackSessionSnapshot(
+            itemID: item.id,
+            audioTracks: currentItem.embeddedAudioTracks,
+            subtitleTracks: subtitleTracks
+        ) else { return }
+
+        mediaSelectionTask = Task { @MainActor in
+            await selectEmbeddedTrack(id: session.audioTrackID, prefix: "embedded-audio", characteristic: .audible, in: playerItem)
+            if session.subtitlesEnabled == true {
+                await selectEmbeddedTrack(id: session.subtitleTrackID, prefix: "embedded-subtitle", characteristic: .legible, in: playerItem)
+            } else if let group = try? await playerItem.asset.loadMediaSelectionGroup(for: .legible) {
+                playerItem.select(nil, in: group)
+            }
+        }
+    }
+
+    private func selectEmbeddedTrack(id: String?, prefix: String, characteristic: AVMediaCharacteristic, in playerItem: AVPlayerItem) async {
+        guard let id, id.hasPrefix("\(prefix):"),
+              let optionIndex = Int(id.dropFirst(prefix.count + 1)),
+              let group = try? await playerItem.asset.loadMediaSelectionGroup(for: characteristic) else { return }
+        let options = AVMediaSelectionGroup.playableMediaSelectionOptions(from: group.options)
+        guard options.indices.contains(optionIndex) else { return }
+        playerItem.select(options[optionIndex], in: group)
+    }
+
     private func saveProgress() {
         guard let player else { return }
         let seconds = player.currentTime().seconds
@@ -161,6 +194,8 @@ struct SonderVideoPlayerView: View {
         if let playbackFailureObserver {
             NotificationCenter.default.removeObserver(playbackFailureObserver)
         }
+        mediaSelectionTask?.cancel()
+        mediaSelectionTask = nil
         itemStatusObservation?.invalidate()
         itemStatusObservation = nil
         playbackFailureObserver = nil

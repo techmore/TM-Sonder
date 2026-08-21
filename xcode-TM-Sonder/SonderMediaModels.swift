@@ -34,11 +34,16 @@ nonisolated struct SonderMediaItem: Codable, Identifiable, Hashable {
         localBackdropPath == nil ? nil : "/artwork/backdrop/\(id.uuidString)"
     }
     var subtitlePaths: [String] = []
+    var embeddedAudioTracks: [SonderPlaybackTrack] = []
+    var embeddedSubtitleTracks: [SonderPlaybackTrack] = []
+    var trackProbeUpdatedAt: Date?
     /// Probed from the actual media file at scan/import time (zero until probed).
     var probedWidth: Int?
     var probedHeight: Int?
     var probedCodec: String?
     var probedBitrate: Int?
+    var bookValidation: String?
+    var coverSource: String?
 
     var hasFile: Bool {
         playableURL != nil
@@ -147,10 +152,15 @@ nonisolated extension SonderMediaItem {
         case localBackdropPath
         case isPlaceholder
         case subtitlePaths
+        case embeddedAudioTracks
+        case embeddedSubtitleTracks
+        case trackProbeUpdatedAt
         case probedWidth
         case probedHeight
         case probedCodec
         case probedBitrate
+        case bookValidation
+        case coverSource
     }
 
     init(from decoder: Decoder) throws {
@@ -180,10 +190,15 @@ nonisolated extension SonderMediaItem {
         localBackdropPath = try container.decodeIfPresent(String.self, forKey: .localBackdropPath)
         isPlaceholder = try container.decodeIfPresent(Bool.self, forKey: .isPlaceholder) ?? false
         subtitlePaths = try container.decodeIfPresent([String].self, forKey: .subtitlePaths) ?? []
+        embeddedAudioTracks = try container.decodeIfPresent([SonderPlaybackTrack].self, forKey: .embeddedAudioTracks) ?? []
+        embeddedSubtitleTracks = try container.decodeIfPresent([SonderPlaybackTrack].self, forKey: .embeddedSubtitleTracks) ?? []
+        trackProbeUpdatedAt = try container.decodeIfPresent(Date.self, forKey: .trackProbeUpdatedAt)
         probedWidth = try container.decodeIfPresent(Int.self, forKey: .probedWidth)
         probedHeight = try container.decodeIfPresent(Int.self, forKey: .probedHeight)
         probedCodec = try container.decodeIfPresent(String.self, forKey: .probedCodec)
         probedBitrate = try container.decodeIfPresent(Int.self, forKey: .probedBitrate)
+        bookValidation = try container.decodeIfPresent(String.self, forKey: .bookValidation)
+        coverSource = try container.decodeIfPresent(String.self, forKey: .coverSource)
     }
 
     func encode(to encoder: Encoder) throws {
@@ -213,10 +228,15 @@ nonisolated extension SonderMediaItem {
         try container.encodeIfPresent(localBackdropPath, forKey: .localBackdropPath)
         try container.encode(isPlaceholder, forKey: .isPlaceholder)
         try container.encode(subtitlePaths, forKey: .subtitlePaths)
+        try container.encode(embeddedAudioTracks, forKey: .embeddedAudioTracks)
+        try container.encode(embeddedSubtitleTracks, forKey: .embeddedSubtitleTracks)
+        try container.encodeIfPresent(trackProbeUpdatedAt, forKey: .trackProbeUpdatedAt)
         try container.encodeIfPresent(probedWidth, forKey: .probedWidth)
         try container.encodeIfPresent(probedHeight, forKey: .probedHeight)
         try container.encodeIfPresent(probedCodec, forKey: .probedCodec)
         try container.encodeIfPresent(probedBitrate, forKey: .probedBitrate)
+        try container.encodeIfPresent(bookValidation, forKey: .bookValidation)
+        try container.encodeIfPresent(coverSource, forKey: .coverSource)
     }
 }
 

@@ -124,6 +124,9 @@ struct TVShowDetailPage: View {
     let selectEpisode: (SonderMediaItem) -> Void
     let back: () -> Void
 
+    @State private var seasonDisplayMode: TVShowDetailDisplayMode = .list
+    @State private var episodeDisplayMode: TVShowDetailDisplayMode = .list
+
     private var episodes: [SonderMediaItem] {
         show.seasons.flatMap(\.episodes)
     }
@@ -191,8 +194,21 @@ struct TVShowDetailPage: View {
 
                 DashboardPanel(title: "Seasons") {
                     VStack(alignment: .leading, spacing: 14) {
-                        ForEach(show.seasons) { season in
-                            TVSeasonDetailSection(season: season, library: library, selectEpisode: selectEpisode)
+                        TVShowDetailDisplayControls(seasonMode: $seasonDisplayMode, episodeMode: $episodeDisplayMode)
+
+                        switch seasonDisplayMode {
+                        case .grid:
+                            LazyVGrid(columns: [GridItem(.adaptive(minimum: 320, maximum: 440), spacing: 14)], spacing: 14) {
+                                ForEach(show.seasons) { season in
+                                    TVSeasonDetailSection(season: season, library: library, episodeDisplayMode: episodeDisplayMode, selectEpisode: selectEpisode)
+                                }
+                            }
+                        case .list:
+                            VStack(alignment: .leading, spacing: 14) {
+                                ForEach(show.seasons) { season in
+                                    TVSeasonDetailSection(season: season, library: library, episodeDisplayMode: episodeDisplayMode, selectEpisode: selectEpisode)
+                                }
+                            }
                         }
                     }
                 }
@@ -200,6 +216,61 @@ struct TVShowDetailPage: View {
             .padding(24)
         }
         .background(SonderTheme.background)
+    }
+}
+
+enum TVShowDetailDisplayMode: String, CaseIterable, Identifiable {
+    case grid
+    case list
+
+    var id: String { rawValue }
+
+    var label: String {
+        switch self {
+        case .grid: "Grid"
+        case .list: "List"
+        }
+    }
+
+    var icon: String {
+        switch self {
+        case .grid: "square.grid.2x2"
+        case .list: "list.bullet"
+        }
+    }
+}
+
+struct TVShowDetailDisplayControls: View {
+    @Binding var seasonMode: TVShowDetailDisplayMode
+    @Binding var episodeMode: TVShowDetailDisplayMode
+
+    var body: some View {
+        HStack(spacing: 14) {
+            TVShowDetailDisplayModePicker(title: "Seasons", mode: $seasonMode)
+            TVShowDetailDisplayModePicker(title: "Episodes", mode: $episodeMode)
+            Spacer()
+        }
+    }
+}
+
+struct TVShowDetailDisplayModePicker: View {
+    let title: String
+    @Binding var mode: TVShowDetailDisplayMode
+
+    var body: some View {
+        HStack(spacing: 8) {
+            Text(title)
+                .font(.caption.weight(.semibold))
+                .foregroundStyle(SonderTheme.textLight)
+            Picker(title, selection: $mode) {
+                ForEach(TVShowDetailDisplayMode.allCases) { mode in
+                    Label(mode.label, systemImage: mode.icon).tag(mode)
+                }
+            }
+            .pickerStyle(.segmented)
+            .frame(width: 190)
+            .labelsHidden()
+        }
     }
 }
 
@@ -227,6 +298,7 @@ struct TVShowStatTile: View {
 struct TVSeasonDetailSection: View {
     let season: SonderTVSeasonGroup
     @ObservedObject var library: SonderLibrary
+    let episodeDisplayMode: TVShowDetailDisplayMode
     let selectEpisode: (SonderMediaItem) -> Void
 
     private var visibleEpisodes: [SonderMediaItem] {
@@ -234,7 +306,7 @@ struct TVSeasonDetailSection: View {
     }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 8) {
+        VStack(alignment: .leading, spacing: 10) {
             HStack {
                 Label(season.label, systemImage: "rectangle.stack")
                     .font(.headline)
@@ -244,39 +316,120 @@ struct TVSeasonDetailSection: View {
                     .foregroundStyle(SonderTheme.textLight)
             }
 
-            ForEach(visibleEpisodes) { episode in
-                HStack(spacing: 12) {
-                    Button {
-                        selectEpisode(episode)
-                        library.prioritizeAssets(for: episode.id)
-                    } label: {
-                        VStack(alignment: .leading, spacing: 3) {
-                            Text(episode.episodeCode == "Not episodic" ? episode.title : "\(episode.episodeCode) - \(episode.title)")
-                                .font(.body.weight(.medium))
-                                .lineLimit(1)
-                            Text([episode.format.rawValue.uppercased(), library.progressLabel(for: episode)].joined(separator: " - "))
-                                .font(.caption)
-                                .foregroundStyle(SonderTheme.textLight)
-                                .lineLimit(1)
-                        }
+            switch episodeDisplayMode {
+            case .grid:
+                LazyVGrid(columns: [GridItem(.adaptive(minimum: 210, maximum: 260), spacing: 12)], spacing: 12) {
+                    ForEach(visibleEpisodes) { episode in
+                        TVEpisodeGridCard(episode: episode, library: library, selectEpisode: selectEpisode)
                     }
-                    .buttonStyle(.plain)
-
-                    Spacer()
-
-                    Button {
-                        library.play(episode)
-                    } label: {
-                        Image(systemName: "play.fill")
-                    }
-                    .buttonStyle(.borderless)
-                    .disabled(episode.hasFile == false)
                 }
-                .padding(.vertical, 7)
-                .padding(.horizontal, 10)
-                .background(SonderTheme.surfaceDeep, in: RoundedRectangle(cornerRadius: 6))
+            case .list:
+                VStack(spacing: 8) {
+                    ForEach(visibleEpisodes) { episode in
+                        TVEpisodeListRow(episode: episode, library: library, selectEpisode: selectEpisode)
+                    }
+                }
             }
         }
+        .padding(12)
+        .background(SonderTheme.surfaceDeep.opacity(0.55), in: RoundedRectangle(cornerRadius: 8))
+        .overlay(RoundedRectangle(cornerRadius: 8).stroke(SonderTheme.border))
+    }
+}
+
+struct TVEpisodeListRow: View {
+    let episode: SonderMediaItem
+    @ObservedObject var library: SonderLibrary
+    let selectEpisode: (SonderMediaItem) -> Void
+
+    var body: some View {
+        HStack(spacing: 12) {
+            Button {
+                selectEpisode(episode)
+                library.prioritizeAssets(for: episode.id)
+            } label: {
+                VStack(alignment: .leading, spacing: 3) {
+                    Text(episodeDisplayTitle)
+                        .font(.body.weight(.medium))
+                        .lineLimit(1)
+                    Text([episode.format.rawValue.uppercased(), library.progressLabel(for: episode)].joined(separator: " - "))
+                        .font(.caption)
+                        .foregroundStyle(SonderTheme.textLight)
+                        .lineLimit(1)
+                }
+            }
+            .buttonStyle(.plain)
+
+            Spacer()
+
+            Button {
+                library.play(episode)
+            } label: {
+                Image(systemName: "play.fill")
+            }
+            .buttonStyle(.borderless)
+            .disabled(episode.hasFile == false)
+        }
+        .padding(.vertical, 7)
+        .padding(.horizontal, 10)
+        .background(SonderTheme.surface, in: RoundedRectangle(cornerRadius: 6))
+    }
+
+    private var episodeDisplayTitle: String {
+        episode.episodeCode == "Not episodic" ? episode.title : "\(episode.episodeCode) - \(episode.title)"
+    }
+}
+
+struct TVEpisodeGridCard: View {
+    let episode: SonderMediaItem
+    @ObservedObject var library: SonderLibrary
+    let selectEpisode: (SonderMediaItem) -> Void
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Button {
+                selectEpisode(episode)
+                library.prioritizeAssets(for: episode.id)
+            } label: {
+                PosterView(item: episode)
+                    .frame(maxWidth: .infinity)
+                    .frame(height: 118)
+                    .clipShape(RoundedRectangle(cornerRadius: 6))
+            }
+            .buttonStyle(.plain)
+            .onAppear {
+                library.prioritizeAssets(for: episode.id)
+            }
+
+            Text(episodeDisplayTitle)
+                .font(.subheadline.weight(.semibold))
+                .foregroundStyle(SonderTheme.text)
+                .lineLimit(2)
+                .frame(minHeight: 36, alignment: .topLeading)
+
+            Text([episode.format.rawValue.uppercased(), library.progressLabel(for: episode)].joined(separator: " - "))
+                .font(.caption)
+                .foregroundStyle(SonderTheme.textLight)
+                .lineLimit(1)
+
+            HStack {
+                Spacer()
+                Button {
+                    library.play(episode)
+                } label: {
+                    Image(systemName: "play.fill")
+                }
+                .buttonStyle(.borderless)
+                .disabled(episode.hasFile == false)
+            }
+        }
+        .padding(10)
+        .background(SonderTheme.surface, in: RoundedRectangle(cornerRadius: 8))
+        .overlay(RoundedRectangle(cornerRadius: 8).stroke(SonderTheme.border))
+    }
+
+    private var episodeDisplayTitle: String {
+        episode.episodeCode == "Not episodic" ? episode.title : "\(episode.episodeCode) - \(episode.title)"
     }
 }
 

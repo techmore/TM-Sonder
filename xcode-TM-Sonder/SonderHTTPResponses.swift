@@ -1,24 +1,138 @@
 import Foundation
+import SonderAPI
 
-nonisolated struct SonderLibraryResponse: Codable, Sendable {
-    var items: [SonderMediaItem]
-    var progress: [SonderProgress]
-    var mediaDirectories: [SonderMediaDirectory]
-    var scanProgress: SonderScanProgress?
-    var activity: [SonderActivityEvent]
-    var serverSettings: SonderServerSettings?
-    var theme: SonderThemeSnapshot?
+// MARK: - Mapping host domain models → shared wire DTOs (SonderAPI)
+
+extension SonderPublicMediaItem {
+    nonisolated init(_ item: SonderMediaItem) {
+        self.init(
+            id: item.id,
+            title: item.title,
+            subtitle: item.subtitle,
+            kind: SonderAPI.SonderMediaKind(rawValue: item.kind.rawValue) ?? .movie,
+            studio: item.studio,
+            year: item.year,
+            durationSeconds: item.durationSeconds,
+            format: SonderAPI.SonderMediaFormat(rawValue: item.format.rawValue) ?? .unknown,
+            libraryID: item.libraryID,
+            tags: item.tags,
+            summary: item.summary,
+            progressSeconds: item.progressSeconds,
+            showTitle: item.showTitle,
+            seasonNumber: item.seasonNumber,
+            episodeNumber: item.episodeNumber,
+            metadataIDSource: item.metadataIDSource,
+            metadataID: item.metadataID,
+            edition: item.edition,
+            splitPart: item.splitPart,
+            isPlaceholder: item.isPlaceholder,
+            posterURL: item.posterURL,
+            backdropURL: item.backdropURL,
+            embeddedAudioTracks: item.embeddedAudioTracks.map(SonderAPI.SonderPlaybackTrack.init(host:)),
+            embeddedSubtitleTracks: item.embeddedSubtitleTracks.map(SonderAPI.SonderPlaybackTrack.init(host:)),
+            trackProbeUpdatedAt: item.trackProbeUpdatedAt,
+            probedWidth: item.probedWidth,
+            probedHeight: item.probedHeight,
+            probedCodec: item.probedCodec,
+            probedBitrate: item.probedBitrate,
+            bookValidation: item.bookValidation,
+            coverSource: item.coverSource
+        )
+    }
 }
 
-struct SonderThemeSnapshot: Codable, Sendable {
-    var preset: String
-    var background: String
-    var sidebar: String
-    var surface: String
-    var border: String
-    var accent: String
-    var text: String
+extension SonderPublicServerSettings {
+    nonisolated init(_ settings: SonderServerSettings) {
+        self.init(
+            isEnabled: settings.isEnabled,
+            allowLAN: settings.allowLAN,
+            port: settings.port,
+            themePreset: settings.themePreset,
+            requiresPairing: settings.requiresPairing
+        )
+    }
 }
+
+extension SonderPublicMediaDirectory {
+    nonisolated init(_ directory: SonderMediaDirectory) {
+        self.init(
+            id: directory.id,
+            name: directory.name,
+            kind: directory.kind.rawValue,
+            libraryID: directory.libraryID,
+            lastIndexedCount: directory.lastIndexedCount,
+            lastScannedFileCount: directory.lastScannedFileCount,
+            lastScannedAt: directory.lastScannedAt
+        )
+    }
+}
+
+extension SonderActivityEventDTO {
+    nonisolated init(_ event: SonderActivityEvent) {
+        self.init(id: event.id, title: event.title, detail: event.detail, icon: event.icon, date: event.date)
+    }
+}
+
+extension SonderAPI.SonderProgress {
+    nonisolated init(host progress: SonderProgress) {
+        self.init(
+            id: progress.id,
+            itemID: progress.itemID,
+            seconds: progress.seconds,
+            duration: progress.duration,
+            updatedAt: progress.updatedAt,
+            audioTrackID: progress.audioTrackID,
+            subtitleTrackID: progress.subtitleTrackID,
+            subtitlesEnabled: progress.subtitlesEnabled
+        )
+    }
+}
+
+extension SonderAPI.SonderPlaybackTrack {
+    nonisolated init(host track: SonderPlaybackTrack) {
+        self.init(
+            id: track.id,
+            label: track.label,
+            languageCode: track.languageCode,
+            kind: track.kind,
+            url: track.url
+        )
+    }
+}
+
+extension SonderAPI.SonderPlaybackSessionResponse {
+    nonisolated init(
+        itemID: UUID,
+        streamURL: String,
+        seconds: Double,
+        duration: Double,
+        percent: Double,
+        updatedAt: Date?,
+        audioTrackID: String?,
+        subtitleTrackID: String?,
+        subtitlesEnabled: Bool,
+        audioTracks: [SonderPlaybackTrack],
+        subtitleTracks: [SonderPlaybackTrack]
+    ) {
+        self.init(
+            itemID: itemID,
+            streamURL: streamURL,
+            seconds: seconds,
+            duration: duration,
+            percent: percent,
+            updatedAt: updatedAt,
+            audioTrackID: audioTrackID,
+            subtitleTrackID: subtitleTrackID,
+            subtitlesEnabled: subtitlesEnabled,
+            audioTracks: audioTracks.map(SonderAPI.SonderPlaybackTrack.init(host:)),
+            subtitleTracks: subtitleTracks.map(SonderAPI.SonderPlaybackTrack.init(host:))
+        )
+    }
+}
+
+// Theme snapshot lives in SonderAPI; host code can construct it directly.
+
+// MARK: - Host-only HTTP payloads (not yet shared)
 
 nonisolated struct SonderStatusResponse: Codable, Sendable {
     var itemCount: Int
@@ -32,43 +146,6 @@ nonisolated struct SonderStatusResponse: Codable, Sendable {
     var queuedScanDirectorySummaries: [String]
     var isLoadingPersistedLibrary: Bool
     var isBusy: Bool
-}
-
-struct SonderDiscoveryResponse: Codable, Sendable {
-    var app: String
-    var name: String
-    var version: String
-    var build: String
-    var isEnabled: Bool
-    var allowLAN: Bool
-    var port: UInt16
-    var localURL: String
-    var lanURL: String?
-    var discoveryMethods: [String]
-    var tailscaleHint: String
-    var capabilities: SonderDiscoveryCapabilities
-    var endpoints: SonderDiscoveryEndpoints
-    var theme: SonderThemeSnapshot
-}
-
-struct SonderDiscoveryCapabilities: Codable, Sendable {
-    var books: Bool
-    var audiobooks: Bool
-    var themes: Bool
-    var progressSync: Bool
-    var mediaStreaming: Bool
-    var remoteCatalog: Bool
-}
-
-struct SonderDiscoveryEndpoints: Codable, Sendable {
-    var health: String
-    var library: String
-    var audiobooks: String
-    var audiobookBrowser: String
-    var discovery: String
-    var progress: String
-    var playback: String
-    var stream: String
 }
 
 struct SonderAudiobookResponse: Codable, Sendable {
@@ -104,7 +181,6 @@ struct SonderAudiobookItem: Codable, Sendable, Identifiable {
     var chapterCount: Int
     var posterURL: String?
     var backdropURL: String?
-    var sourcePath: String?
     var tags: [String]
     var playback: SonderAudiobookPlaybackSnapshot?
 
@@ -126,7 +202,6 @@ struct SonderAudiobookItem: Codable, Sendable, Identifiable {
         chapterCount = 0
         posterURL = item.posterURL
         backdropURL = item.backdropURL
-        sourcePath = item.sourcePath
         tags = item.tags
         playback = nil
     }
@@ -141,6 +216,8 @@ struct SonderAudiobookItem: Codable, Sendable, Identifiable {
     }
 }
 
+// Host domain track / progress update types (library persistence).
+
 nonisolated struct SonderPlaybackTrack: Codable, Sendable, Hashable {
     var id: String
     var label: String
@@ -149,24 +226,22 @@ nonisolated struct SonderPlaybackTrack: Codable, Sendable, Hashable {
     var url: String?
 }
 
-nonisolated struct SonderPlaybackSessionResponse: Codable, Sendable {
-    var itemID: UUID
-    var streamURL: String
-    var seconds: Double
-    var duration: Double
-    var percent: Double
-    var updatedAt: Date?
-    var audioTrackID: String?
-    var subtitleTrackID: String?
-    var subtitlesEnabled: Bool
-    var audioTracks: [SonderPlaybackTrack]
-    var subtitleTracks: [SonderPlaybackTrack]
-}
-
 nonisolated struct SonderProgressUpdate: Codable, Sendable {
     var seconds: Double
     var duration: Double
     var audioTrackID: String?
     var subtitleTrackID: String?
     var subtitlesEnabled: Bool?
+}
+
+extension SonderProgressUpdate {
+    init(_ update: SonderAPI.SonderPlaybackStateUpdate) {
+        self.init(
+            seconds: update.seconds,
+            duration: update.duration,
+            audioTrackID: update.audioTrackID,
+            subtitleTrackID: update.subtitleTrackID,
+            subtitlesEnabled: update.subtitlesEnabled
+        )
+    }
 }

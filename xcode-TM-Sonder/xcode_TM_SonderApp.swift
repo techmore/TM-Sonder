@@ -26,9 +26,10 @@ final class SonderAppDelegate: NSObject, NSApplicationDelegate {
         NSApp.appearance = NSAppearance(named: .aqua)
         installMenuBarIcon()
         httpServer = SonderHTTPServer(library: library)
-        applyServerSettings()
-        library.importPlexContextIfAvailable()
-        library.importAudiobookContextIfAvailable()
+        // Install this before the initial start. Persisted settings load
+        // asynchronously and may finish during application launch; registering
+        // afterward can miss the change and leave the live server local-only even
+        // though the dashboard shows LAN sharing enabled.
         serverSettingsObserver = NotificationCenter.default.addObserver(
             forName: .sonderServerSettingsDidChange,
             object: nil,
@@ -36,6 +37,9 @@ final class SonderAppDelegate: NSObject, NSApplicationDelegate {
         ) { [weak self] _ in
             self?.applyServerSettings()
         }
+        applyServerSettings()
+        library.importPlexContextIfAvailable()
+        library.importAudiobookContextIfAvailable()
     }
 
     func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool {

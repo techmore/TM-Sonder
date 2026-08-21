@@ -175,7 +175,7 @@ extension String {
     }
 
     nonisolated var removingPlexTags: String {
-        replacingOccurrences(of: #"\{(?:imdb|tmdb)-[^}]+\}"#, with: "", options: [.regularExpression, .caseInsensitive])
+        replacingOccurrences(of: #"\{(?:imdb|tmdb|audible|audnexus)-[^}]+\}"#, with: "", options: [.regularExpression, .caseInsensitive])
             .replacingOccurrences(of: #"\{edition-[^}]+\}"#, with: "", options: [.regularExpression, .caseInsensitive])
     }
 

@@ -1,6 +1,10 @@
 import Foundation
+import SonderAPI
 import Testing
 @testable import xcode_TM_Sonder
+
+// Disambiguate shared package vs host domain types in tests.
+private typealias HostProgress = xcode_TM_Sonder.SonderProgress
 
 struct xcode_TM_SonderTests {
     @Test func parserRecognizesEpisodeFilename() async throws {
@@ -116,7 +120,7 @@ struct xcode_TM_SonderTests {
 
     @Test func snapshotFactoryCapturesPersistedLibraryState() async throws {
         let item = makeItem(id: UUID(), title: "Beacon")
-        let progress = SonderProgress(itemID: item.id, seconds: 10, duration: 100)
+        let progress = HostProgress(itemID: item.id, seconds: 10, duration: 100)
         let collection = SonderCollection(name: "Queue", itemIDs: [item.id])
         let activity = SonderActivityEvent(title: "Updated", detail: "Detail", icon: "checkmark")
         let job = SonderConversionJob(title: "Beacon", detail: "Convert", status: .running)
@@ -161,9 +165,9 @@ struct xcode_TM_SonderTests {
         let snapshot = SonderSnapshot(
             items: [duplicate, duplicate, placeholder, makeItem(id: UUID(), title: "Other")],
             progress: [
-                SonderProgress(itemID: keptID, seconds: 10, duration: 100),
-                SonderProgress(itemID: placeholderID, seconds: 10, duration: 100),
-                SonderProgress(itemID: danglingID, seconds: 10, duration: 100)
+                HostProgress(itemID: keptID, seconds: 10, duration: 100),
+                HostProgress(itemID: placeholderID, seconds: 10, duration: 100),
+                HostProgress(itemID: danglingID, seconds: 10, duration: 100)
             ],
             collections: [SonderCollection(name: "Queue", itemIDs: [keptID, keptID, placeholderID, danglingID])],
             activity: [],
@@ -196,6 +200,74 @@ struct xcode_TM_SonderTests {
         #expect(suffix.isPartial)
     }
 
+    @Test func byteRangeRejectsRangesPastEndOfFile() async throws {
+        let range = HTTPByteRange(header: "bytes=100-200", fileLength: 100)
+
+        #expect(range.isPartial)
+        #expect(range.isSatisfiable == false)
+    }
+
+    @Test func byteRangeRejectsMalformedReversedAndMultipleRanges() async throws {
+        for header in ["bytes=10-nope", "bytes=20-10", "bytes=0-1,5-6", "bytes="] {
+            let range = HTTPByteRange(header: header, fileLength: 100)
+            #expect(range.isPartial)
+            #expect(range.isSatisfiable == false)
+        }
+    }
+
+    @Test func requestOnlyAcceptsBearerAuthorizationScheme() async throws {
+        let valid = HTTPRequest(data: Data("GET / HTTP/1.1\r\nAuthorization: bEaReR secret\r\n\r\n".utf8))
+        let embedded = HTTPRequest(data: Data("GET / HTTP/1.1\r\nAuthorization: NotBearer secret\r\n\r\n".utf8))
+        let empty = HTTPRequest(data: Data("GET / HTTP/1.1\r\nAuthorization: Bearer    \r\n\r\n".utf8))
+
+        #expect(valid.bearerToken == "secret")
+        #expect(embedded.bearerToken == nil)
+        #expect(empty.bearerToken == nil)
+    }
+
+    @Test func requestRejectsInvalidContentLengths() async throws {
+        let missing = HTTPRequest(data: Data("GET / HTTP/1.1\r\n\r\n".utf8))
+        let valid = HTTPRequest(data: Data("POST /api/progress/id HTTP/1.1\r\nContent-Length: 12\r\n\r\n".utf8))
+        let negative = HTTPRequest(data: Data("POST /api/progress/id HTTP/1.1\r\nContent-Length: -1\r\n\r\n".utf8))
+        let malformed = HTTPRequest(data: Data("POST /api/progress/id HTTP/1.1\r\nContent-Length: nope\r\n\r\n".utf8))
+
+        #expect(missing.contentLength == 0)
+        #expect(valid.contentLength == 12)
+        #expect(negative.contentLength == nil)
+        #expect(malformed.contentLength == nil)
+    }
+
+    @Test func requestMethodsMatchDocumentedRoutes() async throws {
+        let library = HTTPRequest(data: Data("POST /api/library HTTP/1.1\r\n\r\n".utf8))
+        let playback = HTTPRequest(data: Data("PATCH /api/playback/id HTTP/1.1\r\n\r\n".utf8))
+        let progress = HTTPRequest(data: Data("GET /api/progress/id HTTP/1.1\r\n\r\n".utf8))
+        let refresh = HTTPRequest(data: Data("GET /api/playback/id/refresh-tracks HTTP/1.1\r\n\r\n".utf8))
+
+        #expect(library.allowedMethods == ["GET"])
+        #expect(playback.allowedMethods == ["GET", "POST", "PATCH", "PUT"])
+        #expect(progress.allowedMethods == ["POST"])
+        #expect(refresh.allowedMethods == ["POST"])
+    }
+
+    @Test func bookInspectorRejectsNonEPUBData() async throws {
+        let url = FileManager.default.temporaryDirectory.appendingPathComponent("invalid-book.epub")
+        defer { try? FileManager.default.removeItem(at: url) }
+        try Data("not a zip".utf8).write(to: url)
+
+        let result = await SonderBookInspector.inspect(url: url, format: .epub)
+
+        #expect(result?.isValid == false)
+        #expect(result?.detail.localizedCaseInsensitiveContains("ZIP") == true)
+    }
+
+    @Test func metadataCoversDoNotReplaceLocalOrEmbeddedArtwork() async throws {
+        #expect(SonderCoverSelection.shouldApplyMetadataPoster(existingPosterPath: nil, coverSource: nil))
+        #expect(SonderCoverSelection.shouldApplyMetadataPoster(existingPosterPath: "/cache/old.jpg", coverSource: "metadata"))
+        #expect(SonderCoverSelection.shouldApplyMetadataPoster(existingPosterPath: "/cache/embedded.jpg", coverSource: "embedded") == false)
+        #expect(SonderCoverSelection.shouldApplyMetadataPoster(existingPosterPath: "/media/cover.jpg", coverSource: "adjacent") == false)
+        #expect(SonderCoverSelection.shouldApplyMetadataPoster(existingPosterPath: "/media/context.jpg", coverSource: "context") == false)
+    }
+
     @Test func httpRouteIDRejectsMalformedIDs() async throws {
         let id = UUID()
 
@@ -211,6 +283,82 @@ struct xcode_TM_SonderTests {
         #expect(snapshot.isAuthorized(localhost: false, bearer: "secret", queryToken: nil))
         #expect(snapshot.isAuthorized(localhost: false, bearer: nil, queryToken: "secret"))
         #expect(snapshot.isAuthorized(localhost: false, bearer: nil, queryToken: nil) == false)
+    }
+
+    @Test func defaultServerSettingsAreLocalOnly() async throws {
+        let settings = SonderServerSettings.default
+        #expect(settings.isEnabled)
+        #expect(settings.allowLAN == false)
+        #expect(settings.requiresPairing == false)
+        #expect(settings.pairingToken.isEmpty)
+    }
+
+    @Test func serverSettingsDecodeSnapshotsFromBeforePairingTokens() async throws {
+        let legacy = Data(#"{"isEnabled":true,"allowLAN":true,"port":8797,"themePreset":"earthy"}"#.utf8)
+        let settings = try JSONDecoder().decode(SonderServerSettings.self, from: legacy)
+
+        #expect(settings.isEnabled)
+        #expect(settings.allowLAN)
+        #expect(settings.pairingToken.isEmpty)
+    }
+
+    @MainActor @Test func publicLibraryDTOOmitsSecretsAndFilesystemPaths() async throws {
+        var item = makeItem(id: UUID(), title: "Beacon")
+        item.sourcePath = "/Users/secret/Movies/Beacon.mkv"
+        item.sourceBookmark = Data([1, 2, 3, 4])
+        item.localPosterPath = "/Users/secret/Caches/poster.jpg"
+        item.localBackdropPath = "/Users/secret/Caches/backdrop.jpg"
+        item.subtitlePaths = ["/Users/secret/Movies/Beacon.en.srt"]
+
+        let settings = SonderServerSettings(
+            isEnabled: true,
+            allowLAN: true,
+            port: 8797,
+            themePreset: SonderThemePreset.earthy.rawValue,
+            pairingToken: "super-secret-token"
+        )
+        let directory = SonderMediaDirectory(
+            name: "Movies",
+            path: "/Users/secret/Movies",
+            bookmark: Data([9, 9, 9]),
+            kind: .movies,
+            libraryID: SonderLibraryImportKind.movies.defaultLibraryID
+        )
+
+        let response = SonderLibraryResponse(
+            items: [SonderPublicMediaItem(item)],
+            progress: [],
+            mediaDirectories: [SonderPublicMediaDirectory(directory)],
+            activity: [],
+            serverSettings: SonderPublicServerSettings(settings),
+            theme: nil
+        )
+
+        let data = try JSONEncoder.sonder.encode(response)
+        let json = try #require(String(data: data, encoding: .utf8))
+
+        #expect(json.contains("super-secret-token") == false)
+        #expect(json.contains("/Users/secret") == false)
+        #expect(json.contains("Users\\/secret") == false)
+        #expect(json.contains("sourcePath") == false)
+        #expect(json.contains("sourceBookmark") == false)
+        #expect(json.contains("localPosterPath") == false)
+        #expect(json.contains("pairingToken") == false)
+        #expect(json.contains("requiresPairing"))
+
+        let publicSettings = SonderPublicServerSettings(settings)
+        #expect(publicSettings.requiresPairing)
+        #expect(publicSettings.allowLAN)
+
+        let publicItem = SonderPublicMediaItem(item)
+        #expect(publicItem.posterURL == "/artwork/poster/\(item.id.uuidString)")
+        #expect(publicItem.backdropURL == "/artwork/backdrop/\(item.id.uuidString)")
+
+        // Round-trip decode to avoid depending on JSONSerialization slash escaping.
+        let decoded = try JSONDecoder.sonder.decode(SonderLibraryResponse.self, from: data)
+        #expect(decoded.items.first?.posterURL == "/artwork/poster/\(item.id.uuidString)")
+        #expect(decoded.serverSettings?.requiresPairing == true)
+        #expect(decoded.mediaDirectories.first?.name == "Movies")
     }
 
     @Test func serverSettingsPlannerClampsPortAndAutoGeneratesLANToken() async throws {
@@ -276,7 +424,7 @@ struct xcode_TM_SonderTests {
         episodeB.episodeNumber = 2
         episodeB.tags = ["drama"]
 
-        let progress = SonderProgress(itemID: episodeBID, seconds: 50, duration: 100)
+        let progress = HostProgress(itemID: episodeBID, seconds: 50, duration: 100)
         let derivedData = SonderDerivedData.make(items: [episodeB, episodeA], progressRecords: [progress])
 
         #expect(derivedData.allTags == ["coastal", "drama"])
@@ -296,7 +444,7 @@ struct xcode_TM_SonderTests {
 
         let resolved = SonderAudiobookPlaybackModel.resolvedChapters(chapters, duration: 600)
         let playback = SonderAudiobookPlaybackModel.playback(
-            progress: SonderProgress(itemID: itemID, seconds: 150, duration: 600),
+            progress: HostProgress(itemID: itemID, seconds: 150, duration: 600),
             itemDuration: 600,
             chapters: chapters
         )
@@ -693,7 +841,7 @@ struct xcode_TM_SonderTests {
             item.durationSeconds = 120
             return item
         }()
-        let existing = [SonderProgress(itemID: itemID, seconds: 150, duration: 100)]
+        let existing = [HostProgress(itemID: itemID, seconds: 150, duration: 100)]
 
         let update = SonderPlaybackCommands.progressUpdate(
             itemID: itemID,
@@ -787,8 +935,8 @@ struct xcode_TM_SonderTests {
         let originalDate = Date(timeIntervalSince1970: 100)
         let updateDate = Date(timeIntervalSince1970: 200)
         let existing = [
-            SonderProgress(itemID: itemID, seconds: 10, duration: 100, updatedAt: originalDate),
-            SonderProgress(itemID: otherID, seconds: 5, duration: 50, updatedAt: originalDate)
+            HostProgress(itemID: itemID, seconds: 10, duration: 100, updatedAt: originalDate),
+            HostProgress(itemID: otherID, seconds: 5, duration: 50, updatedAt: originalDate)
         ]
 
         let updated = SonderProgressRecords.upserting(

@@ -22,6 +22,19 @@ nonisolated struct SonderAssetRefreshSummary: Sendable {
     var updateCount: Int
 }
 
+/// Keeps cover selection stable across the local-asset and online-metadata passes.
+/// Artwork embedded in the media file (the same artwork Finder displays), adjacent
+/// artwork, and imported context are authoritative. Online metadata may fill a gap or
+/// refresh a cover that was itself previously downloaded from metadata.
+nonisolated enum SonderCoverSelection {
+    static func shouldApplyMetadataPoster(existingPosterPath: String?, coverSource: String?) -> Bool {
+        guard existingPosterPath?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false else {
+            return true
+        }
+        return coverSource?.caseInsensitiveCompare("metadata") == .orderedSame
+    }
+}
+
 nonisolated enum SonderContextResolver {
     static func metadataUpdate(for target: SonderAssetRefreshTarget) -> SonderContextMetadataUpdate? {
         guard let contextURL = contextURL(near: target.url),
@@ -112,12 +125,19 @@ nonisolated struct SonderLocalAssetRefreshService: Sendable {
             let assets = SonderMediaParser.localAssets(near: target.url)
             let contextUpdate = SonderContextResolver.metadataUpdate(for: target)
             let probe = await SonderMediaProbe.probe(url: target.url)
+            let inspection = await SonderBookInspector.inspect(url: target.url, format: SonderMediaFormat(url: target.url))
+            let embeddedCoverPath = inspection?.coverData.flatMap { SonderBookInspector.cachedCoverPath(for: target.id, data: $0) }
+            let coverSource: String? = embeddedCoverPath != nil ? "embedded" : (assets.poster != nil ? "adjacent" : (contextUpdate?.posterPath != nil ? "context" : nil))
             await collector.append(SonderAssetRefreshResult(
                 itemID: target.id,
                 assetUpdate: SonderLocalAssetUpdate(
-                    posterPath: assets.poster?.path ?? contextUpdate?.posterPath,
+                    posterPath: embeddedCoverPath ?? assets.poster?.path ?? contextUpdate?.posterPath,
                     backdropPath: assets.backdrop?.path ?? contextUpdate?.backdropPath,
-                    subtitlePaths: assets.subtitles.map(\.path)
+                    subtitlePaths: assets.subtitles.map(\.path),
+                    bookValidation: inspection.map { $0.isValid ? "verified: \($0.detail)" : "invalid: \($0.detail)" },
+                    coverSource: coverSource,
+                    inspectedTitle: inspection?.title,
+                    inspectedAuthor: inspection?.author
                 ),
                 contextUpdate: contextUpdate,
                 probe: probe

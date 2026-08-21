@@ -52,6 +52,7 @@ nonisolated struct HTTPRequest {
     var queryItems: [String: String] = [:]
     var headers: [String: String] = [:]
     var body = Data()
+    private(set) var receivedByteCount = 0
 
     /// Convenience initializer used when the full request has not necessarily been parsed
     /// (e.g. an early read error); parses whatever head is available.
@@ -62,6 +63,7 @@ nonisolated struct HTTPRequest {
     /// Designated initializer. `headerEnd` is the byte index where `\r\n\r\n` begins, so
     /// the body starts at `headerEnd + 4`.
     init(data: Data, headerEnd: Int?) {
+        receivedByteCount = data.count
         guard let raw = String(data: data, encoding: .utf8) else { return }
         let headerString: String
         let bodyStart: Int
@@ -101,23 +103,52 @@ nonisolated struct HTTPRequest {
         }
     }
 
-    var contentLength: Int {
-        Int(headers["content-length"] ?? "") ?? 0
+    /// The declared body length. A missing header means no body; malformed and
+    /// negative values are invalid rather than being silently treated as zero.
+    var contentLength: Int? {
+        guard let rawValue = headers["content-length"] else { return 0 }
+        guard let value = Int(rawValue), value >= 0 else { return nil }
+        return value
     }
 
     var bearerToken: String? {
         guard let authorization = headers["authorization"] else { return nil }
-        let prefix = "Bearer "
-        guard authorization.localizedCaseInsensitiveContains(prefix) else { return nil }
-        return String(authorization.dropFirst(prefix.count)).trimmingCharacters(in: .whitespacesAndNewlines)
+        let fields = authorization.split(maxSplits: 1, whereSeparator: { $0.isWhitespace })
+        guard fields.count == 2, fields[0].caseInsensitiveCompare("Bearer") == .orderedSame else { return nil }
+        let token = fields[1].trimmingCharacters(in: .whitespacesAndNewlines)
+        return token.isEmpty ? nil : token
     }
 
     var queryToken: String? {
         queryItems["token"] ?? queryItems["pairingtoken"]
     }
 
+    var allowedMethods: Set<String>? {
+        switch path {
+        case "/", "/index.html", "/audiobooks", "/audiobooks.html",
+             "/health", "/api/health", "/api/status", "/api/library",
+             "/library.json", "/api/audiobooks", "/api/discovery":
+            return ["GET"]
+        case let path where path.hasPrefix("/api/audiobooks/"):
+            return ["GET"]
+        case let path where path.hasPrefix("/api/playback/") && path.hasSuffix("/refresh-tracks"):
+            return ["POST"]
+        case let path where path.hasPrefix("/api/playback/"):
+            return ["GET", "POST", "PATCH", "PUT"]
+        case let path where path.hasPrefix("/api/progress/"):
+            return ["POST"]
+        case let path where path.hasPrefix("/stream/") || path.hasPrefix("/artwork/poster/") ||
+             path.hasPrefix("/artwork/backdrop/") || path.hasPrefix("/subtitles/"):
+            return ["GET"]
+        default:
+            return nil
+        }
+    }
+
+    /// Host-header heuristic only. Prefer `SonderHTTPServer.isLoopbackPeer(_:)` for
+    /// authorization decisions — clients can spoof `Host`.
     var isLocalhostRequest: Bool {
-        guard let host = headers["host"]?.lowercased() else { return true }
+        guard let host = headers["host"]?.lowercased() else { return false }
         return host.hasPrefix("127.0.0.1") || host.hasPrefix("localhost") || host.hasPrefix("[::1]")
     }
 
@@ -135,6 +166,10 @@ nonisolated struct HTTPByteRange {
     var end: UInt64
     var fileLength: UInt64
     var isPartial: Bool
+    /// A syntactically valid range can still point past the end of a file. Keep
+    /// that distinction so the server can return HTTP 416 instead of silently
+    /// serving unrelated bytes from the end of the media file.
+    var isSatisfiable: Bool
 
     var length: UInt64 {
         guard end >= start else { return 0 }
@@ -147,6 +182,7 @@ nonisolated struct HTTPByteRange {
             start = 0
             end = 0
             isPartial = false
+            isSatisfiable = header == nil || header?.isEmpty == true
             return
         }
 
@@ -156,25 +192,44 @@ nonisolated struct HTTPByteRange {
             start = 0
             end = fullEnd
             isPartial = false
+            isSatisfiable = true
             return
         }
 
-        let rawRange = header.dropFirst("bytes=".count).split(separator: ",").first.map(String.init) ?? ""
+        let rangeValues = header.dropFirst("bytes=".count).split(separator: ",", omittingEmptySubsequences: false)
+        guard rangeValues.count == 1 else {
+            start = 0
+            end = 0
+            isPartial = true
+            isSatisfiable = false
+            return
+        }
+        let rawRange = String(rangeValues[0])
         let bounds = rawRange.split(separator: "-", omittingEmptySubsequences: false)
         if bounds.count == 2, let requestedStart = UInt64(bounds[0]) {
-            start = min(requestedStart, fullEnd)
-            end = bounds[1].isEmpty ? fullEnd : min(UInt64(bounds[1]) ?? fullEnd, fullEnd)
-            if end < start { end = start }
+            let requestedEnd = bounds[1].isEmpty ? fullEnd : UInt64(bounds[1])
+            guard let requestedEnd, requestedStart < fileLength, requestedEnd >= requestedStart else {
+                start = 0
+                end = 0
+                isPartial = true
+                isSatisfiable = false
+                return
+            }
+            start = requestedStart
+            end = min(requestedEnd, fullEnd)
             isPartial = true
+            isSatisfiable = true
         } else if bounds.count == 2, bounds[0].isEmpty, let suffixLength = UInt64(bounds[1]) {
             // Suffix range: "bytes=-500" -> last 500 bytes
             start = suffixLength >= fileLength ? 0 : fileLength - suffixLength
             end = fullEnd
             isPartial = true
+            isSatisfiable = suffixLength > 0
         } else {
             start = 0
-            end = fullEnd
-            isPartial = false
+            end = 0
+            isPartial = true
+            isSatisfiable = false
         }
     }
 }

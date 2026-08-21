@@ -15,6 +15,8 @@ nonisolated struct SonderMediaProbe: Sendable {
         var height: Int?
         var codec: String?
         var bitrate: Int?
+        var audioTracks: [SonderPlaybackTrack] = []
+        var subtitleTracks: [SonderPlaybackTrack] = []
     }
 
     /// Sentinel returned when a file cannot be opened or has no video track.
@@ -32,11 +34,22 @@ nonisolated struct SonderMediaProbe: Sendable {
             let duration = try await asset.load(.duration)
             let durationSeconds = duration.seconds.isFinite ? duration.seconds : 0
 
+            let audioTracks = await mediaSelectionTracks(asset: asset, characteristic: .audible, idPrefix: "embedded-audio", kind: "embedded")
+            let subtitleTracks = await mediaSelectionTracks(asset: asset, characteristic: .legible, idPrefix: "embedded-subtitle", kind: "embedded")
+
             // Pick the first video track; that is what determines player compatibility
             // and is all we need for a resolution label.
             let tracks = try await asset.loadTracks(withMediaType: .video)
             guard let track = tracks.first else {
-                return Result(durationSeconds: durationSeconds, width: nil, height: nil, codec: nil, bitrate: nil)
+                return Result(
+                    durationSeconds: durationSeconds,
+                    width: nil,
+                    height: nil,
+                    codec: nil,
+                    bitrate: nil,
+                    audioTracks: audioTracks,
+                    subtitleTracks: subtitleTracks
+                )
             }
 
             let size = try await track.load(.naturalSize)
@@ -57,11 +70,33 @@ nonisolated struct SonderMediaProbe: Sendable {
                 width: width > 0 ? width : nil,
                 height: height > 0 ? height : nil,
                 codec: codecName,
-                bitrate: bitrate > 0 ? bitrate : nil
+                bitrate: bitrate > 0 ? bitrate : nil,
+                audioTracks: audioTracks,
+                subtitleTracks: subtitleTracks
             )
         } catch {
             return Self.unknown
         }
+    }
+
+    nonisolated private static func mediaSelectionTracks(asset: AVURLAsset, characteristic: AVMediaCharacteristic, idPrefix: String, kind: String) async -> [SonderPlaybackTrack] {
+        guard let group = try? await asset.loadMediaSelectionGroup(for: characteristic) else { return [] }
+        let options = AVMediaSelectionGroup.playableMediaSelectionOptions(from: group.options)
+        return options.enumerated().map { offset, option in
+            SonderPlaybackTrack(
+                id: "\(idPrefix):\(offset)",
+                label: option.displayName.isEmpty ? "Track \(offset + 1)" : option.displayName,
+                languageCode: languageCode(from: option.extendedLanguageTag),
+                kind: kind,
+                url: nil
+            )
+        }
+    }
+
+    nonisolated private static func languageCode(from tag: String?) -> String? {
+        guard let tag else { return nil }
+        let code = tag.split(separator: "-").first.map { String($0).lowercased() }
+        return code == "und" ? nil : code
     }
 
     nonisolated private static func firstCodecName(from descriptions: [Any]) -> String? {

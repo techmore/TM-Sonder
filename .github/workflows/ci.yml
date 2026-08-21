@@ -1,0 +1,33 @@
+name: CI
+
+on:
+  push:
+    branches: [main, master, fix/**]
+  pull_request:
+
+jobs:
+  sonder-api:
+    name: SonderAPI package
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v4
+      - name: Test SonderAPI
+        run: |
+          cd Packages/SonderAPI
+          swift test
+
+  mac-app:
+    name: macOS unit tests
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v4
+      - name: Select Xcode
+        run: sudo xcode-select -s /Applications/Xcode.app || sudo xcode-select -s /Applications/Xcode-beta.app
+      - name: Build and test Mac host
+        run: |
+          xcodebuild test \
+            -project xcode-TM-Sonder.xcodeproj \
+            -scheme xcode-TM-Sonder \
+            -destination 'platform=macOS' \
+            -only-testing:xcode-TM-SonderTests \
+            CODE_SIGNING_ALLOWED=NO

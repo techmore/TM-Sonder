@@ -1,6 +1,7 @@
 import AVFoundation
 import Foundation
 import Network
+import SonderAPI
 
 
 /// Native macOS HTTP media server.
@@ -98,6 +99,29 @@ nonisolated final class SonderHTTPServer: @unchecked Sendable {
             listener.newConnectionHandler = { [weak self] connection in
                 self?.handle(connection)
             }
+            listener.stateUpdateHandler = { [weak self, weak listener] state in
+                guard let self, let listener else { return }
+                switch state {
+                case .ready:
+                    NSLog("TM Sonder server ready on port %u (LAN: %@).", port, allowLAN ? "enabled" : "disabled")
+                case .waiting(let error):
+                    NSLog("TM Sonder server waiting on port %u: %@", port, error.localizedDescription)
+                case .failed(let error):
+                    NSLog("TM Sonder server failed asynchronously on port %u: %@", port, error.localizedDescription)
+                    if self.listener === listener {
+                        self.listener = nil
+                    }
+                    listener.cancel()
+                case .cancelled:
+                    if self.listener === listener {
+                        self.listener = nil
+                    }
+                case .setup:
+                    break
+                @unknown default:
+                    break
+                }
+            }
             listener.start(queue: queue)
             self.listener = listener
             self.port = port
@@ -127,7 +151,28 @@ nonisolated final class SonderHTTPServer: @unchecked Sendable {
                 connection.cancel()
                 return
             }
-            self.route(connection: connection, request: request)
+            self.route(connection: connection, request: request, isLocalPeer: Self.isLoopbackPeer(connection))
+        }
+    }
+
+    /// True when the remote peer is loopback. Used for auth exemptions instead of the
+    /// client-controlled `Host` header.
+    nonisolated static func isLoopbackPeer(_ connection: NWConnection) -> Bool {
+        switch connection.endpoint {
+        case .hostPort(let host, _):
+            switch host {
+            case .ipv4(let address):
+                return address == .loopback
+            case .ipv6(let address):
+                return address == .loopback
+            case .name(let name, _):
+                let lowered = name.lowercased()
+                return lowered == "localhost" || lowered.hasSuffix(".localhost")
+            @unknown default:
+                return false
+            }
+        default:
+            return false
         }
     }
 
@@ -160,8 +205,16 @@ nonisolated final class SonderHTTPServer: @unchecked Sendable {
 
             if let headerEnd = HTTPRequest.headerTerminatorRange(in: accumulated) {
                 let request = HTTPRequest(data: accumulated, headerEnd: headerEnd)
+                guard let contentLength = request.contentLength else {
+                    completion(request)
+                    return
+                }
+                if contentLength > self.maxRequestBytes {
+                    completion(request)
+                    return
+                }
                 let bodyReceived = accumulated.count - (headerEnd + 4)
-                if bodyReceived >= request.contentLength || isComplete {
+                if bodyReceived >= contentLength || isComplete {
                     completion(request)
                 } else {
                     self.readRequest(connection, buffer: accumulated, completion: completion)
@@ -176,15 +229,29 @@ nonisolated final class SonderHTTPServer: @unchecked Sendable {
 
     // MARK: - Routing (off the main actor)
 
-    private func route(connection: NWConnection, request: HTTPRequest) {
+    private func route(connection: NWConnection, request: HTTPRequest, isLocalPeer: Bool) {
+        guard let contentLength = request.contentLength else {
+            send(connection, response: makeJSONResponse(["error": "Invalid Content-Length"], status: "400 Bad Request"))
+            return
+        }
+        guard request.receivedByteCount <= maxRequestBytes, contentLength <= maxRequestBytes else {
+            send(connection, response: makeJSONResponse(["error": "Request too large"], status: "413 Content Too Large"))
+            return
+        }
+
         if request.method == "OPTIONS" {
             send(connection, response: makeResponse(status: "204 No Content", contentType: "text/plain", body: Data()))
             return
         }
 
         let auth = SonderAuthSnapshot(allowLAN: allowLAN, pairingToken: pairingToken)
-        guard auth.isAuthorized(localhost: request.isLocalhostRequest, bearer: request.bearerToken, queryToken: request.queryToken) else {
+        guard auth.isAuthorized(localhost: isLocalPeer, bearer: request.bearerToken, queryToken: request.queryToken) else {
             send(connection, response: makeJSONResponse(["error": "LAN access is disabled or pairing is required in Sonder settings."], status: "403 Forbidden"))
+            return
+        }
+
+        if let allowedMethods = request.allowedMethods, allowedMethods.contains(request.method) == false {
+            send(connection, response: makeMethodNotAllowedResponse(allowedMethods: allowedMethods))
             return
         }
 
@@ -194,7 +261,7 @@ nonisolated final class SonderHTTPServer: @unchecked Sendable {
         case "/audiobooks", "/audiobooks.html":
             send(connection, response: makeResponse(status: "200 OK", contentType: "text/html; charset=utf-8", body: Data(SonderWebInterface.audiobooksHTML.utf8)))
         case "/health", "/api/health":
-            send(connection, response: makeJSONResponse([
+            let health: [String: Any] = [
                 "status": "ok",
                 "name": serverName,
                 "app": "TM Sonder",
@@ -204,12 +271,14 @@ nonisolated final class SonderHTTPServer: @unchecked Sendable {
                 "statusEndpoint": "/api/status",
                 "audiobooks": "/api/audiobooks",
                 "audiobookBrowser": "/audiobooks",
-                "allowLAN": allowLAN ? "true" : "false"
-            ]))
+                "allowLAN": allowLAN,
+                "requiresPairing": pairingToken.isEmpty == false && allowLAN
+            ]
+            send(connection, response: makeAnyJSONResponse(health))
         case "/api/status":
             sendStatus(connection)
         case "/api/library", "/library.json":
-            sendLibrary(connection)
+            sendLibrary(connection, ifNoneMatch: request.headers["if-none-match"])
         case "/api/audiobooks":
             sendAudiobooks(connection, query: request.queryItems["q"])
         case let path where path.hasPrefix("/api/audiobooks/"):
@@ -242,11 +311,26 @@ nonisolated final class SonderHTTPServer: @unchecked Sendable {
 
     // MARK: - Library endpoint
 
-    private func sendLibrary(_ connection: NWConnection) {
+    private func sendLibrary(_ connection: NWConnection, ifNoneMatch: String?) {
         let cache = library.httpCache
         let (cached, gen) = cache.cachedLibrary()
+        let etag = libraryETag(generation: gen)
+
+        if let ifNoneMatch, etagMatches(ifNoneMatch, etag: etag), cached != nil {
+            send(connection, response: makeResponse(status: "304 Not Modified", headers: [
+                "ETag": etag,
+                "Cache-Control": "private, max-age=0, must-revalidate"
+            ], body: Data()))
+            return
+        }
+
         if let encoded = cached {
-            send(connection, response: makeResponse(status: "200 OK", contentType: "application/json", body: encoded))
+            send(connection, response: makeResponse(status: "200 OK", headers: [
+                "Content-Type": "application/json",
+                "Content-Length": "\(encoded.count)",
+                "ETag": etag,
+                "Cache-Control": "private, max-age=0, must-revalidate"
+            ], body: encoded))
             return
         }
 
@@ -257,9 +341,25 @@ nonisolated final class SonderHTTPServer: @unchecked Sendable {
                 encoder.dateEncodingStrategy = .iso8601
                 let encoded = (try? encoder.encode(snapshot)) ?? Data("{}".utf8)
                 cache.setLibrary(encoded, generation: gen)
-                self.send(connection, response: self.makeResponse(status: "200 OK", contentType: "application/json", body: encoded))
+                self.send(connection, response: self.makeResponse(status: "200 OK", headers: [
+                    "Content-Type": "application/json",
+                    "Content-Length": "\(encoded.count)",
+                    "ETag": self.libraryETag(generation: gen),
+                    "Cache-Control": "private, max-age=0, must-revalidate"
+                ], body: encoded))
             }
         }
+    }
+
+    private func libraryETag(generation: UInt64) -> String {
+        "\"sonder-library-\(generation)\""
+    }
+
+    private func etagMatches(_ ifNoneMatch: String, etag: String) -> Bool {
+        let candidates = ifNoneMatch.split(separator: ",").map {
+            $0.trimmingCharacters(in: .whitespacesAndNewlines)
+        }
+        return candidates.contains(etag) || candidates.contains("*")
     }
 
     private func sendStatus(_ connection: NWConnection) {
@@ -351,13 +451,16 @@ nonisolated final class SonderHTTPServer: @unchecked Sendable {
                 self.send(connection, response: self.makeResponse(status: "200 OK", contentType: "application/json", body: encoded))
                 return
             }
+            let trackRefreshPath = "/api/playback/{id}/refresh-tracks"
             let discovery = SonderDiscoveryResponse(
                 app: "TM Sonder",
                 name: serverName,
+                serverID: "tm-sonder",
                 version: Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "0.0",
                 build: Bundle.main.infoDictionary?["CFBundleVersion"] as? String ?? "0",
                 isEnabled: library.serverSettings.isEnabled,
                 allowLAN: library.serverSettings.allowLAN,
+                requiresPairing: library.serverSettings.requiresPairing,
                 port: port,
                 localURL: "http://127.0.0.1:\(port)",
                 lanURL: library.serverSettings.allowLAN ? "http://\(hostName):\(port)" : nil,
@@ -365,10 +468,15 @@ nonisolated final class SonderHTTPServer: @unchecked Sendable {
                 tailscaleHint: "Use the same port over your tailnet URL or MagicDNS name, then pair with the server token.",
                 capabilities: SonderDiscoveryCapabilities(
                     books: true,
+                    ebooks: true,
                     audiobooks: true,
                     themes: true,
+                    themeSync: true,
                     progressSync: true,
                     mediaStreaming: true,
+                    videoStreaming: true,
+                    artwork: true,
+                    librarySync: true,
                     remoteCatalog: true
                 ),
                 endpoints: SonderDiscoveryEndpoints(
@@ -379,7 +487,12 @@ nonisolated final class SonderHTTPServer: @unchecked Sendable {
                     discovery: "/api/discovery",
                     progress: "/api/progress/{id}",
                     playback: "/api/playback/{id}",
-                    stream: "/stream/{id}"
+                    playbackTrackRefresh: trackRefreshPath,
+                    refreshTracks: trackRefreshPath,
+                    stream: "/stream/{id}",
+                    subtitles: "/subtitles/{id}/{index}",
+                    poster: "/artwork/poster/{id}",
+                    backdrop: "/artwork/backdrop/{id}"
                 ),
                 theme: SonderThemeSnapshot(
                     preset: library.serverSettings.themePreset,
@@ -482,6 +595,11 @@ nonisolated final class SonderHTTPServer: @unchecked Sendable {
     // MARK: - Playback session endpoint
 
     private func handlePlaybackSession(connection: NWConnection, request: HTTPRequest, path: String) {
+        if path.hasSuffix("/refresh-tracks") {
+            refreshPlaybackTracks(connection: connection, request: request, path: path)
+            return
+        }
+
         switch request.method {
         case "GET":
             sendPlaybackSession(connection: connection, path: path)
@@ -502,8 +620,13 @@ nonisolated final class SonderHTTPServer: @unchecked Sendable {
                 self.send(connection, response: self.makeJSONResponse(["error": "Media not found"], status: "404 Not Found"))
                 return
             }
-            let subtitleTracks = self.sidecarSubtitleTracks(for: item)
-            guard let response = self.library.playbackSessionSnapshot(itemID: id, audioTracks: [], subtitleTracks: subtitleTracks) else {
+            if item.trackProbeUpdatedAt == nil && item.embeddedAudioTracks.isEmpty && item.embeddedSubtitleTracks.isEmpty {
+                Task(priority: .background) { @MainActor in
+                    _ = await self.library.refreshPlaybackTracks(itemID: id)
+                }
+            }
+            let subtitleTracks = item.embeddedSubtitleTracks + self.sidecarSubtitleTracks(for: item)
+            guard let response = self.library.playbackSessionSnapshot(itemID: id, audioTracks: item.embeddedAudioTracks, subtitleTracks: subtitleTracks) else {
                 self.send(connection, response: self.makeJSONResponse(["error": "Playback unavailable"], status: "404 Not Found"))
                 return
             }
@@ -511,6 +634,25 @@ nonisolated final class SonderHTTPServer: @unchecked Sendable {
             encoder.dateEncodingStrategy = .iso8601
             let encoded = (try? encoder.encode(response)) ?? Data("{}".utf8)
             self.send(connection, response: self.makeResponse(status: "200 OK", contentType: "application/json", body: encoded))
+        }
+    }
+
+    private func refreshPlaybackTracks(connection: NWConnection, request: HTTPRequest, path: String) {
+        guard request.method == "POST" else {
+            send(connection, response: makeJSONResponse(["error": "Method not allowed"], status: "405 Method Not Allowed"))
+            return
+        }
+        let itemPath = String(path.dropLast("/refresh-tracks".count))
+        guard let id = SonderHTTPRouteID.uuid(from: itemPath) else {
+            send(connection, response: makeJSONResponse(["error": "Invalid item id"], status: "400 Bad Request"))
+            return
+        }
+        Task { @MainActor in
+            guard await self.library.refreshPlaybackTracks(itemID: id) else {
+                self.send(connection, response: self.makeJSONResponse(["error": "Playback unavailable"], status: "404 Not Found"))
+                return
+            }
+            self.sendPlaybackSession(connection: connection, path: itemPath)
         }
     }
 
@@ -610,6 +752,18 @@ nonisolated final class SonderHTTPServer: @unchecked Sendable {
 
         let totalLength = fileSize.uint64Value
         let range = HTTPByteRange(header: rangeHeader, fileLength: totalLength)
+        guard range.isSatisfiable else {
+            try? handle.close()
+            send(connection, response: makeResponse(
+                status: "416 Range Not Satisfiable",
+                headers: ["Content-Range": "bytes */\(totalLength)"],
+                body: Data()
+            ))
+            if didAccess {
+                url.stopAccessingSecurityScopedResource()
+            }
+            return
+        }
 
         var headers: [String: String] = [
             "Accept-Ranges": "bytes",
@@ -673,6 +827,19 @@ nonisolated final class SonderHTTPServer: @unchecked Sendable {
     // MARK: - Response builders
 
     private func makeJSONResponse(_ payload: [String: String], status: String = "200 OK") -> Data {
+        makeAnyJSONResponse(payload, status: status)
+    }
+
+    private func makeMethodNotAllowedResponse(allowedMethods: Set<String>) -> Data {
+        let body = (try? JSONSerialization.data(withJSONObject: ["error": "Method not allowed"], options: [.sortedKeys])) ?? Data("{}".utf8)
+        return makeResponse(status: "405 Method Not Allowed", headers: [
+            "Allow": allowedMethods.sorted().joined(separator: ", "),
+            "Content-Type": "application/json",
+            "Content-Length": "\(body.count)"
+        ], body: body)
+    }
+
+    private func makeAnyJSONResponse(_ payload: [String: Any], status: String = "200 OK") -> Data {
         let body = (try? JSONSerialization.data(withJSONObject: payload, options: [.prettyPrinted, .sortedKeys])) ?? Data("{}".utf8)
         return makeResponse(status: status, contentType: "application/json", body: body)
     }
@@ -687,8 +854,8 @@ nonisolated final class SonderHTTPServer: @unchecked Sendable {
         var combined = headers
         combined["Connection"] = "close"
         combined["Access-Control-Allow-Origin"] = "*"
-        combined["Access-Control-Allow-Methods"] = "GET, POST, OPTIONS"
-        combined["Access-Control-Allow-Headers"] = "Content-Type, Range"
+        combined["Access-Control-Allow-Methods"] = "GET, POST, PATCH, PUT, OPTIONS"
+        combined["Access-Control-Allow-Headers"] = "Content-Type, Range, Authorization"
         for (key, value) in combined.sorted(by: { $0.key < $1.key }) {
             response.append(Data("\(key): \(value)\r\n".utf8))
         }

@@ -1,5 +1,6 @@
 import Combine
 import Foundation
+import SonderAPI
 
 @MainActor
 final class SonderLibrary: ObservableObject {
@@ -147,7 +148,6 @@ final class SonderLibrary: ObservableObject {
     }
 
     private func applyPreparedLibraryState(_ preparedState: SonderPreparedLibraryState) {
-        let serverSettingsChanged = preparedState.serverSettings != serverSettings
         items = preparedState.items
         progressRecords = preparedState.progressRecords
         collections = preparedState.collections
@@ -164,9 +164,10 @@ final class SonderLibrary: ObservableObject {
             addActivity("Removed placeholder records", detail: "Deleted \(preparedState.removedPlaceholderCount) non-playable placeholder item(s) from the saved library.", icon: "trash")
             commitLibraryMutation()
         }
-        if serverSettingsChanged {
-            NotificationCenter.default.post(name: .sonderServerSettingsDidChange, object: nil)
-        }
+        // Always reconcile the live listener after asynchronous persistence loading.
+        // The app delegate may have started it using placeholder settings, and launch
+        // ordering must not decide whether LAN/Bonjour becomes active.
+        NotificationCenter.default.post(name: .sonderServerSettingsDidChange, object: nil)
     }
 
     private func enqueueScanProgress(_ progress: SonderScanProgress) {
@@ -624,6 +625,16 @@ final class SonderLibrary: ObservableObject {
                         self.items[index].localPosterPath = update.posterPath
                         self.items[index].localBackdropPath = update.backdropPath
                         self.items[index].subtitlePaths = update.subtitlePaths
+                        self.items[index].bookValidation = update.bookValidation
+                        self.items[index].coverSource = update.coverSource
+                        if let title = update.inspectedTitle?.trimmingCharacters(in: .whitespacesAndNewlines), title.isEmpty == false,
+                           self.items[index].studio == "Local" {
+                            self.items[index].title = title
+                        }
+                        if let author = update.inspectedAuthor?.trimmingCharacters(in: .whitespacesAndNewlines), author.isEmpty == false,
+                           self.items[index].studio == "Local" || self.items[index].studio == "Remote Library" {
+                            self.items[index].studio = author
+                        }
                     }
                     if let contextUpdate = summary.contextUpdates[id] {
                         self.applyContextUpdate(contextUpdate, toItemAt: index)
@@ -636,6 +647,9 @@ final class SonderLibrary: ObservableObject {
                         self.items[index].probedHeight = probe.height
                         self.items[index].probedCodec = probe.codec
                         self.items[index].probedBitrate = probe.bitrate
+                        self.items[index].embeddedAudioTracks = probe.audioTracks
+                        self.items[index].embeddedSubtitleTracks = probe.subtitleTracks
+                        self.items[index].trackProbeUpdatedAt = Date()
                     }
                 }
                 if showsProgress {
@@ -701,6 +715,9 @@ final class SonderLibrary: ObservableObject {
         items[index].probedHeight = probe.height
         items[index].probedCodec = probe.codec
         items[index].probedBitrate = probe.bitrate
+        items[index].embeddedAudioTracks = probe.audioTracks
+        items[index].embeddedSubtitleTracks = probe.subtitleTracks
+        items[index].trackProbeUpdatedAt = Date()
         if let progressIndex = progressRecords.firstIndex(where: { $0.itemID == itemID }), probe.durationSeconds > 0 {
             progressRecords[progressIndex].duration = probe.durationSeconds
         }
@@ -767,8 +784,13 @@ final class SonderLibrary: ObservableObject {
         if let studio = enrichment.publisher, items[index].studio == "Local" || items[index].studio == "Remote Library" {
             items[index].studio = studio
         }
-        if let posterPath = enrichment.posterPath {
+        if let posterPath = enrichment.posterPath,
+           SonderCoverSelection.shouldApplyMetadataPoster(
+               existingPosterPath: items[index].localPosterPath,
+               coverSource: items[index].coverSource
+           ) {
             items[index].localPosterPath = posterPath
+            items[index].coverSource = "metadata"
         }
         if let backdropPath = enrichment.backdropPath {
             items[index].localBackdropPath = backdropPath
@@ -841,12 +863,11 @@ final class SonderLibrary: ObservableObject {
 
     func libraryResponseSnapshot(theme: SonderThemeSnapshot) -> SonderLibraryResponse {
         SonderLibraryResponse(
-            items: items,
-            progress: progressRecords,
-            mediaDirectories: mediaDirectories,
-            scanProgress: scanProgress,
-            activity: Array(activity.prefix(40)),
-            serverSettings: serverSettings,
+            items: items.map(SonderPublicMediaItem.init),
+            progress: progressRecords.map(SonderAPI.SonderProgress.init(host:)),
+            mediaDirectories: mediaDirectories.map(SonderPublicMediaDirectory.init),
+            activity: Array(activity.prefix(40)).map(SonderActivityEventDTO.init),
+            serverSettings: SonderPublicServerSettings(serverSettings),
             theme: theme
         )
     }
@@ -867,11 +888,23 @@ final class SonderLibrary: ObservableObject {
         )
     }
 
+    func refreshPlaybackTracks(itemID: UUID) async -> Bool {
+        guard let item = item(id: itemID), let url = item.playableURL else { return false }
+        let didAccess = url.startAccessingSecurityScopedResource()
+        defer { if didAccess { url.stopAccessingSecurityScopedResource() } }
+        let probe = await SonderMediaProbe.probe(url: url)
+        applyProbe(probe, toItemID: itemID)
+        return true
+    }
+
     func playbackSessionSnapshot(itemID: UUID, audioTracks: [SonderPlaybackTrack], subtitleTracks: [SonderPlaybackTrack]) -> SonderPlaybackSessionResponse? {
         guard let item = item(id: itemID), item.hasFile else { return nil }
         let progress = progressRecord(for: item)
         let duration = max(progress?.duration ?? item.durationSeconds, item.durationSeconds, 1)
         let seconds = min(max(progress?.seconds ?? item.progressSeconds, 0), duration)
+        let resolvedAudioTrackID = progress?.audioTrackID ?? defaultAudioTrackID(in: audioTracks)
+        let resolvedSubtitleTrackID = progress?.subtitleTrackID ?? defaultSubtitleTrackID(in: subtitleTracks, audioTrackID: resolvedAudioTrackID)
+        let resolvedSubtitlesEnabled = progress?.subtitlesEnabled ?? (resolvedSubtitleTrackID != nil && resolvedAudioTrackID != nil)
         return SonderPlaybackSessionResponse(
             itemID: item.id,
             streamURL: "/stream/\(item.id.uuidString)",
@@ -879,12 +912,32 @@ final class SonderLibrary: ObservableObject {
             duration: duration,
             percent: duration > 0 ? min(max(seconds / duration, 0), 1) : 0,
             updatedAt: progress?.updatedAt,
-            audioTrackID: progress?.audioTrackID,
-            subtitleTrackID: progress?.subtitleTrackID,
-            subtitlesEnabled: progress?.subtitlesEnabled ?? false,
+            audioTrackID: resolvedAudioTrackID,
+            subtitleTrackID: resolvedSubtitleTrackID,
+            subtitlesEnabled: resolvedSubtitlesEnabled,
             audioTracks: audioTracks,
             subtitleTracks: subtitleTracks
         )
+    }
+
+    private func defaultAudioTrackID(in tracks: [SonderPlaybackTrack]) -> String? {
+        if let japanese = tracks.first(where: { trackMatches($0, languageCode: "ja", labelTerms: ["japanese", "nihongo"]) }) {
+            return japanese.id
+        }
+        return nil
+    }
+
+    private func defaultSubtitleTrackID(in tracks: [SonderPlaybackTrack], audioTrackID: String?) -> String? {
+        guard audioTrackID != nil else { return nil }
+        return tracks.first { trackMatches($0, languageCode: "en", labelTerms: ["english", "eng"]) }?.id
+    }
+
+    private func trackMatches(_ track: SonderPlaybackTrack, languageCode: String, labelTerms: [String]) -> Bool {
+        if track.languageCode?.lowercased() == languageCode {
+            return true
+        }
+        let normalizedLabel = track.label.lowercased()
+        return labelTerms.contains { normalizedLabel.contains($0) }
     }
 
     func updatePlaybackSession(itemID: UUID, update: SonderProgressUpdate) {

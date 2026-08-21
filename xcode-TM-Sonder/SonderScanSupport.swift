@@ -159,12 +159,20 @@ nonisolated struct SonderServerSettings: Codable, Hashable, Sendable {
     var allowLAN: Bool
     var port: Int
     var themePreset: String
-    /// Bearer token required for all non-localhost requests when LAN sharing is on.
-    /// Localhost (loopback) requests are always exempt so the host Mac keeps working
-    /// without pairing. Empty means LAN sharing is open by default.
+    /// Bearer token required for all non-loopback requests when LAN sharing is on.
+    /// Loopback peers are always exempt so the host Mac keeps working without pairing.
+    /// Empty while `allowLAN` is true is treated as open LAN (discouraged; planner auto-fills a token when enabling LAN).
     var pairingToken: String
 
-    static let `default` = SonderServerSettings(isEnabled: true, allowLAN: true, port: 8797, themePreset: SonderThemePreset.earthy.rawValue, pairingToken: "")
+    /// Safer product default: server on, local-only until the user explicitly enables LAN
+    /// (which auto-generates a pairing token).
+    static let `default` = SonderServerSettings(
+        isEnabled: true,
+        allowLAN: false,
+        port: 8797,
+        themePreset: SonderThemePreset.earthy.rawValue,
+        pairingToken: ""
+    )
 
     init(isEnabled: Bool, allowLAN: Bool, port: Int, themePreset: String, pairingToken: String) {
         self.isEnabled = isEnabled
@@ -180,7 +188,10 @@ nonisolated struct SonderServerSettings: Codable, Hashable, Sendable {
         allowLAN = try container.decode(Bool.self, forKey: .allowLAN)
         port = try container.decode(Int.self, forKey: .port)
         themePreset = try container.decodeIfPresent(String.self, forKey: .themePreset) ?? SonderThemePreset.earthy.rawValue
-        pairingToken = try container.decode(String.self, forKey: .pairingToken)
+        // Older snapshots predate LAN pairing. Treat a missing token as the legacy
+        // open-LAN value so adding this field does not make the entire library fail
+        // to decode on upgrade.
+        pairingToken = try container.decodeIfPresent(String.self, forKey: .pairingToken) ?? ""
     }
 
     /// Generates a fresh random pairing token. Used when the user first enables LAN.
@@ -192,10 +203,17 @@ nonisolated struct SonderServerSettings: Codable, Hashable, Sendable {
             .replacingOccurrences(of: "=", with: "")
     }
 
+    /// Whether remote clients must present a pairing token.
+    var requiresPairing: Bool {
+        allowLAN && pairingToken.isEmpty == false
+    }
+
     var statusLabel: String {
         guard isEnabled else { return "Web server is off." }
         if allowLAN == false { return "Web server is local-only." }
-        return pairingToken.isEmpty ? "Web server is available on the LAN (open by default)." : "Web server is available on the LAN (pairing required)."
+        return requiresPairing
+            ? "Web server is available on the LAN (pairing required)."
+            : "Web server is available on the LAN (open — set a pairing token)."
     }
 }
 
@@ -228,6 +246,10 @@ nonisolated struct SonderLocalAssetUpdate: Sendable {
     var posterPath: String?
     var backdropPath: String?
     var subtitlePaths: [String]
+    var bookValidation: String? = nil
+    var coverSource: String? = nil
+    var inspectedTitle: String? = nil
+    var inspectedAuthor: String? = nil
 }
 
 nonisolated struct SonderContextMetadataUpdate: Sendable, Hashable {

@@ -7,7 +7,10 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
+		B70000000000000000000004 /* SonderAPI in Frameworks */ = {isa = PBXBuildFile; productRef = B70000000000000000000002 /* SonderAPI */; };
+		B70000000000000000000005 /* SonderAPI in Frameworks */ = {isa = PBXBuildFile; productRef = B70000000000000000000003 /* SonderAPI */; };
 		B618CCED2FF19841009590FC /* REFACTOR_CHECKLIST.md in Resources */ = {isa = PBXBuildFile; fileRef = B618CCEC2FF19841009590FC /* REFACTOR_CHECKLIST.md */; };
+		B63173E02FF7D89700E891D2 /* API.md in Resources */ = {isa = PBXBuildFile; fileRef = B63173DF2FF7D89700E891D2 /* API.md */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -24,6 +27,7 @@
 		A0ED7B382FB01E3400FD7A08 /* xcode-TM-Sonder.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = "xcode-TM-Sonder.app"; sourceTree = BUILT_PRODUCTS_DIR; };
 		A0ED7B472FB01E3500FD7A08 /* xcode-TM-SonderTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = "xcode-TM-SonderTests.xctest"; sourceTree = BUILT_PRODUCTS_DIR; };
 		B618CCEC2FF19841009590FC /* REFACTOR_CHECKLIST.md */ = {isa = PBXFileReference; lastKnownFileType = net.daringfireball.markdown; path = REFACTOR_CHECKLIST.md; sourceTree = "<group>"; };
+		B63173DF2FF7D89700E891D2 /* API.md */ = {isa = PBXFileReference; lastKnownFileType = net.daringfireball.markdown; path = API.md; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFileSystemSynchronizedRootGroup section */
@@ -44,6 +48,7 @@
 			isa = PBXFrameworksBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				B70000000000000000000004 /* SonderAPI in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -51,6 +56,7 @@
 			isa = PBXFrameworksBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				B70000000000000000000005 /* SonderAPI in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -64,6 +70,7 @@
 				A0ED7B4A2FB01E3500FD7A08 /* xcode-TM-SonderTests */,
 				A0ED7B392FB01E3400FD7A08 /* Products */,
 				B618CCEC2FF19841009590FC /* REFACTOR_CHECKLIST.md */,
+				B63173DF2FF7D89700E891D2 /* API.md */,
 			);
 			sourceTree = "<group>";
 		};
@@ -96,6 +103,7 @@
 			);
 			name = "xcode-TM-Sonder";
 			packageProductDependencies = (
+				B70000000000000000000002 /* SonderAPI */,
 			);
 			productName = "xcode-TM-Sonder";
 			productReference = A0ED7B382FB01E3400FD7A08 /* xcode-TM-Sonder.app */;
@@ -119,6 +127,7 @@
 			);
 			name = "xcode-TM-SonderTests";
 			packageProductDependencies = (
+				B70000000000000000000003 /* SonderAPI */,
 			);
 			productName = "xcode-TM-SonderTests";
 			productReference = A0ED7B472FB01E3500FD7A08 /* xcode-TM-SonderTests.xctest */;
@@ -153,6 +162,9 @@
 			mainGroup = A0ED7B2F2FB01E3400FD7A08;
 			minimizedProjectReferenceProxies = 1;
 			preferredProjectObjectVersion = 77;
+			packageReferences = (
+				B70000000000000000000001 /* XCLocalSwiftPackageReference "Packages/SonderAPI" */,
+			);
 			productRefGroup = A0ED7B392FB01E3400FD7A08 /* Products */;
 			projectDirPath = "";
 			projectRoot = "";
@@ -168,6 +180,7 @@
 			isa = PBXResourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				B63173E02FF7D89700E891D2 /* API.md in Resources */,
 				B618CCED2FF19841009590FC /* REFACTOR_CHECKLIST.md in Resources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
@@ -450,6 +463,27 @@
 			name = Release;
 		};
 /* End XCBuildConfiguration section */
+
+/* Begin XCLocalSwiftPackageReference section */
+		B70000000000000000000001 /* XCLocalSwiftPackageReference "Packages/SonderAPI" */ = {
+			isa = XCLocalSwiftPackageReference;
+			relativePath = Packages/SonderAPI;
+		};
+/* End XCLocalSwiftPackageReference section */
+
+/* Begin XCSwiftPackageProductDependency section */
+		B70000000000000000000002 /* SonderAPI */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = B70000000000000000000001 /* XCLocalSwiftPackageReference "Packages/SonderAPI" */;
+			productName = SonderAPI;
+		};
+		B70000000000000000000003 /* SonderAPI */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = B70000000000000000000001 /* XCLocalSwiftPackageReference "Packages/SonderAPI" */;
+			productName = SonderAPI;
+		};
+/* End XCSwiftPackageProductDependency section */
+
 
 /* Begin XCConfigurationList section */
 		A0ED7B332FB01E3400FD7A08 /* Build configuration list for PBXProject "xcode-TM-Sonder" */ = {

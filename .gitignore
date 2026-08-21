@@ -1,0 +1,45 @@
+# macOS
+.DS_Store
+.AppleDouble
+.LSOverride
+._*
+
+# Xcode
+build/
+DerivedData/
+*.xcuserstate
+*.xccheckout
+*.xcscmblueprint
+xcuserdata/
+*.moved-aside
+*.hmap
+*.ipa
+*.dSYM.zip
+*.dSYM
+
+# Swift Package Manager (build artifacts only; source package lives in Packages/SonderAPI)
+.build/
+.swiftpm/
+**/Package.resolved
+
+# CocoaPods / Carthage (if added later)
+Pods/
+Carthage/Build/
+
+# App secrets / local env
+.env
+.env.*
+*.pem
+*.p12
+*.mobileprovision
+
+# Editor / tooling
+.idea/
+.vscode/
+*.swp
+*~
+
+# Archives and logs
+*.log
+*.tmp
+*.bak

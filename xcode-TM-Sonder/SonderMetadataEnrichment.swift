@@ -36,6 +36,11 @@ actor SonderMetadataEnricher {
             return result
         }
 
+        if item.kind == .ebook,
+           let result = await openLibraryLookup(item: item, cachedJSON: cachedJSON, cachedPoster: cachedPoster) {
+            return result
+        }
+
         guard let result = await wikipediaSearch(query: query) else { return nil }
         if let imageURL = result.thumbnailURL, let imageData = await download(url: imageURL) {
             try? imageData.write(to: cachedPoster, options: .atomic)
@@ -105,6 +110,46 @@ actor SonderMetadataEnricher {
             posterPath: FileManager.default.fileExists(atPath: cachedPoster.path) ? cachedPoster.path : nil,
             backdropPath: nil
         )
+    }
+
+    /// Open Library's public search and Covers endpoints require neither an API
+    /// key nor an account. We only accept an exact normalized title match so a
+    /// plausible-but-wrong cover is never preferred over a missing cover.
+    private func openLibraryLookup(item: SonderMediaItem, cachedJSON: URL, cachedPoster: URL) async -> SonderMetadataEnrichment? {
+        var components = URLComponents(string: "https://openlibrary.org/search.json")
+        components?.queryItems = [
+            URLQueryItem(name: "title", value: item.title),
+            URLQueryItem(name: "limit", value: "5"),
+            URLQueryItem(name: "fields", value: "title,author_name,first_publish_year,cover_i,subject")
+        ]
+        guard let url = components?.url,
+              let (data, response) = try? await session.data(from: url),
+              (response as? HTTPURLResponse)?.statusCode ?? 500 < 400,
+              let response = try? JSONDecoder().decode(SonderOpenLibrarySearch.self, from: data),
+              let match = response.docs.first(where: { normalizeBookTitle($0.title) == normalizeBookTitle(item.title) }) else { return nil }
+
+        if let coverID = match.coverID,
+           let coverURL = URL(string: "https://covers.openlibrary.org/b/id/\(coverID)-L.jpg"),
+           let imageData = await download(url: coverURL) {
+            try? imageData.write(to: cachedPoster, options: .atomic)
+        }
+        let tags = (match.subjects ?? []).prefix(8).map { $0.lowercased() }
+            + (match.authorNames ?? []).map { $0.lowercased() }
+            + ["open-library"]
+        let payload = SonderCachedMetadata(summary: nil, publisher: match.authorNames?.first, tags: tags)
+        if let encoded = try? JSONEncoder().encode(payload) {
+            try? encoded.write(to: cachedJSON, options: .atomic)
+        }
+        return payload.toEnrichment(
+            posterPath: FileManager.default.fileExists(atPath: cachedPoster.path) ? cachedPoster.path : nil,
+            backdropPath: nil
+        )
+    }
+
+    private func normalizeBookTitle(_ value: String) -> String {
+        value.folding(options: [.diacriticInsensitive, .caseInsensitive], locale: .current)
+            .components(separatedBy: CharacterSet.alphanumerics.inverted)
+            .joined()
     }
 
     private func wikipediaSearch(query: String) async -> SonderWikipediaLookupResult? {
@@ -211,6 +256,24 @@ nonisolated private struct SonderWikipediaImage: Codable {
 
 nonisolated private struct SonderWikipediaCategory: Codable {
     var title: String
+}
+
+nonisolated private struct SonderOpenLibrarySearch: Codable {
+    var docs: [SonderOpenLibraryDocument]
+}
+
+nonisolated private struct SonderOpenLibraryDocument: Codable {
+    var title: String
+    var authorNames: [String]?
+    var coverID: Int?
+    var subjects: [String]?
+
+    enum CodingKeys: String, CodingKey {
+        case title
+        case authorNames = "author_name"
+        case coverID = "cover_i"
+        case subjects = "subject"
+    }
 }
 
 nonisolated private struct SonderWikipediaLookupResult {
