@@ -2,6 +2,8 @@
 
 This file is the client integration reference for iOS and other Sonder clients. Keep it updated whenever server routes, request bodies, or response shapes change.
 
+> **Reference implementations:** the macOS app (`xcode-TM-Sonder/SonderHTTPServer.swift`) and the Go server (`server/`, branch `go-port`). The Go server additionally supports `GET /stream/{id}?transcode=1` (see Streaming below); all other routes are wire-compatible with the shapes in this file.
+
 Base URL comes from `/api/discovery` as `localURL` or `lanURL`.
 
 ## Auth
@@ -146,6 +148,22 @@ Clients must store any pairing token they were given out-of-band (Keychain). The
 | POST | `/api/progress/{itemID}` | Compatibility progress update route. Also accepts optional track selections. |
 | GET | `/stream/{itemID}` | Byte-range media stream for AVPlayer or browser playback. |
 | GET | `/subtitles/{itemID}/{index}` | Download a sidecar subtitle file returned in `subtitleTracks`. |
+
+### Streaming (Go server)
+
+`GET /stream/{itemID}` direct-plays the original file with full Range/206
+semantics. The Go server also supports on-the-fly transcoding to fragmented
+MP4 for containers AVPlayer cannot play directly:
+
+| Query param | Values | Meaning |
+| --- | --- | --- |
+| `transcode` | `1` | Enable the transcode path (fMP4; no Range support — players seek via fragment timestamps). |
+| `mode` | `auto` (default), `remux`, `encode` | `auto` remuxes when the probed video codec is H.264, else encodes. |
+| `ss` | seconds, e.g. `91.5` | Start position. Requests within 30s of a running session attach to it instead of respawning ffmpeg. |
+| `sub` | embedded subtitle index | Burn in `embedded-subtitle:N` during encode. Ignored in remux mode. |
+
+Transcode concurrency is bounded by `transcode.maxConcurrent`; disconnecting
+clients kill their ffmpeg process group within ~1s.
 
 ### Playback Update Body
 

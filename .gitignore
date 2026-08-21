@@ -43,3 +43,7 @@ Carthage/Build/
 *.log
 *.tmp
 *.bak
+# Go server build artifacts
+bin/
+server/sonder
+*.profraw

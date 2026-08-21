@@ -1,0 +1,38 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.tm-sonder.server</string>
+
+    <key>ProgramArguments</key>
+    <array>
+        <string>/usr/local/bin/sonder</string>
+        <string>-config</string>
+        <string>/etc/sonder/server.json</string>
+    </array>
+
+    <key>EnvironmentVariables</key>
+    <dict>
+        <!-- Optional overrides: SONDER_PORT, SONDER_DATA_DIR,
+             SONDER_ALLOW_LAN, SONDER_TOKEN, SONDER_HWACCEL -->
+    </dict>
+
+    <key>RunAtLoad</key>
+    <true/>
+
+    <key>KeepAlive</key>
+    <true/>
+
+    <key>ThrottleInterval</key>
+    <integer>5</integer>
+
+    <key>StandardOutPath</key>
+    <string>/var/log/sonder.log</string>
+    <key>StandardErrorPath</key>
+    <string>/var/log/sonder.log</string>
+
+    <key>Nice</key>
+    <integer>-5</integer>
+</dict>
+</plist>

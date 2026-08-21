@@ -1,0 +1,23 @@
+# TM Sonder Go server — Apple Containerization micro-VM image.
+# Build: container build -t tm-sonder   (from repo root)
+# Run:   container run --name sonder -p 8797:8797 \
+#          --volume /path/to/media:/media:ro --volume sonder-data:/data tm-sonder
+FROM golang:1.25 AS build
+WORKDIR /src
+COPY server/go.mod server/go.sum* ./
+RUN go mod download || true
+COPY server/ ./
+RUN CGO_ENABLED=0 GOOS=linux GOARCH=arm64 go build \
+      -trimpath -ldflags "-s -w" -o /out/sonder ./cmd/sonder
+
+FROM alpine:3.20
+RUN apk add --no-cache ffmpeg ca-certificates tzdata && \
+    addgroup -S sonder && adduser -S -G sonder sonder && \
+    mkdir -p /data /media && chown -R sonder:sonder /data
+COPY --from=build /out/sonder /sonder
+USER sonder
+ENV SONDER_DATA_DIR=/data \
+    SONDER_PORT=8797
+EXPOSE 8797
+VOLUME ["/data", "/media"]
+ENTRYPOINT ["/sonder"]

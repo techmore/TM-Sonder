@@ -31,3 +31,28 @@ jobs:
             -destination 'platform=macOS' \
             -only-testing:xcode-TM-SonderTests \
             CODE_SIGNING_ALLOWED=NO
+
+  go-server:
+    name: Go server (vet + test + cross-compile)
+    runs-on: macos-15
+    defaults:
+      run:
+        working-directory: server
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.25"
+      - name: Vet
+        run: go vet ./...
+      - name: Test (race)
+        run: go test -race -count=1 ./...
+      - name: Cross-compile artifacts
+        run: |
+          CGO_ENABLED=0 GOOS=darwin GOARCH=arm64 go build -trimpath -ldflags "-s -w" -o ../bin/sonder-darwin-arm64 ./cmd/sonder
+          CGO_ENABLED=0 GOOS=linux  GOARCH=arm64 go build -trimpath -ldflags "-s -w" -o ../bin/sonder-linux-arm64  ./cmd/sonder
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: sonder-binaries
+          path: bin/
