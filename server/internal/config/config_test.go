@@ -100,17 +100,21 @@ func TestEnvOverridesBeatFile(t *testing.T) {
 }
 
 func TestResolvePathSearchOrder(t *testing.T) {
-	wd, _ := os.Getwd()
-	defer os.Chdir(wd)
-	tmp := t.TempDir()
-	os.Chdir(tmp)
+	// Isolate $HOME so the search-order probe never touches the real
+	// user config directory.
+	t.Setenv("HOME", t.TempDir())
+	if err := os.Chdir(t.TempDir()); err != nil {
+		t.Fatal(err)
+	}
+	defer func() {
+		if wd := os.Getenv("OLDWD"); wd != "" {
+			os.Chdir(wd)
+		}
+	}()
 
 	if p, ok := ResolvePath(); p == "" {
 		t.Errorf("expected non-empty path, got %q (exists=%v)", p, ok)
 	}
-	home, _ := os.UserHomeDir()
-	fallback := filepath.Join(home, ".config", "sonder", "server.json")
-	os.Remove(fallback)
 
 	if err := os.WriteFile("sonder-server.json", []byte("{}"), 0o600); err != nil {
 		t.Fatal(err)
@@ -118,10 +122,10 @@ func TestResolvePathSearchOrder(t *testing.T) {
 	if p, ok := ResolvePath(); !ok || p != "sonder-server.json" {
 		t.Errorf("local file not preferred: %q exists=%v", p, ok)
 	}
-
 	os.Remove("sonder-server.json")
-	setenv(t, "SONDER_CONFIG", filepath.Join(tmp, "explicit.json"))
-	if p, _ := ResolvePath(); p != filepath.Join(tmp, "explicit.json") {
+
+	setenv(t, "SONDER_CONFIG", filepath.Join(t.TempDir(), "explicit.json"))
+	if p, _ := ResolvePath(); p != os.Getenv("SONDER_CONFIG") {
 		t.Errorf("SONDER_CONFIG ignored: %q", p)
 	}
 }
