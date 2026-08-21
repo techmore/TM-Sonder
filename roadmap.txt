@@ -138,6 +138,19 @@ DONE
         LAN-only, clean deregistration on shutdown
     [x] Performance pass: BenchmarkLibrary10k ~31ms warm gzipped (<50ms
         target), 1k ~3ms
+    [x] Web UI parity + upgrades (httpapi/web/*.html, go:embed): full port of
+        SonderWebInterface library browser + audiobook chapter player; then
+        Plex-style rework — static poster grid (no per-card <video> storm),
+        click-to-play detail modal (single player), Continue Watching rail,
+        watched/unwatched badges + filter, sort (title/year/duration/recently
+        watched), real field search, year•runtime meta lines, aria labels,
+        Esc/backdrop close; ?token= propagation for LAN browsing
+    [x] Poster pipeline (internal/artwork): ffmpeg thumbnail generation at
+        scan time for videos without local artwork (frame at 10% duration,
+        clamped 2-180s, 480px wide, cached by item ID, idempotent); scanner
+        self-heals catalogs missing posters on next scan; /artwork serves
+        with private max-age=86400; verified live — all 30 videos in the
+        desktop test library got posters, audio-only items correctly none
     [x] Metadata enrichment (internal/enrich): Audnexus (audiobooks by ASIN),
         Open Library exact-title ebook matches, Wikipedia fallback for
         film/TV/docs; SHA256-keyed on-disk cache; keyless public APIs so no
