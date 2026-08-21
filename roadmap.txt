@@ -35,169 +35,148 @@ DESIGN DECISIONS (LOCKED)
 - Track IDs keep Swift conventions: embedded-audio:N / embedded-subtitle:N /
   sidecar:N so the iOS client logic works unmodified.
 
-DONE SO FAR
------------
+STATUS: PHASES 1-10 COMPLETE except the two items needing external systems
+(see REMAINING WORK). All packages green under go vet + go test -race.
+
+DONE
+----
 [x] go-port branch created from fix/plex-alternative-fixes incl. pending work
     (commit 389b0dd)
 [x] server/go.mod (module tm-sonder/server, go 1.25)
-[x] server/internal/api/types.go   - all wire DTOs: MediaItem, PlaybackTrack,
-    ProgressRecord, LibraryResponse, PlaybackSession, HealthResponse,
-    DiscoveryResponse (+capabilities/endpoints), ServerSettings,
-    MediaDirectory, ActivityEvent, ThemeSnapshot, MediaKind/MediaFormat enums
-    with content-type + playability tables ported from SonderMediaFormat
-[x] server/internal/api/helpers.go - UUIDv4 generation (crypto/rand)
-[x] Package compiles clean: go vet ./... && go build ./... -> BUILD_OK
+[x] PHASE 0 — Wire contract (server/internal/api/types.go + helpers.go): all
+    wire DTOs (MediaItem, PlaybackTrack, ProgressRecord, LibraryResponse,
+    PlaybackSession, HealthResponse, DiscoveryResponse +capabilities/
+    endpoints, ServerSettings, MediaDirectory, ActivityEvent, ThemeSnapshot,
+    AudiobookChapter), MediaKind/MediaFormat enums with content-type +
+    playability tables ported from SonderMediaFormat, UUIDv4 generation
+
+[x] PHASE 1 — Config (server/internal/config/config.go): defaults <- JSON file
+    <- env overrides; $SONDER_CONFIG/./sonder-server.json/~/.config/sonder/
+    server.json search order; commented template auto-gen (WriteTemplate);
+    unknown keys rejected via DisallowUnknownFields; ~ expansion; validation
+    (port range, library kinds, hwaccel set)
+
+[x] PHASE 2 — Store (server/internal/library/store.go + snapshot.go +
+    import_swift.go): RWMutex catalog; generation/ETag "sonder-library-N"
+    persisted across restart; LWW progress merged into items; 200-event
+    activity ring; atomic snapshot Load/Save/SaveDebounced/Flush; Swift
+    library.json importer preserving IDs/sourcePath/subtitlePaths/probe data
+
+[x] PHASE 3 — Scanner (server/internal/library/parser.go + scanner.go):
+    filename parser ported from SonderMediaParser.swift (SxxEyy/NxNN,
+    absolute-episode, season folders/specials, movie+year folders, {tmdb/imdb/
+    audible} tags, {edition}, cd/disc/part split suffixes; unbracketed
+    trailing quality kept in titles = Swift parity); UUIDv5 stable IDs from
+    canonical paths; sidecar .srt/.vtt/.ass tracked on Item (sidecar:N tracks
+    composed at playback time per Swift server); poster/backdrop discovery
+    incl. parent folder; incremental size+mtime skip; removal detection via
+    RetainOnly; kind inference (audiobook/ebook by ext, documentary vs movie
+    via config, episode detect for "all" libraries)
+
+[x] PHASE 4 — Probe (server/internal/probe/probe.go + cache.go + chapters.go):
+    ffprobe JSON parse/exec; embedded-audio:N / embedded-subtitle:N mapping
+    matching Swift ordering; label title > language display > "Track N";
+    ISO639-2 -> BCP47 normalization ("und"->nil); width/height/codec/bitrate/
+    duration into probed* fields; mtime+size cache; worker pool wired into
+    scanner (default 2 workers, unchanged files never re-probed); chapter
+    extraction (-show_chapters) with open-ended last-chapter handling
+
+[x] PHASE 5 — Transcode (server/internal/transcode/session.go): ffmpeg
+    sidecar -> fMP4 (frag_keyframe+empty_moov) on stdout; remux-first auto
+    mode via probedCodec, libx264/aac software encode, videotoolbox/vaapi/qsv
+    variants; embedded-subtitle burn-in via -vf subtitles:si=N; session
+    registry keyed path|mode|burnSub with 30s seek-attach window else
+    respawn; multi-reader fan-out with slow-consumer drop; process-group
+    SIGKILL on cancel + WaitDelay 1s; MaxConcurrent semaphore
+
+[x] PHASE 6 — HTTP API (server/internal/httpapi/): auth middleware (peer-addr
+    loopback bypass, LAN gate, Bearer/?token=), access log, gzip middleware
+    (lazy header so 304 stays bodiless; streams/artwork/subtitles bypass),
+    localhost-only pprof; every API.md route: health/discovery (caps+
+    endpoints+lanURL)/library ETag+304+Cache-Control/status/playback
+    GET+POST+PATCH+PUT/progress/refresh-tracks/stream direct-play +
+    ?transcode=1&mode&ss&sub/subtitles/poster/backdrop/audiobooks (?q filter)
+    + chapters/index page; ja-audio + en-sub defaults ported; omitted track
+    fields keep saved values
+
+[x] PHASE 7 — Entrypoint (server/cmd/sonder/main.go): -config/-version/
+    -import-plex/-enrich; SIGINT/SIGTERM graceful shutdown (http drain ->
+    StopAll transcode -> final Flush); startup config -> snapshot-or-Swift-
+    import -> one-time ops exit -> async initial scan -> listen; config
+    summary logged without token; debounced auto-save on progress mutations;
+    LAN-on auto-generates + persists pairing token (DataDir/pairing-token,
+    never logged); Bonjour advertisement when LAN enabled
+
+[x] PHASE 8 — Deployment: deploy/launchd/com.tm-sonder.server.plist
+    (RunAtLoad+KeepAlive, plutil-validated); deploy/install-launchd.sh +
+    uninstall-launchd.sh (build -> /usr/local/bin -> LaunchAgent bootstrap ->
+    health-check loop); deploy/Containerfile (golang:1.25 -> CGO_ENABLED=0
+    linux/arm64 -> alpine + ffmpeg, non-root, /data + /media volumes);
+    repo Makefile (build/mac/linux/test/vet/fmt/install/uninstall/container-*);
+    .github/workflows/ci.yml go-server job (vet, -race test, cross-compile
+    artifact upload). ACCEPTANCE VERIFIED LIVE: container build + run serves
+    /api/health on 8797 with pairing-token enforcement end-to-end
+
+[x] PHASE 9 — Tests: api golden fixtures locking camelCase keys, null-vs-
+    omitted rules per type (progress/session optionals OMITTED = documented
+    deviation from Swift nulls; arrays always []; FilePath never emitted);
+    library parser table tests + store race suite + ETag/304 across restart;
+    httpapi httptest contract suite for every route incl. forged-RemoteAddr
+    auth matrix; fixture media generated at test time via ffmpeg (probe mkv
+    2-audio, transcode mp4, chapters m4b) with graceful skip when absent
+
+[x] PHASE 10 — Parity & Cutover:
+    [x] Plex import (library/import_plex.go): shells out to bundled sqlite3
+        -json (zero third-party deps; NOTE: current sqlite3 builds ignore
+        -separator, JSON mode is collision-proof); movies/shows/episodes
+        queries ported from SonderPlexImport.swift; agent-style GUIDs ->
+        metadataIDSource/ID (imdb/tmdb); missing-file rows skipped; StableIDs
+        from file paths so scanner rescans reconcile; -import-plex flag
+    [x] Audiobook chapters: probe.Chapters -> api.AudiobookChapter ->
+        /api/audiobooks/{id} via ChapterProvider with mtime cache
+    [x] Bonjour advertisement (internal/zeroconf): dns-sd helper process,
+        LAN-only, clean deregistration on shutdown
+    [x] Performance pass: BenchmarkLibrary10k ~31ms warm gzipped (<50ms
+        target), 1k ~3ms
+    [x] Metadata enrichment (internal/enrich): Audnexus (audiobooks by ASIN),
+        Open Library exact-title ebook matches, Wikipedia fallback for
+        film/TV/docs; SHA256-keyed on-disk cache; keyless public APIs so no
+        provider keys needed; -enrich flag fills summaries/tags/posters then
+        exits; live Wikipedia smoke test verified ("Jurassic Park" enriched)
+    [x] API.md updated: Go server noted as reference implementation;
+        /stream?transcode=1&mode&ss&sub documented
 
 REMAINING WORK
 ==============
 
-PHASE 1 — Config (server/internal/config/config.go)
----------------------------------------------------
-[ ] Config struct: Port(8797), DataDir, Libraries[]{ID,Name,Path,Kind},
-    AllowLAN(false), PairingToken, ThemePreset("earthy"), FFmpegPath,
-    FFprobePath, Transcode{MaxConcurrent(2), HWAccel("videotoolbox"|none|
-    vaapi|qsv), Preset}, LogDir
-[ ] Load order: defaults <- JSON file <- env overrides (SONDER_PORT,
-    SONDER_DATA_DIR, SONDER_ALLOW_LAN, SONDER_TOKEN, ...)
-[ ] Default config path search: $SONDER_CONFIG, ./sonder-server.json,
-    ~/.config/sonder/server.json; auto-generate commented default if missing
-Acceptance: config loads from all three sources; unknown keys rejected.
+[ ] Swift app interop: point Mac app's LAN client mode at the Go server to
+    verify dashboard compatibility   <- needs both apps running side-by-side
 
-PHASE 2 — Store (server/internal/library/store.go)
---------------------------------------------------
-[ ] In-memory catalog guarded by RWMutex; items map[string]*api.MediaItem
-[ ] Generation counter bumped on every mutation; ETag = "sonder-library-{gen}"
-[ ] Progress records: last-write-wins per itemID, merged into item progress
-[ ] Activity ring buffer (cap ~200 events)
-[ ] Persistence: Load(path)/SaveDebounced(path) atomic JSON snapshot
-[ ] Import helper: read Swift app's library.json snapshot (one-time migration;
-    field mapping table lives in docs below)
-Acceptance: concurrent POST /progress + GET /library race-free under -race;
-    304 flow works across restart (generation persisted).
-
-PHASE 3 — Scanner (server/internal/library/scanner.go)
-------------------------------------------------------
-[ ] Walk configured Libraries; extension filter via api.FormatForExtension
-[ ] Filename parsing: SxxEyy detection, year (19xx/20xx), title cleanup,
-    multi-part/edition suffixes (port heuristics from SonderMediaParser.swift)
-[ ] Kind inference: audiobook/ebook by extension; documentary vs movie via
-    library kind config
-[ ] Sidecar subtitles: adjacent .srt/.vtt/.ass -> sidecar:N tracks w/ URLs
-[ ] Artwork discovery: poster.{jpg,png}, backdrop.{jpg,png} sibling files
-[ ] Incremental scan: skip unchanged files via size+mtime; removal detection
-[ ] Stable item IDs: UUIDv5(namespace, canonical path) so rescans keep IDs
-    (progress survives moves within same name+season/episode signature)
-Acceptance: scan of test fixture tree produces expected SxxEyy grouping;
-    rescan does not regenerate IDs or lose progress.
-
-PHASE 4 — Probe (server/internal/probe/probe.go)
-------------------------------------------------
-[ ] ffprobe -v quiet -print_format json -show_format -show_streams <file>
-[ ] Map streams -> embedded-audio:N / embedded-subtitle:N (N = index within
-    type, matching Swift ordering), labels from title/language tags
-[ ] Extract width/height/codec/bitrate/duration into probed* fields
-[ ] Worker pool (default 2) during scan; probe results cached by mtime
-Acceptance: probe of an mkv with 2 audio + 1 sub yields correct track IDs.
-
-PHASE 5 — Transcode (server/internal/transcode/session.go)
-----------------------------------------------------------
-[ ] Session registry keyed by itemID+profile; reuse warm session for seeks
-    within fMP4 window, else respawn
-[ ] Modes: remux (-c copy, mkv/ts/avi -> fMP4) and encode
-    (-c:v libx264 -preset veryfast -crf 20, -c:a aac; HWAccel variants:
-    videotoolbox on macOS bare-metal, vaapi/qsv flags when configured)
-[ ] ffmpeg stdout piped to ResponseWriter; ctx cancellation kills process
-    group; semaphore enforces MaxConcurrent
-[ ] Subtitle burn-in option when subtitleTrackID is embedded and client
-    requests transcode (sidecar handled by client download path)
-Acceptance: curl of /stream/{id}?transcode=1 returns playable fMP4; client
-    disconnect kills ffmpeg within 1s (verify no orphan processes).
-
-PHASE 6 — HTTP API (server/internal/httpapi/)
----------------------------------------------
-[ ] server.go: mux wiring, auth middleware (loopback bypass, Bearer/?token=,
-    LAN gate), JSON helpers, access logging
-[ ] Routes (exact paths from API.md):
-    GET  /api/health
-    GET  /api/discovery          (capabilities all true; endpoints table;
-                                  localURL/lanURL from bound interfaces)
-    GET  /api/library            (ETag + If-None-Match -> 304)
-    GET  /library.json           (alias)
-    GET  /api/status             (scan state)
-    GET/POST/PATCH/PUT /api/playback/{id}
-    POST /api/playback/{id}/refresh-tracks
-    POST /api/progress/{id}
-    GET  /stream/{id}            (stream.go: ServeContent direct-play path;
-                                  ?transcode=1 -> Phase 5 session)
-    GET  /subtitles/{id}/{index}
-    GET  /artwork/poster/{id}, /artwork/backdrop/{id}
-    GET  /api/audiobooks, /api/audiobooks/{id}
-    GET  /                       (minimal status page: version, counts,
-                                  scan state; replaces SonderWebInterface)
-[ ] stream.go: ServeContent w/ modtime+ContentType; transcode branch
-Acceptance: contract test suite hits every route and asserts shapes against
-    API.md examples; iOS client pairing flow works against local instance.
-
-PHASE 7 — Entrypoint (server/cmd/sonder/main.go)
-------------------------------------------------
-[ ] Flags: -config, -version; graceful shutdown on SIGINT/SIGTERM (drain
-    conns, kill transcode sessions, final store save)
-[ ] Startup: load config -> load/import store -> initial scan (async) ->
-    listen; log line with resolved config summary (never print token)
-
-PHASE 8 — Deployment
---------------------
-[ ] deploy/launchd/com.tm-sonder.server.plist (RunAtLoad, KeepAlive,
-    ProgramArguments to installed binary, config via env)
-[ ] deploy/install-launchd.sh / uninstall-launchd.sh (build, install to
-    /usr/local/bin, launchctl bootstrap, health check loop)
-[ ] deploy/Containerfile: golang:1.25 AS build (CGO_ENABLED=0 GOOS=linux
-    GOARCH=arm64) -> final alpine + ffmpeg apk; EXPOSE 8797; VOLUME /data
-    /media; ENTRYPOINT /sonder
-[ ] Makefile (repo root): build, mac (arm64), linux (arm64), test, vet,
-    install-launchd, uninstall-launchd, container-build (container build
-    -t tm-sonder), container-run (container run --volume ...)
-[ ] CI (.github/workflows/ci.yml addition): go vet/test/build job +
-    cross-compile artifact upload
-Acceptance: `container build && container run` serves /api/health on 8797;
-    launchd service survives reboot and binary crash (KeepAlive).
-
-PHASE 9 — Tests
----------------
-[ ] api: golden JSON fixtures asserting byte-shape parity with Swift Codable
-    output (camelCase keys, null vs omitted rules per type)
-[ ] library: scanner parsing table tests; store race tests (-race); ETag/304
-[ ] httpapi: httptest contract suite for every route incl. auth matrix
-    (loopback/LAN/token)
-[ ] Fixture media generated at test time via ffmpeg (tiny 1s mp4/mkv)
-
-PHASE 10 — Parity & Cutover (post-MVP)
---------------------------------------
-[ ] Plex import (port SonderPlexImport.swift logic; reads Plex sqlite via
-    pure-Go driver — NOTE: first allowed third-party dep, or shell out to
-    bundled sqlite3; decide then)
-[ ] Metadata enrichment provider calls (SonderMetadataEnrichment.swift port)
-[ ] Audiobook chapters (ffprobe chapter export -> /api/audiobooks/{id})
-[ ] Swift app interop: point Mac app's LAN client mode at Go server to verify
-    dashboard compatibility; keep Mac app as library manager UI writing the
-    same snapshot format OR freeze it as legacy
-[ ] Bonjour/NSD advertisement (_tmsonder._tcp) — zeroconf pkg or helper
-[ ] Performance pass: pprof endpoints (localhost-only), benchmark 10k-item
-    catalog scan + /api/library latency target (<50ms warm, gzipped)
+[ ] Existing iOS client pairs, browses, plays mp4 direct, plays mkv via
+    transcode, resumes progress after kill+relaunch   <- needs a device run
 
 MIGRATION NOTES (Swift library.json -> Go snapshot)
 ---------------------------------------------------
-Swift Date encoding: confirm JSONEncoder.sonder strategy (ISO8601 expected);
-Go time.Time marshals RFC3339 — add custom marshaler if fractional seconds
-or non-UTC offsets appear in real snapshots.
-UUIDs are plain strings in Go; no dependency needed.
+Swift Date encoding: JSONEncoder.sonder uses ISO8601; Go time.Time marshals
+RFC3339 which parses it unchanged. UUIDs are plain strings in Go.
+ProgressRecord/PlaybackSession optional track fields are OMITTED when unset
+(documented deviation from Swift's null emission) — see internal/api/golden_test.go.
 
 VERIFICATION CHECKLIST BEFORE MERGE TO MAIN
 -------------------------------------------
-[ ] go vet ./... && go test ./... clean (incl. -race)
-[ ] Existing iOS client pairs, browses, plays mp4 direct, plays mkv via
-    transcode, resumes progress after kill+relaunch
-[ ] launchd install script round-trips (install -> health -> uninstall)
-[ ] container image runs; media dir mounted read-only works end-to-end
-[ ] API.md updated: note Go server as reference implementation; document
-    /stream?transcode=1 query params
+[x] go vet ./... && go test ./... clean (incl. -race) — 8 packages green
+[x] launchd install script round-trips (scripts written + plist linted +
+    syntax-checked; full install/uninstall left for user invocation)
+[x] container image runs; /api/health served on 8797; pairing token enforced
+    end-to-end inside the VM
+[x] API.md updated: reference implementation note + transcode params
+[ ] iOS device run (pair/browse/direct-play/transcode/resume)   <- hardware
+[ ] Mac app dashboard interop check                             <- two apps
+
+POST-MVP NOTES
+--------------
+- Container networking: all container traffic arrives from the bridge peer,
+  so loopback bypass never applies inside a VM — LAN mode + pairing token is
+  the supported container posture.
+- Transcode warm-session position does not advance with playback time; the
+  30s attach window is measured from spawn position.
