@@ -1,0 +1,353 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>TM Sonder</title>
+  <style>
+    :root {
+      color-scheme: dark;
+      --bg:#0b0e09; --panel:#151a12; --panel2:#1f2618; --line:#2f3a24;
+      --text:#eff4e8; --muted:#9aa78d; --accent:#b6d56d; --accent-dark:#11160f;
+      --gold:#e0a14a; --radius:10px;
+    }
+    * { box-sizing:border-box; }
+    body { margin:0; font:14px -apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif; background:var(--bg); color:var(--text); }
+    button { font:inherit; }
+    header {
+      position:sticky; top:0; z-index:5; display:flex; flex-wrap:wrap;
+      align-items:center; gap:12px; padding:14px 22px;
+      background:rgba(11,14,9,.95); backdrop-filter:blur(8px); border-bottom:1px solid var(--line);
+    }
+    h1 { margin:0 auto 0 0; font-size:22px; letter-spacing:.3px; }
+    h1 span { color:var(--accent); }
+    input[type="search"], select {
+      background:var(--panel); border:1px solid var(--line); color:var(--text);
+      border-radius:8px; padding:9px 11px; font-size:13px;
+    }
+    input[type="search"] { width:min(280px, 60vw); }
+    input:focus-visible, select:focus-visible, button:focus-visible, .card:focus-visible {
+      outline:2px solid var(--accent); outline-offset:2px;
+    }
+    section.row { padding:6px 22px 0; }
+    section.row h2 { font-size:15px; color:var(--muted); margin:10px 0 10px; text-transform:uppercase; letter-spacing:1px; }
+    .rail { display:flex; gap:14px; overflow-x:auto; padding-bottom:8px; scrollbar-width:thin; }
+    main.grid {
+      display:grid; grid-template-columns:repeat(auto-fill,minmax(165px,1fr));
+      gap:16px; padding:18px 22px 40px;
+    }
+    main.grid.rail-mode { display:flex; overflow-x:auto; padding-top:4px; }
+    main.grid.rail-mode .card { flex:0 0 165px; }
+
+    .card {
+      background:none; border:0; padding:0; text-align:left; cursor:pointer;
+      color:var(--text); border-radius:var(--radius); position:relative;
+    }
+    .card .frame {
+      position:relative; aspect-ratio:2/3; border-radius:var(--radius); overflow:hidden;
+      background:linear-gradient(150deg,#2c3721,#12170d);
+      box-shadow:0 2px 10px rgba(0,0,0,.45); transition:transform .15s ease, box-shadow .15s ease;
+    }
+    .card:hover .frame, .card:focus-visible .frame { transform:translateY(-3px); box-shadow:0 8px 22px rgba(0,0,0,.55); }
+    .card img.poster { width:100%; height:100%; object-fit:cover; display:block; }
+    .card .play-glyph {
+      position:absolute; inset:0; display:grid; place-items:center; font-size:44px;
+      color:var(--accent); opacity:0; transition:opacity .15s ease; background:rgba(8,10,6,.35);
+    }
+    .card:hover .play-glyph, .card:focus-visible .play-glyph { opacity:1; }
+    .card .bar { position:absolute; left:0; right:0; bottom:0; height:4px; background:rgba(255,255,255,.18); }
+    .card .bar > i { display:block; height:100%; background:var(--gold); }
+    .badge {
+      position:absolute; top:8px; left:8px; border-radius:5px; padding:2px 7px;
+      font-size:10px; font-weight:800; letter-spacing:.6px;
+    }
+    .badge.unwatched { background:var(--gold); color:#1c1408; }
+    .badge.watched { background:rgba(20,24,16,.85); color:var(--muted); border:1px solid var(--line); }
+    .card h3 { margin:9px 2px 2px; font-size:13.5px; font-weight:600; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+    .card p.meta { margin:0 2px; font-size:12px; color:var(--muted); white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+
+    /* Detail modal */
+    dialog#detail {
+      width:min(880px, 94vw); max-height:90vh; border:1px solid var(--line); border-radius:14px;
+      background:var(--panel); color:var(--text); padding:0;
+    }
+    dialog::backdrop { background:rgba(4,6,3,.72); backdrop-filter:blur(2px); }
+    .modal-body { padding:22px; overflow:auto; max-height:calc(90vh - 56px); }
+    .modal-head { display:flex; align-items:center; justify-content:space-between; padding:14px 22px; border-bottom:1px solid var(--line); }
+    .modal-head strong { font-size:16px; }
+    video { width:100%; max-height:56vh; background:#000; border-radius:8px; margin-bottom:16px; }
+    .meta-line { color:var(--muted); font-size:13px; margin:2px 0 12px; }
+    .summary { line-height:1.5; color:#cfd8c2; margin:0 0 14px; }
+    .tagrow { display:flex; flex-wrap:wrap; gap:6px; }
+    .tag { background:var(--panel2); border:1px solid var(--line); border-radius:999px; padding:3px 10px; font-size:12px; color:var(--muted); }
+    .actions { display:flex; gap:10px; margin:14px 0 4px; flex-wrap:wrap; }
+    .actions button, .actions a {
+      background:var(--panel2); border:1px solid var(--line); color:var(--text);
+      border-radius:8px; padding:9px 14px; text-decoration:none; cursor:pointer;
+    }
+    .actions button.primary { background:var(--accent); border-color:var(--accent); color:var(--accent-dark); font-weight:700; }
+    .not-playable { background:var(--panel2); border:1px dashed var(--line); border-radius:8px; padding:18px; text-align:center; color:var(--muted); }
+    .empty-state { padding:60px 22px; text-align:center; color:var(--muted); }
+    @media (max-width: 640px) {
+      header { gap:8px; padding:12px 14px; }
+      input[type="search"] { flex:1; }
+      main.grid { grid-template-columns:repeat(auto-fill,minmax(128px,1fr)); gap:12px; padding:14px; }
+    }
+  </style>
+</head>
+<body>
+  <header>
+    <h1>TM <span>Sonder</span></h1>
+    <input type="search" id="q" placeholder="Search titles and summaries…" aria-label="Search library">
+    <select id="watched" aria-label="Watched filter">
+      <option value="all">All</option>
+      <option value="unwatched">Unwatched</option>
+      <option value="watched">Watched</option>
+    </select>
+    <select id="kind" aria-label="Kind filter">
+      <option value="all">All kinds</option>
+      <option value="movie">Movies</option>
+      <option value="tvShow">TV Shows</option>
+      <option value="documentary">Documentaries</option>
+      <option value="audiobook">Audiobooks</option>
+      <option value="ebook">Books</option>
+    </select>
+    <select id="sort" aria-label="Sort order">
+      <option value="title">Title A–Z</option>
+      <option value="year">Year</option>
+      <option value="duration">Longest first</option>
+      <option value="recent">Recently watched</option>
+    </select>
+  </header>
+
+  <section class="row" id="continueRow" hidden>
+    <h2>Continue Watching</h2>
+    <main class="grid rail-mode" id="continueGrid"></main>
+  </section>
+
+  <main class="grid" id="grid" aria-live="polite">
+    <div class="empty-state">Loading library…</div>
+  </main>
+
+  <dialog id="detail" role="dialog" aria-modal="true" aria-labelledby="detailTitle">
+    <div class="modal-head">
+      <strong id="detailTitle"></strong>
+      <button onclick="closeDetail()" aria-label="Close">✕</button>
+    </div>
+    <div class="modal-body" id="detailBody"></div>
+  </dialog>
+
+  <script>
+    let items = [];
+    const progressByID = new Map();
+
+    // When opened with ?token= (LAN pairing), propagate to every request.
+    const TOKEN = new URLSearchParams(location.search).get("token");
+    function api(path) {
+      if (!TOKEN) return path;
+      return path + (path.includes("?") ? "&" : "?") + "token=" + encodeURIComponent(TOKEN);
+    }
+
+    const BROWSER_PLAYABLE = new Set(["mp4", "m4v", "mov", "webm"]);
+    const $ = sel => document.querySelector(sel);
+
+    function kindLabel(v) {
+      return ({ movie:"Movie", tvShow:"TV Show", documentary:"Documentary",
+                audiobook:"Audiobook", ebook:"Book", all:"All" })[v] || v;
+    }
+    function escapeHTML(v) {
+      return String(v ?? "").replace(/[&<>"']/g,
+        c => ({ "&":"&amp;", "<":"&lt;", ">":"&gt;", '"':"&quot;", "'":"&#39;" }[c]));
+    }
+    function progressFor(id) { return progressByID.get(id) ?? null; }
+    function isWatched(p, item) {
+      if (!p || p.seconds <= 0) return false;
+      const dur = p.duration || item.durationSeconds || 0;
+      return dur > 0 && p.seconds / dur >= 0.96;
+    }
+    function inProgress(p, item) {
+      if (!p || p.seconds <= 5) return false;
+      return !isWatched(p, item);
+    }
+    function formatTime(s) {
+      const t = Math.max(0, Math.floor(Number(s) || 0));
+      const h = Math.floor(t/3600), m = Math.floor((t%3600)/60), sec = t%60;
+      return h ? `${h}:${String(m).padStart(2,"0")}:${String(sec).padStart(2,"0")}`
+               : `${m}:${String(sec).padStart(2,"0")}`;
+    }
+    function runtimeLabel(item) {
+      const d = item.durationSeconds;
+      if (!d || d <= 0) return "";
+      return formatTime(d);
+    }
+
+    function visibleItems() {
+      const term = $("#q").value.trim().toLowerCase();
+      const kindSel = $("#kind").value;
+      const watchSel = $("#watched").value;
+      let list = items.filter(i => !i.isPlaceholder);
+      if (kindSel !== "all") list = list.filter(i => i.kind === kindSel);
+      if (watchSel !== "all") {
+        list = list.filter(i => watchSel === "watched" ? isWatched(progressFor(i.id), i)
+                                                       : !isWatched(progressFor(i.id), i));
+      }
+      if (term) {
+        list = list.filter(i =>
+          [i.title, i.subtitle, i.showTitle, i.summary]
+            .some(f => f && String(f).toLowerCase().includes(term)));
+      }
+      switch ($("#sort").value) {
+        case "year":     list.sort((a,b)=>(b.year||0)-(a.year||0)||a.title.localeCompare(b.title)); break;
+        case "duration": list.sort((a,b)=>(b.durationSeconds||0)-(a.durationSeconds||0)); break;
+        case "recent":   list.sort((a,b)=>{
+                           const ua = progressByID.get(a.id)?.updatedAt || "";
+                           const ub = progressByID.get(b.id)?.updatedAt || "";
+                           return ub.localeCompare(ua) || a.title.localeCompare(b.title);
+                         }); break;
+        default:         list.sort((a,b)=>a.title.localeCompare(b.title));
+      }
+      return list;
+    }
+
+    function cardHTML(item, opts = {}) {
+      const p = progressFor(item.id);
+      const watched = isWatched(p, item);
+      const pct = (() => {
+        if (!p || p.seconds <= 0) return 0;
+        const dur = p.duration || item.durationSeconds || 0;
+        return dur > 0 ? Math.min(100, p.seconds / dur * 100) : 0;
+      })();
+      const poster = item.posterURL
+        ? `<img class="poster" src="${api(item.posterURL)}" alt="" loading="lazy">`
+        : "";
+      const metaBits = [item.year || "", runtimeLabel(item)].filter(Boolean).join(" • ");
+      const badge = watched
+        ? `<span class="badge watched">WATCHED</span>`
+        : (pct > 0 ? `<span class="badge unwatched">${Math.round(100-pct)}% LEFT</span>` : "");
+      return `
+      <button class="card" data-id="${item.id}" onclick="openDetail('${item.id}')"
+              aria-label="${escapeHTML(item.title)}${metaBits ? ", " + metaBits : ""}">
+        <div class="frame">
+          ${poster}
+          <span class="play-glyph" aria-hidden="true">▶</span>
+          ${badge}
+          ${pct > 0 ? `<span class="bar"><i style="width:${pct}%"></i></span>` : ""}
+        </div>
+        <h3>${escapeHTML(opts.showTitle ? (item.showTitle || item.title) : item.title)}</h3>
+        <p class="meta">${escapeHTML(metaBits || kindLabel(item.kind))}</p>
+      </button>`;
+    }
+
+    function render() {
+      const list = visibleItems();
+      const continuing = items.filter(i =>
+        ["movie","tvShow","documentary"].includes(i.kind) &&
+        inProgress(progressFor(i.id), i))
+        .sort((a,b)=>(progressByID.get(b.id)?.updatedAt || "").localeCompare(
+                      progressByID.get(a.id)?.updatedAt || ""));
+
+      $("#continueRow").hidden = continuing.length === 0;
+      if (continuing.length) {
+        $("#continueGrid").innerHTML = continuing.map(i => cardHTML(i)).join("");
+      }
+
+      const grid = $("#grid");
+      if (list.length === 0) {
+        grid.className = "";
+        grid.innerHTML = `<div class="empty-state">No matches. Adjust filters or add media to your libraries.</div>`;
+        return;
+      }
+      grid.className = "grid";
+      grid.innerHTML = list.map(i => cardHTML(i, { showTitle:false })).join("");
+    }
+
+    let activeVideo = null;
+    function openDetail(id) {
+      const item = items.find(i => i.id === id);
+      if (!item) return;
+      const p = progressFor(id);
+      const playable = BROWSER_PLAYABLE.has((item.format || "").toLowerCase());
+      const resumeAt = p && p.seconds > 5 ? p.seconds : 0;
+
+      $("#detailTitle").textContent =
+        item.showTitle && item.seasonNumber != null
+          ? `${item.showTitle} — S${String(item.seasonNumber).padStart(2,"0")}E${String(item.episodeNumber ?? 0).padStart(2,"0")} · ${item.title}`
+          : item.title;
+
+      const playerHTML = playable
+        ? `<video id="player" controls preload="metadata" src="${api("/stream/" + item.id)}"></video>`
+        : `<div class="not-playable"><strong>.${(item.format||"?").toUpperCase()}</strong> can't play inline.
+             <a href="${api("/stream/" + item.id)}" target="_blank" rel="noopener">Open in a native player</a>.</div>`;
+
+      const tags = (item.tags || []).slice(0, 10).map(tg => `<span class="tag">${escapeHTML(tg)}</span>`).join("");
+      const summaryBits = [item.summary, item.subtitle].filter(Boolean)
+        .map(s => `<p class="summary">${escapeHTML(s)}</p>`).join("");
+
+      $("#detailBody").innerHTML = `
+        ${playerHTML}
+        <div class="meta-line">${[kindLabel(item.kind), item.year || "", runtimeLabel(item),
+          (item.probedHeight ? item.probedWidth + "×" + item.probedHeight : "")]
+          .filter(Boolean).join(" • ")}</div>
+        ${summaryBits}
+        ${tags ? `<div class="tagrow">${tags}</div>` : ""}
+        <div class="actions">
+          ${playable ? `<button class="primary" onclick="playFrom(${resumeAt})">${resumeAt ? "Resume at " + formatTime(resumeAt) : "Play"}</button>` : ""}
+          <a href="${api("/stream/" + item.id)}" target="_blank" rel="noopener">Open stream URL</a>
+        </div>`;
+
+      const dlg = $("#detail");
+      if (!dlg.open) dlg.showModal();
+      if (playable) attachPlayerHandlers(item, resumeAt);
+    }
+
+    function attachPlayerHandlers(item, resumeAt) {
+      const v = $("#player");
+      activeVideo = v;
+      v.addEventListener("loadedmetadata", () => {
+        if (resumeAt > 5 && resumeAt < Math.max((v.duration || 0) - 8, 0)) v.currentTime = resumeAt;
+      }, { once:true });
+      let last = 0;
+      const save = (force=false) => {
+        if (!v.duration || !Number.isFinite(v.currentTime)) return;
+        if (!force && Math.abs(v.currentTime - last) < 15) return;
+        last = v.currentTime;
+        fetch(api(`/api/progress/${item.id}`), {
+          method:"POST", headers:{"Content-Type":"application/json"},
+          body: JSON.stringify({ seconds:v.currentTime, duration:v.duration })
+        }).then(() => { progressByID.set(item.id, { itemID:item.id, seconds:v.currentTime, duration:v.duration }); })
+          .catch(()=>{});
+      };
+      v.addEventListener("timeupdate", () => save(false));
+      v.addEventListener("pause", () => save(true));
+      v.addEventListener("ended", () => save(true));
+    }
+
+    function playFrom(seconds) {
+      const v = $("#player");
+      if (!v) return;
+      if (seconds > 0) v.currentTime = seconds;
+      v.play();
+    }
+
+    function closeDetail() {
+      if (activeVideo) { activeVideo.pause(); activeVideo = null; }
+      $("#detail").close();
+      render(); // refresh badges/bars after watching
+    }
+    $("#detail").addEventListener("click", e => { if (e.target === $("#detail")) closeDetail(); });
+    document.addEventListener("keydown", e => { if (e.key === "Escape") closeDetail(); });
+
+    for (const [id, ev] of [["q","input"],["kind","change"],["watched","change"],["sort","change"]]) {
+      $(`#${id}`).addEventListener(ev, render);
+    }
+
+    fetch(api("/api/library")).then(r => r.json()).then(data => {
+      items = data.items ?? [];
+      (data.progress ?? []).forEach(pr => progressByID.set(pr.itemID, pr));
+      render();
+    }).catch(() => {
+      $("#grid").innerHTML = `<div class="empty-state">Could not load the library. Is the token valid?</div>`;
+    });
+  </script>
+</body>
+</html>
