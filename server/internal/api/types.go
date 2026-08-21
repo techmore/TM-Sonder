@@ -84,37 +84,37 @@ type PlaybackTrack struct {
 }
 
 type MediaItem struct {
-	ID                   string           `json:"id"`
-	Title                string           `json:"title"`
-	Subtitle             string           `json:"subtitle"`
-	Kind                 MediaKind        `json:"kind"`
-	Studio               string           `json:"studio"`
-	Year                 int              `json:"year"`
-	DurationSeconds      float64          `json:"durationSeconds"`
-	Format               MediaFormat      `json:"format"`
-	LibraryID            *string          `json:"libraryID"`
-	Tags                 []string         `json:"tags"`
-	Summary              string           `json:"summary"`
-	ProgressSeconds      float64          `json:"progressSeconds"`
-	ShowTitle            *string          `json:"showTitle"`
-	SeasonNumber         *int             `json:"seasonNumber"`
-	EpisodeNumber        *int             `json:"episodeNumber"`
-	MetadataIDSource     *string          `json:"metadataIDSource"`
-	MetadataID           *string          `json:"metadataID"`
-	Edition              *string          `json:"edition"`
-	SplitPart            *string          `json:"splitPart"`
-	IsPlaceholder        bool             `json:"isPlaceholder"`
-	PosterURL            *string          `json:"posterURL"`
-	BackdropURL          *string          `json:"backdropURL"`
-	EmbeddedAudioTracks    []PlaybackTrack  `json:"embeddedAudioTracks"`
-	EmbeddedSubtitleTracks []PlaybackTrack  `json:"embeddedSubtitleTracks"`
-	TrackProbeUpdatedAt    *time.Time       `json:"trackProbeUpdatedAt"`
-	ProbedWidth            *int             `json:"probedWidth"`
-	ProbedHeight           *int             `json:"probedHeight"`
-	ProbedCodec            *string          `json:"probedCodec"`
-	ProbedBitrate          *int             `json:"probedBitrate"`
-	BookValidation         *string          `json:"bookValidation"`
-	CoverSource            *string          `json:"coverSource"`
+	ID                     string          `json:"id"`
+	Title                  string          `json:"title"`
+	Subtitle               string          `json:"subtitle"`
+	Kind                   MediaKind       `json:"kind"`
+	Studio                 string          `json:"studio"`
+	Year                   int             `json:"year"`
+	DurationSeconds        float64         `json:"durationSeconds"`
+	Format                 MediaFormat     `json:"format"`
+	LibraryID              *string         `json:"libraryID"`
+	Tags                   []string        `json:"tags"`
+	Summary                string          `json:"summary"`
+	ProgressSeconds        float64         `json:"progressSeconds"`
+	ShowTitle              *string         `json:"showTitle"`
+	SeasonNumber           *int            `json:"seasonNumber"`
+	EpisodeNumber          *int            `json:"episodeNumber"`
+	MetadataIDSource       *string         `json:"metadataIDSource"`
+	MetadataID             *string         `json:"metadataID"`
+	Edition                *string         `json:"edition"`
+	SplitPart              *string         `json:"splitPart"`
+	IsPlaceholder          bool            `json:"isPlaceholder"`
+	PosterURL              *string         `json:"posterURL"`
+	BackdropURL            *string         `json:"backdropURL"`
+	EmbeddedAudioTracks    []PlaybackTrack `json:"embeddedAudioTracks"`
+	EmbeddedSubtitleTracks []PlaybackTrack `json:"embeddedSubtitleTracks"`
+	TrackProbeUpdatedAt    *time.Time      `json:"trackProbeUpdatedAt"`
+	ProbedWidth            *int            `json:"probedWidth"`
+	ProbedHeight           *int            `json:"probedHeight"`
+	ProbedCodec            *string         `json:"probedCodec"`
+	ProbedBitrate          *int            `json:"probedBitrate"`
+	BookValidation         *string         `json:"bookValidation"`
+	CoverSource            *string         `json:"coverSource"`
 
 	FilePath string `json:"-"`
 }
@@ -135,13 +135,13 @@ type ServerSettings struct {
 }
 
 type MediaDirectory struct {
-	ID                  string     `json:"id"`
-	Name                string     `json:"name"`
-	Kind                string     `json:"kind"`
-	LibraryID           string     `json:"libraryID"`
-	LastIndexedCount    int        `json:"lastIndexedCount"`
-	LastScannedFileCount int       `json:"lastScannedFileCount"`
-	LastScannedAt       *time.Time `json:"lastScannedAt"`
+	ID                   string     `json:"id"`
+	Name                 string     `json:"name"`
+	Kind                 string     `json:"kind"`
+	LibraryID            string     `json:"libraryID"`
+	LastIndexedCount     int        `json:"lastIndexedCount"`
+	LastScannedFileCount int        `json:"lastScannedFileCount"`
+	LastScannedAt        *time.Time `json:"lastScannedAt"`
 }
 
 type ActivityEvent struct {
@@ -163,23 +163,23 @@ type ThemeSnapshot struct {
 }
 
 type ProgressRecord struct {
-	ID               string     `json:"id"`
-	ItemID           string     `json:"itemID"`
-	Seconds          float64    `json:"seconds"`
-	Duration         float64    `json:"duration"`
-	UpdatedAt        time.Time  `json:"updatedAt"`
-	AudioTrackID     *string    `json:"audioTrackID,omitempty"`
-	SubtitleTrackID  *string    `json:"subtitleTrackID,omitempty"`
-	SubtitlesEnabled *bool      `json:"subtitlesEnabled,omitempty"`
+	ID               string    `json:"id"`
+	ItemID           string    `json:"itemID"`
+	Seconds          float64   `json:"seconds"`
+	Duration         float64   `json:"duration"`
+	UpdatedAt        time.Time `json:"updatedAt"`
+	AudioTrackID     *string   `json:"audioTrackID,omitempty"`
+	SubtitleTrackID  *string   `json:"subtitleTrackID,omitempty"`
+	SubtitlesEnabled *bool     `json:"subtitlesEnabled,omitempty"`
 }
 
 type LibraryResponse struct {
-	Items           []MediaItem       `json:"items"`
-	Progress        []ProgressRecord  `json:"progress"`
+	Items            []MediaItem      `json:"items"`
+	Progress         []ProgressRecord `json:"progress"`
 	MediaDirectories []MediaDirectory `json:"mediaDirectories"`
-	Activity        []ActivityEvent   `json:"activity"`
-	ServerSettings  *ServerSettings   `json:"serverSettings"`
-	Theme           *ThemeSnapshot    `json:"theme"`
+	Activity         []ActivityEvent  `json:"activity"`
+	ServerSettings   *ServerSettings  `json:"serverSettings"`
+	Theme            *ThemeSnapshot   `json:"theme"`
 }
 
 type PlaybackStateUpdate struct {
@@ -190,18 +190,27 @@ type PlaybackStateUpdate struct {
 	SubtitlesEnabled *bool   `json:"subtitlesEnabled,omitempty"`
 }
 
+// AudiobookChapter mirrors SonderAudiobookChapter: endSeconds is null for
+// open-ended chapters (e.g. the last one before duration is known).
+type AudiobookChapter struct {
+	Index        int      `json:"index"`
+	Title        string   `json:"title"`
+	StartSeconds float64  `json:"startSeconds"`
+	EndSeconds   *float64 `json:"endSeconds"`
+}
+
 type PlaybackSession struct {
-	ItemID           *string          `json:"itemID,omitempty"`
-	StreamURL        string           `json:"streamURL"`
-	Seconds          float64          `json:"seconds"`
-	Duration         float64          `json:"duration"`
-	Percent          float64          `json:"percent"`
-	UpdatedAt        *time.Time       `json:"updatedAt,omitempty"`
-	AudioTrackID     *string          `json:"audioTrackID,omitempty"`
-	SubtitleTrackID  *string          `json:"subtitleTrackID,omitempty"`
-	SubtitlesEnabled *bool            `json:"subtitlesEnabled,omitempty"`
-	AudioTracks      []PlaybackTrack  `json:"audioTracks"`
-	SubtitleTracks   []PlaybackTrack  `json:"subtitleTracks"`
+	ItemID           *string         `json:"itemID,omitempty"`
+	StreamURL        string          `json:"streamURL"`
+	Seconds          float64         `json:"seconds"`
+	Duration         float64         `json:"duration"`
+	Percent          float64         `json:"percent"`
+	UpdatedAt        *time.Time      `json:"updatedAt,omitempty"`
+	AudioTrackID     *string         `json:"audioTrackID,omitempty"`
+	SubtitleTrackID  *string         `json:"subtitleTrackID,omitempty"`
+	SubtitlesEnabled *bool           `json:"subtitlesEnabled,omitempty"`
+	AudioTracks      []PlaybackTrack `json:"audioTracks"`
+	SubtitleTracks   []PlaybackTrack `json:"subtitleTracks"`
 }
 
 type HealthResponse struct {
@@ -230,36 +239,36 @@ type DiscoveryCapabilities struct {
 }
 
 type DiscoveryEndpoints struct {
-	Health              string  `json:"health"`
-	Library             string  `json:"library"`
-	Audiobooks          *string `json:"audiobooks"`
-	AudiobookBrowser    *string `json:"audiobookBrowser"`
-	Discovery           string  `json:"discovery"`
-	Progress            string  `json:"progress"`
-	Playback            string  `json:"playback"`
+	Health               string  `json:"health"`
+	Library              string  `json:"library"`
+	Audiobooks           *string `json:"audiobooks"`
+	AudiobookBrowser     *string `json:"audiobookBrowser"`
+	Discovery            string  `json:"discovery"`
+	Progress             string  `json:"progress"`
+	Playback             string  `json:"playback"`
 	PlaybackTrackRefresh *string `json:"playbackTrackRefresh"`
-	RefreshTracks       *string `json:"refreshTracks"`
-	Stream              string  `json:"stream"`
-	Subtitles           *string `json:"subtitles"`
-	Poster              *string `json:"poster"`
-	Backdrop            *string `json:"backdrop"`
+	RefreshTracks        *string `json:"refreshTracks"`
+	Stream               string  `json:"stream"`
+	Subtitles            *string `json:"subtitles"`
+	Poster               *string `json:"poster"`
+	Backdrop             *string `json:"backdrop"`
 }
 
 type DiscoveryResponse struct {
-	App              string                 `json:"app"`
-	Name             string                 `json:"name"`
-	ServerID         string                 `json:"serverID"`
-	Version          string                 `json:"version"`
-	Build            string                 `json:"build"`
-	IsEnabled        bool                   `json:"isEnabled"`
-	AllowLAN         bool                   `json:"allowLAN"`
-	RequiresPairing  bool                   `json:"requiresPairing"`
-	Port             int                    `json:"port"`
-	LocalURL         string                 `json:"localURL"`
-	LanURL           *string                `json:"lanURL"`
-	DiscoveryMethods []string               `json:"discoveryMethods"`
-	TailscaleHint    string                 `json:"tailscaleHint"`
-	Capabilities     DiscoveryCapabilities  `json:"capabilities"`
-	Endpoints        DiscoveryEndpoints     `json:"endpoints"`
-	Theme            ThemeSnapshot          `json:"theme"`
+	App              string                `json:"app"`
+	Name             string                `json:"name"`
+	ServerID         string                `json:"serverID"`
+	Version          string                `json:"version"`
+	Build            string                `json:"build"`
+	IsEnabled        bool                  `json:"isEnabled"`
+	AllowLAN         bool                  `json:"allowLAN"`
+	RequiresPairing  bool                  `json:"requiresPairing"`
+	Port             int                   `json:"port"`
+	LocalURL         string                `json:"localURL"`
+	LanURL           *string               `json:"lanURL"`
+	DiscoveryMethods []string              `json:"discoveryMethods"`
+	TailscaleHint    string                `json:"tailscaleHint"`
+	Capabilities     DiscoveryCapabilities `json:"capabilities"`
+	Endpoints        DiscoveryEndpoints    `json:"endpoints"`
+	Theme            ThemeSnapshot         `json:"theme"`
 }
