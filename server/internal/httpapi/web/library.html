@@ -63,6 +63,7 @@
     }
     .badge.unwatched { background:var(--gold); color:#1c1408; }
     .badge.watched { background:rgba(20,24,16,.85); color:var(--muted); border:1px solid var(--line); }
+    .badge.copies { top:auto; bottom:12px; left:8px; background:rgba(11,14,9,.85); color:var(--accent); border:1px solid var(--line); }
     .card h3 { margin:9px 2px 2px; font-size:13.5px; font-weight:600; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
     .card p.meta { margin:0 2px; font-size:12px; color:var(--muted); white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
 
@@ -119,6 +120,19 @@
     button.ep-row .runtime { color:var(--muted); font-size:12px; font-variant-numeric:tabular-nums; }
     button.ep-row .epbar { position:relative; width:110px; height:4px; background:rgba(255,255,255,.18); border-radius:2px; overflow:hidden; }
     button.ep-row .epbar > i { display:block; height:100%; background:var(--gold); }
+    /* Edition picker rows inside the detail modal */
+    div.editions { margin:14px 0 4px; border:1px solid var(--line); border-radius:8px; overflow:hidden; }
+    div.editions h4 { margin:0; padding:9px 13px; font-size:12px; letter-spacing:.6px; text-transform:uppercase;
+      color:var(--muted); border-bottom:1px solid var(--line); background:var(--panel2); }
+    button.ed-row { display:grid; grid-template-columns:auto 1fr auto; gap:12px; align-items:center;
+      width:100%; text-align:left; background:transparent; border:0; border-top:1px solid rgba(52,65,40,.5);
+      color:var(--text); padding:10px 13px; cursor:pointer; }
+    button.ed-row:first-of-type { border-top:0; }
+    button.ed-row:hover { background:var(--panel2); }
+    button.ed-row.current { color:var(--accent); }
+    button.ed-row .edlabel { white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+    button.ed-row .edmeta { color:var(--muted); font-size:12px; font-variant-numeric:tabular-nums; white-space:nowrap; }
+    button.ed-row .edwatch { font-size:11px; font-weight:800; letter-spacing:.5px; color:var(--gold); }
     .backrow { padding:14px 22px 0; }
     button.back { background:var(--panel2); border:1px solid var(--line); color:var(--text);
       border-radius:8px; padding:8px 14px; cursor:pointer; }
@@ -280,16 +294,21 @@
       return formatTime(d);
     }
 
+    // Collapse same-title copies into one card per title, best copy first.
+    // Ranking prefers probed runtime > resolution > format browser-playability.
+    const FORMAT_RANK = { mp4:3, m4v:3, mov:3, webm:3, mkv:2, avi:1 };
+    function rankCopy(i) {
+      return ((i.durationSeconds || 0) > 0 ? 1e9 : 0)
+           + (i.probedHeight || 0) * 1e4
+           + (FORMAT_RANK[(i.format||"").toLowerCase()] || 0);
+    }
+    let dedupEnabled = true;
     function visibleItems() {
       const term = $("#q").value.trim().toLowerCase();
       const kindSel = $("#kind").value;
       const watchSel = $("#watched").value;
       let list = items.filter(i => !i.isPlaceholder);
       if (kindSel !== "all") list = list.filter(i => i.kind === kindSel);
-      if (watchSel !== "all") {
-        list = list.filter(i => watchSel === "watched" ? isWatched(progressFor(i.id), i)
-                                                       : !isWatched(progressFor(i.id), i));
-      }
       if (term) {
         list = list.filter(i =>
           [i.title, i.subtitle, i.showTitle, i.summary]
@@ -305,7 +324,41 @@
                          }); break;
         default:         list.sort((a,b)=>a.title.localeCompare(b.title));
       }
+      if (dedupEnabled) {
+        // Keep the best copy of each (kind,title); prefer a copy with watch progress.
+        const byKey = new Map();
+        for (const i of list) {
+          const key = i.kind + "\u0000" + (i.title || "").toLowerCase();
+          const prev = byKey.get(key);
+          if (!prev) { byKey.set(key, i); continue; }
+          const prevP = progressFor(prev.id), curP = progressFor(i.id);
+          const prevActive = inProgress(prevP, prev) || isWatched(prevP, prev);
+          const curActive = inProgress(curP, i) || isWatched(curP, i);
+          const better = curActive !== prevActive ? curActive
+                       : rankCopy(i) > rankCopy(prev);
+          if (better) byKey.set(key, i);
+        }
+        list = Array.from(byKey.values());
+      }
+      if (watchSel !== "all") {
+        list = list.filter(i => watchSel === "watched" ? isWatched(progressFor(i.id), i)
+                                                       : !isWatched(progressFor(i.id), i));
+      }
       return list;
+    }
+
+    // All copies of each collapsed title, for the edition picker.
+    function copiesOf(item) {
+      const key = item.kind + "\u0000" + (item.title || "").toLowerCase();
+      return items.filter(i => !i.isPlaceholder
+        && i.kind === item.kind
+        && (i.title || "").toLowerCase() === key.split("\u0000")[1])
+        .sort((a,b) => {
+          const pa = progressFor(a.id), pb = progressFor(b.id);
+          const aa = inProgress(pa,a)||isWatched(pa,a), ab = inProgress(pb,b)||isWatched(pb,b);
+          if (aa !== ab) return aa ? -1 : 1;
+          return rankCopy(b) - rankCopy(a);
+        });
     }
 
     function cardHTML(item, opts = {}) {
@@ -323,6 +376,8 @@
       const badge = watched
         ? `<span class="badge watched">WATCHED</span>`
         : (pct > 0 ? `<span class="badge unwatched">${Math.round(100-pct)}% LEFT</span>` : "");
+      const copies = opts.copyCount != null ? opts.copyCount : (dedupEnabled ? copiesOf(item).length : 1);
+      const copiesBadge = copies > 1 ? `<span class="badge copies">${copies} COPIES</span>` : "";
       return `
       <button class="card" data-id="${item.id}" onclick="openDetail('${item.id}')"
               aria-label="${escapeHTML(item.title)}${metaBits ? ", " + metaBits : ""}">
@@ -330,6 +385,7 @@
           ${poster}
           <span class="play-glyph" aria-hidden="true">▶</span>
           ${badge}
+          ${copiesBadge}
           ${pct > 0 ? `<span class="bar"><i style="width:${pct}%"></i></span>` : ""}
         </div>
         <h3>${escapeHTML(opts.showTitle ? (item.showTitle || item.title) : item.title)}</h3>
@@ -521,12 +577,46 @@
     function gotoPage(n) { currentPage = n; render(); window.scrollTo({ top:0 }); }
 
     let activeVideo = null;
-    function openDetail(id) {
+    function editionLabel(c) {
+      const bits = [c.format ? "." + String(c.format).toUpperCase() : ""];
+      if (c.probedHeight) bits.push(c.probedWidth + "×" + c.probedHeight);
+      if (c.durationSeconds) bits.push(formatTime(c.durationSeconds));
+      if (c.edition) bits.push(String(c.edition));
+      return bits.filter(Boolean).join(" · ");
+    }
+    function editionsHTML(item) {
+      const copies = copiesOf(item);
+      if (copies.length <= 1) return "";
+      return `
+      <div class="editions">
+        <h4>${copies.length} copies — pick one</h4>
+        ${copies.map(c => {
+          const cp = progressFor(c.id);
+          const cw = isWatched(cp, c);
+          return `
+          <button class="ed-row ${c.id === item.id ? "current" : ""}" onclick="switchCopy('${c.id}')"
+                  aria-label="Play copy ${editionLabel(c)}">
+            <span class="edwatch">${cw ? "WATCHED" : (cp && cp.seconds > 5 ? "RESUME" : "")}</span>
+            <span class="edlabel">${c.id === item.id ? "▶ " : ""}${escapeHTML(editionLabel(c))}</span>
+            <span class="edmeta">${c.id === item.id ? "shown above" : "switch"}</span>
+          </button>`;
+        }).join("")}
+      </div>`;
+    }
+
+    function switchCopy(id) {
+      const wasOpen = $("#detail").open;
+      openDetail(id, wasOpen);
+    }
+
+    function openDetail(id, keepVideo) {
       const item = items.find(i => i.id === id);
       if (!item) return;
       const p = progressFor(id);
       const playable = BROWSER_PLAYABLE.has((item.format || "").toLowerCase());
       const resumeAt = p && p.seconds > 5 ? p.seconds : 0;
+
+      if (activeVideo && !keepVideo) { activeVideo.pause(); activeVideo = null; }
 
       $("#detailTitle").textContent =
         item.showTitle && item.seasonNumber != null
@@ -549,6 +639,7 @@
           .filter(Boolean).join(" • ")}</div>
         ${summaryBits}
         ${tags ? `<div class="tagrow">${tags}</div>` : ""}
+        ${editionsHTML(item)}
         <div class="actions">
           ${playable ? `<button class="primary" onclick="playFrom(${resumeAt})">${resumeAt ? "Resume at " + formatTime(resumeAt) : "Play"}</button>` : ""}
           <a href="${api("/stream/" + item.id)}" target="_blank" rel="noopener">Open stream URL</a>
