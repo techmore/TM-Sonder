@@ -20,6 +20,9 @@ const (
 var validKinds = map[string]bool{
 	"movie": true, "tvShow": true, "documentary": true,
 	"audiobook": true, "ebook": true, "all": true,
+	// "plex" is a meta-kind: expanded into child libraries by
+	// ExpandPlexLibraries based on Plex-standard subfolder names.
+	"plex": true,
 }
 
 var validHWAccel = map[string]bool{
@@ -108,6 +111,13 @@ func Load(path string) (*Config, error) {
 		}
 	}
 	cfg.applyEnv()
+	// Resolve "plex" meta-libraries into per-kind child libraries before
+	// validation so downstream code only ever sees concrete kinds.
+	libs, err := ExpandPlexLibraries(cfg.Libraries)
+	if err != nil {
+		return nil, err
+	}
+	cfg.Libraries = libs
 	if err := cfg.validate(); err != nil {
 		return nil, err
 	}

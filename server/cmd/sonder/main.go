@@ -21,7 +21,6 @@ import (
 	"tm-sonder/server/internal/api"
 	"tm-sonder/server/internal/artwork"
 	"tm-sonder/server/internal/config"
-	"tm-sonder/server/internal/enrich"
 	"tm-sonder/server/internal/httpapi"
 	"tm-sonder/server/internal/library"
 	"tm-sonder/server/internal/probe"
@@ -138,58 +137,7 @@ func run(configFlag, plexDB string, enrichPass bool) error {
 
 	// One-time metadata enrichment pass.
 	if enrichPass {
-		enricher := enrich.New(filepath.Join(cfg.DataDir, "metadata-cache"))
-		enriched := 0
-		for _, it := range store.InternalItems() {
-			if it.Summary != "" {
-				continue
-			}
-			in := enrich.Input{
-				Title:            it.Title,
-				Kind:             string(it.Kind),
-				Year:             it.Year,
-				Studio:           it.Studio,
-				Summary:          it.Summary,
-				MetadataIDSource: deref(it.MetadataIDSource),
-				MetadataID:       deref(it.MetadataID),
-			}
-			if it.ShowTitle != nil {
-				in.ShowTitle = *it.ShowTitle
-			}
-			if it.SeasonNumber != nil && it.EpisodeNumber != nil {
-				in.Season, in.Episode = *it.SeasonNumber, *it.EpisodeNumber
-			}
-			result, err := enricher.Enrich(context.Background(), in)
-			if err != nil || result == nil || result.Summary == "" && len(result.Tags) == 0 {
-				continue
-			}
-			fresh, ok := store.Get(it.ID)
-			if !ok {
-				continue
-			}
-			if result.Summary != "" && fresh.Summary == "" {
-				fresh.Summary = result.Summary
-			}
-			if result.PosterPath != "" && fresh.PosterPath == "" {
-				fresh.PosterPath = result.PosterPath
-				u := "/artwork/poster/" + fresh.ID
-				fresh.PosterURL = &u
-			}
-			for _, tag := range result.Tags {
-				dup := false
-				for _, existing := range fresh.Tags {
-					if strings.EqualFold(existing, tag) {
-						dup = true
-						break
-					}
-				}
-				if !dup {
-					fresh.Tags = append(fresh.Tags, tag)
-				}
-			}
-			store.Upsert(fresh)
-			enriched++
-		}
+		enriched := httpapi.RunEnrichmentPass(logger, store, filepath.Join(cfg.DataDir, "metadata-cache"))
 		logger.Printf("enrichment pass: updated %d item(s)", enriched)
 		if err := store.Flush(snapshotPath); err != nil {
 			logger.Printf("post-enrich snapshot save failed: %v", err)
@@ -221,6 +169,18 @@ func run(configFlag, plexDB string, enrichPass bool) error {
 
 	srv := httpapi.New(cfg, store, scanner, tm)
 	srv.SetTrackRefresher(scanner)
+	srv.SetConfigPath(path)
+	if _, err := lookPath(cfg.FFprobePath); err == nil {
+		srv.SetChapterProvider(&chapterSource{store: store, ffprobe: cfg.FFprobePath})
+	}
+	// Populate the /api/library mediaDirectories table from config.
+	dirs := make([]api.MediaDirectory, 0, len(cfg.Libraries))
+	for _, l := range cfg.Libraries {
+		dirs = append(dirs, api.MediaDirectory{ID: l.ID, Name: l.Name, Kind: l.Kind, LibraryID: l.ID})
+	}
+	if len(dirs) > 0 {
+		store.SetDirectories(dirs)
+	}
 	if _, err := lookPath(cfg.FFprobePath); err == nil {
 		srv.SetChapterProvider(&chapterSource{store: store, ffprobe: cfg.FFprobePath})
 	}
@@ -348,7 +308,7 @@ func (c *chapterSource) ChaptersFor(itemID string) ([]api.AudiobookChapter, erro
 	return chapters, nil
 }
 
-// generateToken returns a 128-bit hex pairing token.
+// generateToken returns a 128-bit hex pairing token.// generateToken returns a 128-bit hex pairing token.
 func generateToken() (string, error) {
 	b := make([]byte, 16)
 	if _, err := rand.Read(b); err != nil {

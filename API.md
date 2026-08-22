@@ -258,6 +258,30 @@ For a Japanese-audio, English-subtitle preference, the client should choose the 
 
 Audiobook catalog items also omit host filesystem paths.
 
+## Plex-style library root (`kind: "plex"`)
+
+A library entry with kind `plex` is a **meta-library**: instead of being
+scanned itself, it is expanded at load time (and on settings updates) into one
+child library per recognized Plex-standard subfolder:
+
+| Subfolder name (case/plural tolerant) | Expanded kind |
+| --- | --- |
+| Movies / Movie / Films | `movie` |
+| TV Shows / TV / Shows | `tvShow` |
+| Documentaries | `documentary` |
+| Audiobooks | `audiobook` |
+| Ebooks / Books | `ebook` |
+
+Unrecognized child folders are ignored, so metadata caches and extras never
+get misclassified. Child IDs are deterministic (`plex-<kind>-<rootname>`) so
+restarts keep library and item identity stable. If no standard folders are
+found the server refuses to start (config) or rejects the update (settings)
+with a clear error. Example:
+
+```json
+{ "id": "plex", "name": "Plex", "path": "/Volumes/NAS/plex", "kind": "plex" }
+```
+
 ## Artwork
 
 | Method | Path | Purpose |

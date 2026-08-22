@@ -2,6 +2,7 @@ package library
 
 import (
 	"context"
+	"errors"
 	"io/fs"
 	"os"
 	"path/filepath"
@@ -240,6 +241,7 @@ func (sc *Scanner) probePending(jobs []probeJob) {
 						it.PosterPath = p
 						u := "/artwork/poster/" + it.ID
 						it.PosterURL = &u
+						it.PosterSource = "thumbnail"
 					}
 				}
 				sc.store.Upsert(it)
@@ -283,10 +285,22 @@ func (sc *Scanner) scanLibraryInto(lib config.Library, keep map[string]bool, pen
 	if !info.IsDir() {
 		return res, filepath.SkipDir
 	}
+	// Resolve a symlinked library root to its target: WalkDir Lstats the
+	// root and would otherwise treat the link itself as a plain file and
+	// never descend into the library.
+	if resolved, rerr := filepath.EvalSymlinks(root); rerr == nil {
+		root = resolved
+	}
 
 	libID := lib.ID
 	err = filepath.WalkDir(root, func(path string, d fs.DirEntry, err error) error {
 		if err != nil {
+			// NAS roots routinely contain permission-restricted directories
+			// (#recycle, backups, root-only shares). Skip them rather than
+			// aborting the whole library walk.
+			if errors.Is(err, fs.ErrPermission) {
+				return filepath.SkipDir
+			}
 			return err
 		}
 		name := d.Name()
@@ -318,15 +332,26 @@ func (sc *Scanner) scanLibraryInto(lib config.Library, keep map[string]bool, pen
 		}
 
 		existing, found := sc.store.Get(id)
-		// Self-healing posters: an unchanged file still gets a probe job when
+		// Self-healing artwork: an unchanged file still gets a probe job when
 		// it has never been probed and thumbnail generation could give it a
-		// poster (videos without local artwork). Files already probed stay
-		// cached; genuinely unchanged+probed files are skipped entirely.
-		unchanged := found && existing.SizeBytes == st.Size() && existing.ModTime.Equal(st.ModTime()) &&
+		// poster, or when Plex-style local artwork appeared since last scan.
+		// Items also rebuild when their library assignment went stale (e.g.
+		// the library table was edited between scans). Everything else
+		// unchanged is skipped entirely.
+		libStale := found && (existing.LibraryID == nil || *existing.LibraryID != lib.ID)
+		unchanged := found && !libStale &&
+			existing.SizeBytes == st.Size() && existing.ModTime.Equal(st.ModTime()) &&
 			len(existing.SidecarPaths) == countSidecars(path, st)
 		wantsFirstProbe := unchanged && sc.thumbFn != nil &&
 			existing.PosterPath == "" && existing.TrackProbeUpdatedAt == nil
-		if unchanged && !wantsFirstProbe {
+		newLocalArt := false
+		if unchanged && !wantsFirstProbe && existing.PosterPath == "" {
+			b := strings.TrimSuffix(filepath.Base(path), filepath.Ext(path))
+			if firstExisting(filepath.Dir(path), filepath.Dir(filepath.Dir(path)), artworkPosterNames, b) != "" {
+				newLocalArt = true
+			}
+		}
+		if unchanged && !wantsFirstProbe && !newLocalArt {
 			res.Skipped++
 			return nil
 		}
@@ -450,6 +475,7 @@ func (sc *Scanner) buildItem(path, id string, st os.FileInfo, format api.MediaFo
 		item.PosterPath = p
 		u := "/artwork/poster/" + id
 		item.PosterURL = &u
+		item.PosterSource = "local"
 	}
 	if b := firstExisting(filepath.Dir(path), parent, artworkBackdropNames, base); b != "" {
 		item.BackdropPath = b
@@ -524,7 +550,10 @@ func countSidecars(mediaPath string, _ os.FileInfo) int {
 // firstExisting finds the first present artwork file in folder or parent.
 func firstExisting(folder, parent string, names []string, base string) string {
 	candidates := append([]string{}, names...)
-	candidates = append(candidates, base+".jpg", base+".png")
+	candidates = append(candidates,
+		base+".jpg", base+".png",
+		base+"-poster.jpg", base+"-poster.png",
+	)
 	for _, dir := range []string{folder, parent} {
 		for _, n := range candidates {
 			p := filepath.Join(dir, n)

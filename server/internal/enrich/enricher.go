@@ -16,6 +16,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -41,11 +42,17 @@ type Enrichment struct {
 	PosterPath   string   `json:"posterPath,omitempty"`
 	BackdropPath string   `json:"backdropPath,omitempty"`
 	Tags         []string `json:"tags"`
+	Provider     string   `json:"provider,omitempty"` // wikipedia|audnexus|open-library
 }
 
 type Enricher struct {
 	CacheRoot string
 	Client    *http.Client
+	// Pacing spaces provider requests out; zero defaults to 200ms.
+	Pacing time.Duration
+
+	rateMu      sync.Mutex
+	nextAllowed time.Time
 }
 
 func New(cacheRoot string) *Enricher {
@@ -84,7 +91,7 @@ func (e *Enricher) Enrich(ctx context.Context, in Input) (*Enrichment, error) {
 	case "ebook":
 		result, err = e.openLibraryLookup(ctx, in, cacheJSON, cachePoster)
 	default:
-		result, err = e.wikipediaSearch(ctx, query, cacheJSON, cachePoster, cacheBackdrop)
+		result, err = e.wikipediaSearch(ctx, query, in.Title, cacheJSON, cachePoster, cacheBackdrop)
 	}
 	if err != nil || result == nil {
 		return result, err
@@ -118,9 +125,9 @@ func makeQuery(in Input) string {
 	}
 	switch in.Kind {
 	case "movie":
-		return join(in.Title, in.Edition, year, "film", "Wikipedia")
+		return join(in.Title, in.Edition, year, "film")
 	case "documentary":
-		return join(in.Title, in.Edition, year, "documentary", "Wikipedia")
+		return join(in.Title, in.Edition, year, "documentary")
 	case "tvShow":
 		show := in.ShowTitle
 		if show == "" {
@@ -128,9 +135,9 @@ func makeQuery(in Input) string {
 		}
 		if in.Season > 0 && in.Episode > 0 {
 			code := fmt.Sprintf("S%02dE%02d", in.Season, in.Episode)
-			return join(show, code, in.Title, "episode", "Wikipedia")
+			return join(show, code, in.Title, "episode")
 		}
-		return join(show, "television series", "Wikipedia")
+		return join(show, "television series")
 	case "ebook":
 		return join(in.Title, in.Edition, in.Studio, year, "book", "Wikipedia")
 	case "audiobook":
@@ -143,20 +150,73 @@ func makeQuery(in Input) string {
 // --- HTTP helpers ---
 
 func (e *Enricher) fetch(ctx context.Context, rawURL string) ([]byte, error) {
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, rawURL, nil)
-	if err != nil {
+	// Politeness: global pacing plus bounded retries on throttle/server
+	// errors, so large library passes don't hammer the providers.
+	if err := e.throttle(ctx); err != nil {
 		return nil, err
 	}
-	req.Header.Set("User-Agent", "TM-Sonder/1.0 (metadata enricher)")
-	resp, err := e.Client.Do(req)
-	if err != nil {
-		return nil, err
+	var lastErr error
+	for attempt := 0; attempt < 3; attempt++ {
+		if attempt > 0 {
+			select {
+			case <-ctx.Done():
+				return nil, ctx.Err()
+			case <-time.After(time.Duration(attempt) * 2 * time.Second):
+			}
+		}
+		req, err := http.NewRequestWithContext(ctx, http.MethodGet, rawURL, nil)
+		if err != nil {
+			return nil, err
+		}
+		req.Header.Set("User-Agent", "TM-Sonder/1.0 (metadata enricher)")
+		resp, err := e.Client.Do(req)
+		if err != nil {
+			lastErr = err
+			continue
+		}
+		switch {
+		case resp.StatusCode == http.StatusTooManyRequests || resp.StatusCode >= 500:
+			if ra := resp.Header.Get("Retry-After"); ra != "" {
+				if secs, perr := strconv.Atoi(ra); perr == nil && secs > 0 && secs < 30 {
+					time.Sleep(time.Duration(secs) * time.Second)
+				}
+			}
+			resp.Body.Close()
+			lastErr = fmt.Errorf("%s -> %d", hostOf(rawURL), resp.StatusCode)
+			continue
+		case resp.StatusCode >= 400:
+			resp.Body.Close()
+			return nil, fmt.Errorf("enrich: %s -> %d", hostOf(rawURL), resp.StatusCode)
+		default:
+			out, rerr := io.ReadAll(io.LimitReader(resp.Body, 8<<20))
+			resp.Body.Close()
+			return out, rerr
+		}
 	}
-	defer resp.Body.Close()
-	if resp.StatusCode >= 400 {
-		return nil, fmt.Errorf("enrich: %s -> %d", hostOf(rawURL), resp.StatusCode)
+	return nil, lastErr
+}
+
+// throttle spaces provider requests ~200ms apart across all workers.
+func (e *Enricher) throttle(ctx context.Context) error {
+	interval := e.Pacing
+	if interval <= 0 {
+		interval = 200 * time.Millisecond
 	}
-	return io.ReadAll(io.LimitReader(resp.Body, 8<<20))
+	e.rateMu.Lock()
+	wait := e.nextAllowed.Sub(time.Now())
+	e.nextAllowed = e.nextAllowed.Add(interval)
+	e.rateMu.Unlock()
+	if wait <= 0 {
+		return nil
+	}
+	t := time.NewTimer(wait)
+	defer t.Stop()
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-t.C:
+		return nil
+	}
 }
 
 func (e *Enricher) downloadTo(ctx context.Context, rawURL, dest string) {

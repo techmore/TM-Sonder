@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -23,10 +24,10 @@ func TestMakeQuery(t *testing.T) {
 		in   Input
 		want string
 	}{
-		{"movie", Input{Title: "Arrival", Kind: "movie", Year: 2016}, "Arrival 2016 film Wikipedia"},
+		{"movie", Input{Title: "Arrival", Kind: "movie", Year: 2016}, "Arrival 2016 film"},
 		{"episode", Input{Title: "Meeting", Kind: "tvShow", ShowTitle: "Lost", Season: 4, Episode: 8},
-			"Lost S04E08 Meeting episode Wikipedia"},
-		{"series", Input{Title: "x", Kind: "tvShow", ShowTitle: "Lost"}, "Lost television series Wikipedia"},
+			"Lost S04E08 Meeting episode"},
+		{"series", Input{Title: "x", Kind: "tvShow", ShowTitle: "Lost"}, "Lost television series"},
 	}
 	for _, c := range cases {
 		if got := makeQuery(c.in); got != c.want {
@@ -57,43 +58,82 @@ func TestEnrichCacheHitAvoidsNetwork(t *testing.T) {
 }
 
 func TestWikipediaFallbackWithMock(t *testing.T) {
-	var wikiHits int
+	var apiHits int
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path == "/" {
-			wikiHits++
+		switch {
+		case strings.HasPrefix(r.URL.Path, "/page/summary/"):
+			w.Write([]byte(`{"extract":"An extract.","description":"film","thumbnail":{"source":"http://` + r.Host + `/thumb.jpg"},"originalimage":{"source":"http://` + r.Host + `/orig.jpg"}}`))
+		case strings.HasPrefix(r.URL.Path, "/wiki/"):
+			// Real-world infobox markup: protocol-relative src, HTML
+			// entities, utm tracking params.
+			w.Write([]byte(`<table class="infobox hproduct"><tbody><tr><td><img resource="https://en.wikipedia.org/wiki/File:Some_Film_poster.jpg" src="//upload.wikimedia.org/wikipedia/en/e/e7/Some_Film_poster.jpg?utm_source=en.wikipedia.org&amp;utm_campaign=parser&amp;utm_content=thumbnail_unscaled" decoding="async" alt="poster" data-file-width="220" data-file-height="328" class="mw-file-element"></td></tr></tbody></table>`))
+		default:
+			apiHits++
+			w.Write([]byte(`{"query":{"pages":{"12345":{"title":"Some Film"}}}}`))
 		}
-		w.Write([]byte(`{"query":{"pages":{"12345":{"extract":"An extract.","description":"film","categories":[{"title":"Category:Science fiction"}],"thumbnail":{"source":"http://` + r.Host + `/thumb.jpg"}}}}}`))
 	}))
 	defer ts.Close()
-	ts2 := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Write([]byte("fakejpeg"))
-	}))
-	defer ts2.Close()
 
-	savedWiki, savedCovers := wikiBaseURL, coversBaseURL
+	savedWiki, savedREST := wikiBaseURL, wikiRESTBaseURL
+	savedUpload, savedCovers := wikiUploadBaseURL, coversBaseURL
 	wikiBaseURL = ts.URL
-	coversBaseURL = ts2.URL // image downloads land on a stub too
-	defer func() { wikiBaseURL, coversBaseURL = savedWiki, savedCovers }()
+	wikiRESTBaseURL = ts.URL
+	wikiUploadBaseURL = ts.URL // scraped image URLs land on the stub too
+	coversBaseURL = ts.URL
+	defer func() {
+		wikiBaseURL, wikiRESTBaseURL = savedWiki, savedREST
+		wikiUploadBaseURL, coversBaseURL = savedUpload, savedCovers
+	}()
 
 	e := New(t.TempDir())
 	in := Input{Title: "Some Film", Kind: "movie", Year: 2020}
 	got, err := e.Enrich(context.Background(), in)
-	if err != nil || !wikiCalled(t, &wikiHits) {
-		t.Fatalf("enrich err=%v hits=%d", err, wikiHits)
+	if err != nil || apiHits == 0 {
+		t.Fatalf("enrich err=%v hits=%d", err, apiHits)
 	}
-	if got.Summary != "An extract." || len(got.Tags) != 1 || got.Tags[0] != "science fiction" {
+	if got.Summary != "An extract." || got.Provider != "wikipedia" || got.PosterPath == "" {
 		t.Errorf("wiki payload wrong: %+v", got)
+	}
+	if st, ferr := os.Stat(got.PosterPath); ferr != nil || st.Size() == 0 {
+		t.Errorf("scraped infobox poster not downloaded: %v", ferr)
 	}
 
 	got2, _ := e.Enrich(context.Background(), in)
-	if got2.Summary != got.Summary || wikiHits != 1 {
-		t.Errorf("second call hit network (hits=%d)", wikiHits)
+	if got2.Summary != got.Summary {
+		t.Errorf("cached summary mismatch: %+v", got2)
+	}
+	if apiHits != 3 { // search + poster fetch + backdrop fetch, call one only
+		t.Errorf("second call made new requests (hits=%d)", apiHits)
 	}
 }
 
-func wikiCalled(t *testing.T, hits *int) bool {
-	t.Helper()
-	return *hits > 0
+func TestWikipediaRejectsImplausibleMatch(t *testing.T) {
+	var summaryHits int
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if strings.HasPrefix(r.URL.Path, "/page/summary/") {
+			summaryHits++
+			return
+		}
+		// Search "matches" an unrelated page.
+		w.Write([]byte(`{"query":{"pages":{"999":{"title":"Tomato"}}}}`))
+	}))
+	defer ts.Close()
+
+	savedWiki, savedREST := wikiBaseURL, wikiRESTBaseURL
+	wikiBaseURL = ts.URL
+	wikiRESTBaseURL = ts.URL
+	defer func() { wikiBaseURL, wikiRESTBaseURL = savedWiki, savedREST }()
+
+	e := New(t.TempDir())
+	got, _ := e.Enrich(context.Background(), Input{
+		Title: "20251107 stephen sells out", Kind: "movie", Year: 2025,
+	})
+	if got != nil {
+		t.Errorf("implausible match should return nothing, got %+v", got)
+	}
+	if summaryHits != 0 {
+		t.Error("summary endpoint should never be called for rejected matches")
+	}
 }
 
 func TestAudnexusLookupWithMock(t *testing.T) {

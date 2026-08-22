@@ -145,6 +145,37 @@ DONE
         watched/unwatched badges + filter, sort (title/year/duration/recently
         watched), real field search, year•runtime meta lines, aria labels,
         Esc/backdrop close; ?token= propagation for LAN browsing
+    [x] Plex-compliant artwork installation (library/plex_art.go): official
+        posters/fanart are copied into media folders using Plex local-assets
+        naming — dedicated folder "poster.jpg"/"fanart.jpg", shared-folder
+        sidecars "<name>-poster.jpg", TV show-level "poster.jpg" (season
+        dirs resolved to show root); existing art is never overwritten;
+        scanner discovers the sidecar variants and self-heals items whose
+        poster appeared after first scan; live-verified on desktop library
+    [x] Settings exposure (httpapi/settings.go + web UI settings dialog):
+        GET/PUT/PATCH /api/settings (allowLAN, theme, full library table with
+        per-library item counts), GET /api/settings/browse (server-side
+        directory navigator: starting points Home/Volumes/root, breadcrumbs,
+        dirs-only listing), POST /api/settings/rescan and
+        /api/settings/enrich; pairing token visible to loopback peers only;
+        PUT persists atomically back to the startup config file, preserves
+        library IDs by path, mirrors the auto-token policy; scanner rebuilds
+        items whose library assignment went stale; NAS workflow = mount share
+        under /Volumes -> browse to it in UI -> add library -> auto-rescan ->
+        enrich via API; live-verified adding a simulated NAS library
+        end-to-end (browse -> add -> rescan -> stream Range -> enrich ->
+        Plex sidecar posters written)
+    [x] sonder-audit CLI (cmd/sonder-audit): audits catalog for movies/TV
+        missing official art; two modes — live -api <base> (dry-run report)
+        and -snapshot with -apply write-back + Plex install; kind scopes
+        movie/tvShow/all-media, limit, per-item timeout; opencode skill at
+        .opencode/skill/sonder-poster-audit/SKILL.md documents the workflow;
+        live sweep of NAS movies: 400 audited, numeric-title false positives
+        fixed (containment guard now requires length>=3 with letters);
+        settings UI gains pagination (200 cards/page) for 80k-item catalogs
+    [x] Provider politeness (internal/enrich): global 200ms request pacing +
+        retry-with-backoff on 429/5xx honoring Retry-After — fixes silent nil
+        results when bursts triggered Wikimedia throttling
     [x] Poster pipeline (internal/artwork): ffmpeg thumbnail generation at
         scan time for videos without local artwork (frame at 10% duration,
         clamped 2-180s, 480px wide, cached by item ID, idempotent); scanner
@@ -152,10 +183,15 @@ DONE
         with private max-age=86400; verified live — all 30 videos in the
         desktop test library got posters, audio-only items correctly none
     [x] Metadata enrichment (internal/enrich): Audnexus (audiobooks by ASIN),
-        Open Library exact-title ebook matches, Wikipedia fallback for
-        film/TV/docs; SHA256-keyed on-disk cache; keyless public APIs so no
-        provider keys needed; -enrich flag fills summaries/tags/posters then
-        exits; live Wikipedia smoke test verified ("Jurassic Park" enriched)
+        Open Library exact-title ebook matches, Wikipedia via two-step
+        search->REST-summary flow (action-API pageimages hides non-free film
+        posters; REST /page/summary returns them); title-containment guard
+        rejects implausible matches; SHA256-keyed on-disk cache; keyless;
+        poster provenance on Item (local > wikipedia/audnexus/open-library >
+        thumbnail) so official covers override frame-grabs but never local
+        art; -enrich flag runs 3-worker pass filling summaries/tags/posters/
+        backdrops; live-verified: "Jurassic Park" got the real poster,
+        backdrop, and summary; garbage titles correctly match nothing
     [x] API.md updated: Go server noted as reference implementation;
         /stream?transcode=1&mode&ss&sub documented
 
@@ -167,6 +203,23 @@ REMAINING WORK
 
 [ ] Existing iOS client pairs, browses, plays mp4 direct, plays mkv via
     transcode, resumes progress after kill+relaunch   <- needs a device run
+
+INTEROP VERIFIED HEADLESSLY (2026-08-22)
+----------------------------------------
+The iOS client's full wire contract (SonderClientAPI.swift) exercised live
+against the Go server on :8798 with a generated test library:
+    /api/health + /api/discovery shapes (allowLAN, requiresPairing, theme,
+    capabilities, endpoints map) parse exactly as the client expects;
+    /api/library item fields incl. posterURL and progressSeconds;
+    /stream direct 200 video/mp4 + Range -> 206 with correct content-range;
+    /artwork/poster 200 image/jpeg; POST /api/progress {seconds,duration}
+    (SonderProgressUpdate shape) round-trips via GET /api/playback and is
+    reflected in /api/library; token enforced from the LAN address (401 no/
+    bad token, 200 good) while loopback stays open; _tmsonder._tcp Bonjour
+    advertisement verified via dns-sd; mkv streams directly as
+    video/x-matroska and ?transcode=1 serves video/mp4; progress survives
+    server kill+relaunch (resume works). Remaining gap is only the physical
+    device run — the wire protocol itself is proven compatible.
 
 MIGRATION NOTES (Swift library.json -> Go snapshot)
 ---------------------------------------------------

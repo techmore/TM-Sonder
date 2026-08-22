@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/url"
+	"os"
 	"strings"
 	"unicode"
 )
@@ -26,12 +27,92 @@ type audnexusBook struct {
 	} `json:"narrators"`
 }
 
+// wikiInfoboxImage fetches the rendered article page and extracts the first
+// image inside the infobox table — for films that is the release poster at
+// native resolution. Returns "" when the page has no usable image.
+func (e *Enricher) wikiInfoboxImage(ctx context.Context, pageTitle string) string {
+	pageURL := wikiBaseURL + "/wiki/" + url.PathEscape(strings.ReplaceAll(pageTitle, " ", "_"))
+	data, err := e.fetch(ctx, pageURL)
+	if err != nil {
+		return ""
+	}
+	html := string(data)
+
+	infobox := strings.Index(html, `<table class="infobox`)
+	if infobox < 0 {
+		infobox = strings.Index(html, `class="infobox`) // mobile/alternate markup
+	}
+	if infobox < 0 {
+		return ""
+	}
+	window := html[infobox:]
+	if len(window) > 24<<10 {
+		window = window[:24<<10] // infobox images appear well within this
+	}
+
+	imgIdx := strings.Index(window, "<img ")
+	for imgIdx >= 0 {
+		src := extractHTMLAttr(window[imgIdx:], "src")
+		if u := normalizeWikiImageURL(src); u != "" {
+			return u
+		}
+		window = window[imgIdx+5:]
+		imgIdx = strings.Index(window, "<img ")
+	}
+	return ""
+}
+
+func extractHTMLAttr(fragment, attr string) string {
+	idx := strings.Index(fragment, attr+`="`)
+	if idx < 0 {
+		return ""
+	}
+	rest := fragment[idx+len(attr)+2:]
+	end := strings.Index(rest, `"`)
+	if end < 0 {
+		return ""
+	}
+	return rest[:end]
+}
+
+// normalizeWikiImageURL upgrades protocol-relative/thumb URLs to a direct
+// https upload.wikimedia.org URL and strips tracking params.
+func normalizeWikiImageURL(src string) string {
+	if src == "" {
+		return ""
+	}
+	src = strings.NewReplacer("&amp;", "&", "&#38;", "&").Replace(src)
+	switch {
+	case strings.HasPrefix(src, "//upload.wikimedia.org/"):
+		src = wikiUploadBaseURL + strings.TrimPrefix(src, "//upload.wikimedia.org")
+	case strings.Contains(src, "/wikipedia/") && !strings.HasPrefix(src, "http"):
+		i := strings.Index(src, "/wikipedia/")
+		src = wikiUploadBaseURL + src[i:]
+	case strings.HasPrefix(src, "http://upload.wikimedia.org/"):
+		src = wikiUploadBaseURL + strings.TrimPrefix(src, "http://upload.wikimedia.org")
+	default:
+		return "" // only accept Wikimedia-hosted images
+	}
+	if i := strings.Index(src, "?"); i >= 0 {
+		src = src[:i]
+	}
+	return src
+}
+
+func debugStage(format string, args ...any) {
+	if os.Getenv("SONDER_ENRICH_DEBUG") == "1" {
+		fmt.Fprintf(os.Stderr, "[wiki] "+format+"\n", args...)
+	}
+}
+
 // Base URLs are vars so tests can point them at mock servers.
 var (
-	wikiBaseURL     = "https://en.wikipedia.org/w/api.php"
-	audnexusBaseURL = "https://api.audnex.us"
-	openLibBaseURL  = "https://openlibrary.org"
-	coversBaseURL   = "https://covers.openlibrary.org"
+	wikiBaseURL       = "https://en.wikipedia.org/w/api.php"
+	wikiRESTBaseURL   = "https://en.wikipedia.org/api/rest_v1"
+	wikiUploadBaseURL = "https://upload.wikimedia.org"
+	audnexusBaseURL   = "https://api.audnex.us"
+	openLibBaseURL    = "https://openlibrary.org"
+	coversBaseURL     = "https://covers.openlibrary.org"
 )
 
 func (e *Enricher) audnexusLookup(ctx context.Context, in Input, cacheJSON, cachePoster string) (*Enrichment, error) {
@@ -68,6 +149,7 @@ func (e *Enricher) audnexusLookup(ctx context.Context, in Input, cacheJSON, cach
 		Summary:   book.Description,
 		Publisher: book.Publisher,
 		Tags:      tags,
+		Provider:  "audnexus",
 	}
 	writeCache(cacheJSON, payload)
 	return payload, nil
@@ -135,6 +217,7 @@ func (e *Enricher) openLibraryLookup(ctx context.Context, in Input, cacheJSON, c
 		Summary:   "",
 		Publisher: firstString(match.AuthorNames),
 		Tags:      tags,
+		Provider:  "open-library",
 	}
 	writeCache(cacheJSON, payload)
 	return payload, nil
@@ -179,88 +262,95 @@ func firstString(vals []string) string {
 
 // --- Wikipedia fallback (movies/documentaries/TV) ---
 
-type wikiResponse struct {
-	Query struct {
-		Pages map[string]struct {
-			Extract     string `json:"extract"`
-			Description string `json:"description"`
-			Categories  []struct {
-				Title string `json:"title"`
-			} `json:"categories"`
-			Thumbnail struct {
-				Source string `json:"source"`
-			} `json:"thumbnail"`
-			OriginalImage struct {
-				Source string `json:"source"`
-			} `json:"originalimage"`
-		} `json:"pages"`
-	} `json:"query"`
-}
-
-func (e *Enricher) wikipediaSearch(ctx context.Context, query, cacheJSON, cachePoster, cacheBackdrop string) (*Enrichment, error) {
+// wikipediaSearch finds the best-matching page via the search API, then
+// pulls extract + poster art from the REST summary endpoint (the action API's
+// pageimages prop hides non-free lead images like film posters; REST returns
+// them). A title-containment guard rejects implausible matches so generic
+// words don't grab unrelated covers.
+func (e *Enricher) wikipediaSearch(ctx context.Context, query, itemTitle, cacheJSON, cachePoster, cacheBackdrop string) (*Enrichment, error) {
 	q := url.Values{}
 	q.Set("action", "query")
 	q.Set("generator", "search")
 	q.Set("gsrsearch", query)
 	q.Set("gsrlimit", "1")
-	q.Set("prop", "extracts|pageimages|info|categories")
-	q.Set("exintro", "1")
-	q.Set("explaintext", "1")
-	q.Set("inprop", "url")
-	q.Set("piprop", "thumbnail|original")
-	q.Set("pithumbsize", "800")
-	q.Set("cllimit", "10")
+	q.Set("prop", "info")
 	q.Set("format", "json")
-	q.Set("origin", "*")
 
 	data, err := e.fetch(ctx, wikiBaseURL+"?"+q.Encode())
 	if err != nil {
 		return nil, nil
 	}
-	var decoded wikiResponse
-	if json.Unmarshal(data, &decoded) != nil {
+	var found struct {
+		Query struct {
+			Pages map[string]struct {
+				Title string `json:"title"`
+			} `json:"pages"`
+		} `json:"query"`
+	}
+	if json.Unmarshal(data, &found) != nil {
 		return nil, nil
 	}
-	var page *struct {
+	pageTitle := ""
+	for _, p := range found.Query.Pages {
+		pageTitle = p.Title
+		break
+	}
+	if pageTitle == "" {
+		debugStage("search: no page for %q", query)
+		return nil, nil
+	}
+	debugStage("search matched %q", pageTitle)
+
+	normItem := normalizeBookTitle(itemTitle)
+	normPage := normalizeBookTitle(pageTitle)
+	// Ultra-short or digit-only item titles ("01", "2019") are too generic
+	// to trust with containment matching.
+	if len(normItem) < 3 || !strings.ContainsFunc(normItem, unicode.IsLetter) {
+		return nil, nil
+	}
+	if normItem != "" && normPage != "" &&
+		!strings.Contains(normPage, normItem) && !strings.Contains(normItem, normPage) {
+		debugStage("rejected implausible match %q for item %q", pageTitle, itemTitle)
+		return nil, nil // implausible match: do not grab a wrong cover
+	}
+
+	sdata, err := e.fetch(ctx, wikiRESTBaseURL+"/page/summary/"+url.PathEscape(pageTitle))
+	if err != nil {
+		return nil, nil
+	}
+	var summary struct {
 		Extract     string `json:"extract"`
 		Description string `json:"description"`
-		Categories  []struct {
-			Title string `json:"title"`
-		} `json:"categories"`
-		Thumbnail struct {
+		Thumbnail   struct {
 			Source string `json:"source"`
 		} `json:"thumbnail"`
 		OriginalImage struct {
 			Source string `json:"source"`
 		} `json:"originalimage"`
 	}
-	for i := range decoded.Query.Pages {
-		p := decoded.Query.Pages[i]
-		page = &p
-		break
-	}
-	if page == nil {
+	if json.Unmarshal(sdata, &summary) != nil {
+		debugStage("REST summary parse failed")
 		return nil, nil
 	}
-	if page.Thumbnail.Source != "" {
-		e.downloadTo(ctx, page.Thumbnail.Source, cachePoster)
+	debugStage("summary ok: extract=%d thumb=%v", len(summary.Extract), summary.Thumbnail.Source != "")
+
+	// Poster preference: the article's infobox image scraped from the
+	// rendered page (native resolution, exactly what Plex-style UIs want),
+	// falling back to the REST summary's images.
+	if infobox := e.wikiInfoboxImage(ctx, pageTitle); infobox != "" {
+		summary.Thumbnail.Source = infobox
 	}
-	if page.OriginalImage.Source != "" {
-		e.downloadTo(ctx, page.OriginalImage.Source, cacheBackdrop)
+	if summary.Thumbnail.Source != "" {
+		e.downloadTo(ctx, summary.Thumbnail.Source, cachePoster)
 	}
-	var tags []string
-	for _, c := range page.Categories {
-		if len(tags) >= 6 {
-			break
-		}
-		parts := strings.SplitN(c.Title, ":", 2)
-		tag := parts[len(parts)-1]
-		tags = append(tags, strings.ToLower(tag))
+	if summary.OriginalImage.Source != "" && summary.OriginalImage.Source != summary.Thumbnail.Source {
+		e.downloadTo(ctx, summary.OriginalImage.Source, cacheBackdrop)
 	}
 	payload := &Enrichment{
-		Summary:   page.Extract,
-		Publisher: page.Description,
-		Tags:      tags,
+		Summary:   summary.Extract,
+		Publisher: summary.Description,
+		Tags:      []string{"wikipedia"},
+		Provider:  "wikipedia",
 	}
 	writeCache(cacheJSON, payload)
 	return payload, nil

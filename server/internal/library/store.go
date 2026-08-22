@@ -21,6 +21,7 @@ type Item struct {
 	SidecarPaths []string  `json:"sidecarPaths,omitempty"`
 	PosterPath   string    `json:"posterPath,omitempty"`
 	BackdropPath string    `json:"backdropPath,omitempty"`
+	PosterSource string    `json:"posterSource,omitempty"` // local|thumbnail|wikipedia|audnexus|open-library
 	SizeBytes    int64     `json:"sizeBytes,omitempty"`
 	ModTime      time.Time `json:"modTime"`
 }

@@ -145,6 +145,7 @@ func itemFromSwift(si swiftItem, sourcePath string, size int64, mod time.Time) *
 	}
 	if si.LocalPosterPath != nil {
 		it.PosterPath = *si.LocalPosterPath
+		it.PosterSource = "local"
 	}
 	if si.LocalBackdropPath != nil {
 		it.BackdropPath = *si.LocalBackdropPath
