@@ -1,6 +1,8 @@
 package httpapi
 
 import (
+	"bytes"
+	"compress/gzip"
 	"encoding/json"
 	"io"
 	"net/http"
@@ -112,14 +114,43 @@ func (s *Server) handleDiscovery(w http.ResponseWriter, r *http.Request) {
 func strPtr(s string) *string { return &s }
 
 // handleLibrary implements GET /api/library and /library.json with ETag/304.
+// The marshaled JSON (plain and gzipped) is memoized per store generation.
 func (s *Server) handleLibrary(w http.ResponseWriter, r *http.Request) {
-	etag := s.store.ETag()
+	acceptsGzip := strings.Contains(r.Header.Get("Accept-Encoding"), "gzip")
+	body, gzipped, etag := s.libraryPayload(acceptsGzip)
 	w.Header().Set("ETag", etag)
 	w.Header().Set("Cache-Control", "private, max-age=0, must-revalidate")
 	if r.Header.Get("If-None-Match") == etag {
 		w.WriteHeader(http.StatusNotModified)
 		return
 	}
+	if gzipped {
+		w.Header().Set("Content-Encoding", "gzip")
+	} else {
+		w.Header().Set("Content-Type", "application/json")
+	}
+	w.WriteHeader(http.StatusOK)
+	_, _ = w.Write(body)
+}
+
+// libraryPayload returns the cached JSON body for the current generation in
+// the requested encoding, plus whether the body is gzipped. body is shared
+// state: never mutate it.
+func (s *Server) libraryPayload(acceptsGzip bool) ([]byte, bool, string) {
+	s.libMu.Lock()
+	defer s.libMu.Unlock()
+	gen := s.store.Generation()
+	if s.libJSON == nil || s.libGen != gen {
+		s.rebuildLibraryPayload(gen)
+	}
+	if acceptsGzip && s.libJSONGzip != nil {
+		return s.libJSONGzip, true, s.libETag
+	}
+	return s.libJSON, false, s.libETag
+}
+
+func (s *Server) rebuildLibraryPayload(gen int64) {
+	etag := s.store.ETag()
 	resp := api.LibraryResponse{
 		Items:            s.wireItems(),
 		Progress:         s.store.Progress(),
@@ -128,7 +159,34 @@ func (s *Server) handleLibrary(w http.ResponseWriter, r *http.Request) {
 		ServerSettings:   ptrSettings(s.serverSettings()),
 		Theme:            ptrTheme(themeFor(s.cfg.ThemePreset)),
 	}
-	writeJSON(w, http.StatusOK, resp)
+	var buf bytes.Buffer
+	enc := json.NewEncoder(&buf)
+	enc.SetEscapeHTML(false)
+	_ = enc.Encode(resp)
+	s.libJSON = buf.Bytes()
+	s.libJSONGzip = gzipBytes(s.libJSON)
+	s.libGen = gen
+	s.libETag = etag
+}
+
+func gzipBytes(b []byte) []byte {
+	var buf bytes.Buffer
+	zw := gzip.NewWriter(&buf)
+	_, _ = zw.Write(b)
+	_ = zw.Close()
+	return buf.Bytes()
+}
+
+func gunzipOnce(b []byte) []byte {
+	zr, err := gzip.NewReader(bytes.NewReader(b))
+	if err != nil {
+		return b
+	}
+	out, err := io.ReadAll(zr)
+	if err != nil {
+		return b
+	}
+	return out
 }
 
 func ptrSettings(v api.ServerSettings) *api.ServerSettings { return &v }
@@ -417,5 +475,5 @@ func (s *Server) handleAudiobookDetail(w http.ResponseWriter, r *http.Request) {
 // handleAudiobookBrowser serves the audiobook player page (port of
 // SonderWebInterface.audiobooksHTML).
 func (s *Server) handleAudiobookBrowser(w http.ResponseWriter, r *http.Request) {
-	serveHTML(w, audiobooksHTML())
+	serveGzippableHTML(w, r, audiobooksPage)
 }

@@ -3,10 +3,15 @@ package httpapi
 
 import (
 	"encoding/json"
+	"fmt"
 	"log"
 	"net"
 	"net/http"
+	"os"
+	"path/filepath"
 	"strings"
+	"sync"
+	"sync/atomic"
 	"time"
 
 	"tm-sonder/server/internal/api"
@@ -43,6 +48,20 @@ type Server struct {
 	chapters   ChapterProvider
 	onMutation func()
 
+	configPath   string
+	snapshotPath string
+	enriching    atomic.Bool
+
+	settingsVersion int64
+
+	// libraryCache memoizes the /api/library JSON (plain and gzipped) per
+	// store generation, so repeat page loads skip marshal + gzip work.
+	libMu       sync.Mutex
+	libGen      int64
+	libJSON     []byte
+	libJSONGzip []byte
+	libETag     string
+
 	mux    *http.ServeMux
 	logger *log.Logger
 }
@@ -70,6 +89,61 @@ func (s *Server) SetChapterProvider(p ChapterProvider) { s.chapters = p }
 // debounce snapshot writes.
 func (s *Server) SetAutoSave(fn func()) { s.onMutation = fn }
 
+// SetConfigPath records where the running config was loaded from; settings
+// saves write back to this file.
+func (s *Server) SetConfigPath(path string) { s.configPath = path }
+
+// SetSnapshotPath records where the catalog snapshot lives so rescans and
+// enrichment triggered from the API can persist their results.
+func (s *Server) SetSnapshotPath(path string) { s.snapshotPath = path }
+
+// persistConfig atomically writes the current in-memory config to the config
+// file. Note: // comments from a hand-edited file are lost on save.
+func (s *Server) persistConfig() error {
+	if s.configPath == "" {
+		return fmt.Errorf("no config path recorded")
+	}
+	data, err := json.MarshalIndent(s.cfg, "", "  ")
+	if err != nil {
+		return err
+	}
+	dir := filepath.Dir(s.configPath)
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		return err
+	}
+	tmp, err := os.CreateTemp(dir, ".sonder-config-*")
+	if err != nil {
+		return err
+	}
+	tmpName := tmp.Name()
+	defer os.Remove(tmpName)
+	if _, err := tmp.Write(data); err != nil {
+		tmp.Close()
+		return err
+	}
+	if err := tmp.Close(); err != nil {
+		return err
+	}
+	return os.Rename(tmpName, s.configPath)
+}
+
+func derefStr(s *string) string {
+	if s == nil {
+		return ""
+	}
+	return *s
+}
+
+// persistPairingToken stores the token beside the snapshot so restarts keep it.
+func (s *Server) persistPairingToken(token string) {
+	if s.cfg.DataDir == "" {
+		return
+	}
+	p := filepath.Join(s.cfg.DataDir, "pairing-token")
+	_ = os.MkdirAll(filepath.Dir(p), 0o755)
+	_ = os.WriteFile(p, []byte(token+"\n"), 0o600)
+}
+
 func (s *Server) routes() {
 	m := s.mux
 	m.HandleFunc("GET /api/health", s.handleHealth)
@@ -90,6 +164,12 @@ func (s *Server) routes() {
 	m.HandleFunc("GET /api/audiobooks", s.handleAudiobooks)
 	m.HandleFunc("GET /api/audiobooks/{id}", s.handleAudiobookDetail)
 	m.HandleFunc("GET /audiobooks", s.handleAudiobookBrowser)
+	m.HandleFunc("GET /api/settings", s.handleSettingsGet)
+	m.HandleFunc("GET /api/settings/browse", s.handleSettingsBrowse)
+	m.HandleFunc("PUT /api/settings", s.handleSettingsPut)
+	m.HandleFunc("PATCH /api/settings", s.handleSettingsPut)
+	m.HandleFunc("POST /api/settings/rescan", s.handleSettingsRescan)
+	m.HandleFunc("POST /api/settings/enrich", s.handleSettingsEnrich)
 	m.HandleFunc("GET /{$}", s.handleIndex)
 }
 
@@ -111,7 +191,10 @@ func (s *Server) withGzip(next http.Handler) http.Handler {
 		path := r.URL.Path
 		if strings.HasPrefix(path, "/stream/") ||
 			strings.HasPrefix(path, "/artwork/") ||
-			strings.HasPrefix(path, "/subtitles/") {
+			strings.HasPrefix(path, "/subtitles/") ||
+			path == "/api/library" || path == "/library.json" ||
+			path == "/" || path == "/audiobooks" {
+			// /api/library and the HTML pages manage their own cached gzip.
 			next.ServeHTTP(w, r)
 			return
 		}
