@@ -88,6 +88,40 @@
     .actions button.primary { background:var(--accent); border-color:var(--accent); color:var(--accent-dark); font-weight:700; }
     .not-playable { background:var(--panel2); border:1px dashed var(--line); border-radius:8px; padding:18px; text-align:center; color:var(--muted); }
     .empty-state { padding:60px 22px; text-align:center; color:var(--muted); }
+    .pager { display:flex; gap:8px; justify-content:center; align-items:center; padding:0 22px 40px; }
+    .pager button { background:var(--panel2); border:1px solid var(--line); color:var(--text);
+      border-radius:8px; padding:8px 14px; cursor:pointer; }
+    .pager button:disabled { opacity:.4; cursor:default; }
+    .pager .pageinfo { color:var(--muted); font-size:12.5px; font-variant-numeric:tabular-nums; }
+    .crumbs { display:flex; flex-wrap:wrap; gap:4px; align-items:center; }
+    button.crumb { background:var(--panel2); border:1px solid var(--line); color:var(--text);
+      border-radius:6px; padding:4px 8px; font-size:12px; cursor:pointer; }
+    button.browse-row { display:block; width:100%; text-align:left; background:transparent;
+      border:0; border-bottom:1px solid rgba(52,65,40,.5); color:var(--text);
+      padding:9px 14px; cursor:pointer; }
+    button.browse-row:hover { background:var(--panel); }
+    nav.tabs { display:flex; gap:6px; }
+    nav.tabs button {
+      background:var(--panel2); border:1px solid var(--line); color:var(--text);
+      border-radius:8px; padding:8px 14px; font-size:13px; cursor:pointer;
+      display:flex; align-items:center; gap:7px;
+    }
+    nav.tabs button.active { background:var(--accent); border-color:var(--accent); color:var(--accent-dark); font-weight:700; }
+    section.season { margin:0 22px 18px; background:var(--panel); border:1px solid var(--line); border-radius:var(--radius); overflow:hidden; }
+    section.season h2 { margin:0; padding:12px 16px; font-size:14px; letter-spacing:.6px; text-transform:uppercase; color:var(--muted); border-bottom:1px solid var(--line); }
+    button.ep-row { display:grid; grid-template-columns:auto 1fr auto auto; gap:12px; align-items:center;
+      width:100%; text-align:left; background:transparent; border:0; border-top:1px solid rgba(52,65,40,.5);
+      color:var(--text); padding:11px 16px; cursor:pointer; }
+    button.ep-row:first-of-type { border-top:0; }
+    button.ep-row:hover { background:var(--panel2); }
+    button.ep-row .code { color:var(--accent); font-weight:700; font-size:12.5px; min-width:58px; font-variant-numeric:tabular-nums; }
+    button.ep-row .eptitle { white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+    button.ep-row .runtime { color:var(--muted); font-size:12px; font-variant-numeric:tabular-nums; }
+    button.ep-row .epbar { position:relative; width:110px; height:4px; background:rgba(255,255,255,.18); border-radius:2px; overflow:hidden; }
+    button.ep-row .epbar > i { display:block; height:100%; background:var(--gold); }
+    .backrow { padding:14px 22px 0; }
+    button.back { background:var(--panel2); border:1px solid var(--line); color:var(--text);
+      border-radius:8px; padding:8px 14px; cursor:pointer; }
     @media (max-width: 640px) {
       header { gap:8px; padding:12px 14px; }
       input[type="search"] { flex:1; }
@@ -98,6 +132,11 @@
 <body>
   <header>
     <h1>TM <span>Sonder</span></h1>
+    <nav class="tabs" id="tabs" aria-label="Library sections">
+      <button data-tab="all" class="active">All</button>
+      <button data-tab="movies">🎬 Movies</button>
+      <button data-tab="tvshows">📺 TV Shows</button>
+    </nav>
     <input type="search" id="q" placeholder="Search titles and summaries…" aria-label="Search library">
     <select id="watched" aria-label="Watched filter">
       <option value="all">All</option>
@@ -118,6 +157,7 @@
       <option value="duration">Longest first</option>
       <option value="recent">Recently watched</option>
     </select>
+    <button id="settingsBtn" aria-label="Settings" title="Settings" style="background:var(--panel);border:1px solid var(--line);color:var(--text);border-radius:8px;padding:9px 11px;cursor:pointer">⚙︎</button>
   </header>
 
   <section class="row" id="continueRow" hidden>
@@ -125,9 +165,15 @@
     <main class="grid rail-mode" id="continueGrid"></main>
   </section>
 
+  <div class="backrow" id="backRow" hidden>
+    <button class="back" onclick="leaveShow()">‹ All Shows</button>
+  </div>
+
   <main class="grid" id="grid" aria-live="polite">
     <div class="empty-state">Loading library…</div>
   </main>
+  <div id="seasonList"></div>
+  <nav id="pager" class="pager" aria-label="Library pages"></nav>
 
   <dialog id="detail" role="dialog" aria-modal="true" aria-labelledby="detailTitle">
     <div class="modal-head">
@@ -135,6 +181,59 @@
       <button onclick="closeDetail()" aria-label="Close">✕</button>
     </div>
     <div class="modal-body" id="detailBody"></div>
+  </dialog>
+
+  <dialog id="settingsDlg" role="dialog" aria-modal="true" aria-labelledby="settingsTitle">
+    <div class="modal-head"><strong id="settingsTitle">Settings</strong>
+      <button onclick="document.getElementById('settingsDlg').close()" aria-label="Close">✕</button></div>
+    <div class="modal-body">
+      <h3 style="margin:0 0 8px">Libraries</h3>
+      <div id="libRows"></div>
+      <details style="margin:10px 0 16px" id="addLibDetails">
+        <summary style="cursor:pointer;color:var(--muted)">➕ Add library</summary>
+        <div style="display:grid;gap:8px;margin-top:8px">
+          <div style="display:flex;gap:8px;flex-wrap:wrap">
+            <input id="newName" placeholder="Name (optional)" style="flex:1;min-width:140px;background:var(--panel2);border:1px solid var(--line);color:var(--text);border-radius:8px;padding:9px 11px">
+            <select id="newKind" style="background:var(--panel2);border:1px solid var(--line);color:var(--text);border-radius:8px;padding:9px 11px">
+              <option value="movie">Movies</option><option value="tvShow">TV Shows</option>
+              <option value="documentary">Documentaries</option><option value="audiobook">Audiobooks</option>
+              <option value="ebook">Books</option><option value="all">Mixed / all</option>
+            </select>
+          </div>
+          <div id="browseCrumbs" class="crumbs"></div>
+          <div id="browserList" style="max-height:220px;overflow:auto;border:1px solid var(--line);border-radius:8px;background:#12170f"></div>
+          <div style="display:flex;gap:8px;align-items:center">
+            <button onclick="chooseBrowsed()">Use selected folder</button>
+            <span id="selectedPath" style="color:var(--accent);font-size:12.5px"></span>
+          </div>
+          <datalist id="mounts"></datalist>
+        </div>
+      </details>
+
+      <h3 style="margin:18px 0 8px">Server</h3>
+      <label style="display:flex;gap:8px;align-items:center;margin-bottom:6px">
+        <input type="checkbox" id="allowLAN"> Allow LAN access (auto-generates pairing token)
+      </label>
+      <label style="display:flex;gap:8px;align-items:center;margin-bottom:6px">
+        Theme:
+        <select id="themeSel" style="background:var(--panel2);border:1px solid var(--line);color:var(--text);border-radius:8px;padding:6px 10px">
+          <option value="earthy">Earthy</option><option value="dark">Dark</option>
+        </select>
+      </label>
+      <p style="color:var(--muted);font-size:12px;margin:8px 0">
+        NAS: mount the share in Finder (⌘K → smb://your-nas/share). It appears under
+        /Volumes and in the path suggestions above. Port, data dir, and ffmpeg settings
+        live in the config file and need a restart to change.
+      </p>
+      <p id="pairingLine" style="font-size:12.5px;margin:8px 0"></p>
+
+      <div class="actions">
+        <button class="primary" onclick="saveSettings()">Save changes (rescans)</button>
+        <button onclick="rescanNow()">Rescan now</button>
+        <button onclick="enrichNow()">Fetch posters & summaries</button>
+        <span id="settingsStatus" style="color:var(--muted);align-self:center"></span>
+      </div>
+    </div>
   </dialog>
 
   <script>
@@ -238,7 +337,130 @@
       </button>`;
     }
 
+    const PAGE_SIZE = 200;
+    let currentPage = 1;
+    let activeTab = "all";
+    let openShow = null; // show name when drilled into a TV show
+
+    function buildShowGroups() {
+      const map = new Map();
+      for (const i of items) {
+        if (i.kind !== "tvShow" || i.isPlaceholder || !i.showTitle) continue;
+        let show = map.get(i.showTitle);
+        if (!show) {
+          show = { name:i.showTitle, seasons:new Map(), posterItem:null };
+          map.set(i.showTitle, show);
+        }
+        const sn = i.seasonNumber ?? 0;
+        if (!show.seasons.has(sn)) show.seasons.set(sn, []);
+        show.seasons.get(sn).push(i);
+        if (i.posterURL && (!show.posterItem || !show.posterItem.posterURL)) show.posterItem = i;
+      }
+      for (const show of map.values()) {
+        for (const eps of show.seasons.values())
+          eps.sort((a,b)=>(a.episodeNumber??0)-(b.episodeNumber??0)||a.title.localeCompare(b.title));
+      }
+      return Array.from(map.values()).sort((a,b)=>a.name.localeCompare(b.name));
+    }
+
+    function seasonLabel(n) {
+      return n > 0 ? `Season ${String(n).padStart(2,"0")}` : "Specials / Extras";
+    }
+
+    // A card for a TV show folder: clicking drills in instead of opening the detail modal.
+    function showCardHTML(show) {
+      const epCount = Array.from(show.seasons.values()).reduce((n,e)=>n+e.length,0);
+      let watchedCount = 0;
+      for (const eps of show.seasons.values())
+        for (const e of eps) if (isWatched(progressFor(e.id), e)) watchedCount++;
+      const pct = epCount ? Math.round(watchedCount/epCount*100) : 0;
+      const item = show.posterItem;
+      const poster = item?.posterURL
+        ? `<img class="poster" src="${api(item.posterURL)}" alt="" loading="lazy">`
+        : "";
+      const badge = pct >= 100
+        ? `<span class="badge watched">WATCHED</span>`
+        : (watchedCount > 0 ? `<span class="badge unwatched">${epCount-watchedCount} LEFT</span>` : "");
+      return `
+      <button class="card" onclick="openShowPage('${escapeHTML(show.name).replace(/'/g,"\\'")}')" aria-label="${escapeHTML(show.name)}">
+        <div class="frame">${poster}<span class="play-glyph" aria-hidden="true">▶</span>${badge}</div>
+        <h3>${escapeHTML(show.name)}</h3>
+        <p class="meta">${show.seasons.size} season${show.seasons.size===1?"":"s"} • ${epCount} episode${epCount===1?"":"s"}</p>
+      </button>`;
+    }
+
+    function episodeRowHTML(ep) {
+      const p = progressFor(ep.id);
+      const pct = (() => {
+        if (!p || p.seconds <= 0) return 0;
+        const dur = p.duration || ep.durationSeconds || 0;
+        return dur > 0 ? Math.min(100, p.seconds/dur*100) : 0;
+      })();
+      const code = ep.seasonNumber != null && ep.episodeNumber != null
+        ? `S${String(ep.seasonNumber).padStart(2,"0")}E${String(ep.episodeNumber).padStart(2,"0")}`
+        : "—";
+      return `
+      <button class="ep-row" onclick="openDetail('${ep.id}')" aria-label="${escapeHTML(code + " " + ep.title)}">
+        <span class="code">${code}</span>
+        <span class="eptitle">${escapeHTML(ep.title)}</span>
+        <span class="runtime">${pct>0 ? (isWatched(p,ep) ? "Watched" : formatTime(p.seconds)+" / "+runtimeLabel(ep)) : runtimeLabel(ep)}</span>
+        <span class="epbar"><i style="width:${pct}%"></i></span>
+      </button>`;
+    }
+
+    function renderShowPage() {
+      const show = buildShowGroups().find(s => s.name === openShow);
+      const grid = $("#grid");
+      const pager = $("#pager");
+      const seasons = $("#seasonList");
+      $("#backRow").hidden = false;
+      grid.className = "";
+      pager.innerHTML = "";
+      if (!show) {
+        openShow = null;
+        $("#backRow").hidden = true;
+        seasons.innerHTML = "";
+        render();
+        return;
+      }
+      document.title = `${show.name} — TM Sonder`;
+      const numbers = Array.from(show.seasons.keys()).sort((a,b)=>{
+        if (a<=0 && b>0) return 1; if (b<=0 && a>0) return -1; return a-b;
+      });
+      seasons.innerHTML = numbers.map(n => `
+        <section class="season">
+          <h2>${seasonLabel(n)} — ${show.seasons.get(n).length} episode${show.seasons.get(n).length===1?"":"s"}</h2>
+          ${show.seasons.get(n).map(episodeRowHTML).join("")}
+        </section>`).join("")
+        || `<div class="empty-state">No episodes found.</div>`;
+    }
+
+    function openShowPage(name) { openShow = name; currentPage = 1; setTab("tvshows", true); render(); window.scrollTo({ top:0 }); }
+    function leaveShow() {
+      openShow = null;
+      document.title = "TM Sonder";
+      $("#backRow").hidden = true;
+      $("#seasonList").innerHTML = "";
+      render();
+    }
+
+    function setTab(tab, keepShow=false) {
+      activeTab = tab;
+      if (!keepShow) leaveShow();
+      // Drive the existing kind filter so All/Movies behave like before.
+      $("#kind").value = tab === "movies" ? "movie" : "all";
+      for (const b of document.querySelectorAll("#tabs button")) {
+        b.classList.toggle("active", b.dataset.tab === tab);
+      }
+    }
+
+    for (const b of document.querySelectorAll("#tabs button")) {
+      b.addEventListener("click", () => { currentPage = 1; setTab(b.dataset.tab); render(); window.scrollTo({ top:0 }); });
+    }
+
     function render() {
+      if (openShow) { renderShowPage(); return; }
+
       const list = visibleItems();
       const continuing = items.filter(i =>
         ["movie","tvShow","documentary"].includes(i.kind) &&
@@ -246,20 +468,57 @@
         .sort((a,b)=>(progressByID.get(b.id)?.updatedAt || "").localeCompare(
                       progressByID.get(a.id)?.updatedAt || ""));
 
-      $("#continueRow").hidden = continuing.length === 0;
-      if (continuing.length) {
+      $("#continueRow").hidden = continuing.length === 0 || activeTab === "movies" || activeTab === "tvshows";
+      if (!$("#continueRow").hidden) {
         $("#continueGrid").innerHTML = continuing.map(i => cardHTML(i)).join("");
       }
 
       const grid = $("#grid");
+      const pager = $("#pager");
+      const seasons = $("#seasonList");
+      seasons.innerHTML = "";
+
+      // TV Shows tab: group episodes into clickable show folders.
+      if (activeTab === "tvshows") {
+        let shows = buildShowGroups();
+        const term = $("#q").value.trim().toLowerCase();
+        if (term) shows = shows.filter(s => s.name.toLowerCase().includes(term));
+        grid.className = "grid";
+        pager.innerHTML = `<span class="pageinfo">${shows.length} show${shows.length===1?"":"s"}</span>`;
+        if (shows.length === 0) {
+          grid.innerHTML = `<div class="empty-state">No shows yet. Add a TV Shows library with Show Name/Season XX/Episode files.</div>`;
+          return;
+        }
+        grid.innerHTML = shows.map(showCardHTML).join("");
+        return;
+      }
+
       if (list.length === 0) {
         grid.className = "";
         grid.innerHTML = `<div class="empty-state">No matches. Adjust filters or add media to your libraries.</div>`;
+        pager.innerHTML = "";
         return;
       }
       grid.className = "grid";
-      grid.innerHTML = list.map(i => cardHTML(i, { showTitle:false })).join("");
+
+      const totalPages = Math.max(1, Math.ceil(list.length / PAGE_SIZE));
+      if (currentPage > totalPages) currentPage = totalPages;
+      if (currentPage < 1) currentPage = 1;
+      const pageItems = list.slice((currentPage-1)*PAGE_SIZE, currentPage*PAGE_SIZE);
+
+      grid.innerHTML = pageItems.map(i => cardHTML(i, { showTitle:false })).join("");
+
+      if (totalPages > 1 || list.length > PAGE_SIZE) {
+        pager.innerHTML = `
+          <button ${currentPage<=1?"disabled":""} onclick="gotoPage(${currentPage-1})" aria-label="Previous page">‹ Prev</button>
+          <span class="pageinfo">Page ${currentPage} of ${totalPages} — ${list.length.toLocaleString()} titles</span>
+          <button ${currentPage>=totalPages?"disabled":""} onclick="gotoPage(${currentPage+1})" aria-label="Next page">Next ›</button>`;
+      } else {
+        pager.innerHTML = `<span class="pageinfo">${list.length.toLocaleString()} title${list.length===1?"":"s"}</span>`;
+      }
     }
+
+    function gotoPage(n) { currentPage = n; render(); window.scrollTo({ top:0 }); }
 
     let activeVideo = null;
     function openDetail(id) {
@@ -338,7 +597,7 @@
     document.addEventListener("keydown", e => { if (e.key === "Escape") closeDetail(); });
 
     for (const [id, ev] of [["q","input"],["kind","change"],["watched","change"],["sort","change"]]) {
-      $(`#${id}`).addEventListener(ev, render);
+      $(`#${id}`).addEventListener(ev, () => { currentPage = 1; render(); });
     }
 
     fetch(api("/api/library")).then(r => r.json()).then(data => {
@@ -348,6 +607,222 @@
     }).catch(() => {
       $("#grid").innerHTML = `<div class="empty-state">Could not load the library. Is the token valid?</div>`;
     });
+
+    // ---------- Settings ----------
+    let settingsData = null;
+    document.querySelector("#settingsBtn").addEventListener("click", openSettings);
+    document.querySelector("#addLibDetails").addEventListener("toggle", e => {
+      if (e.target.open) browseTo("");
+    });
+
+    function openSettings() {
+      const dlg = document.querySelector("#settingsDlg");
+      dlg.showModal();
+      loadSettings();
+    }
+
+    async function loadSettings() {
+      const status = document.querySelector("#settingsStatus");
+      status.textContent = "Loading…";
+      try {
+        settingsData = await (await fetch(api("/api/settings"))).json();
+        pendingLibs = null; // fresh server state wins over stale edits
+      } catch { settingsData = null; }
+      renderSettings();
+      status.textContent = "";
+    }
+
+    function renderSettings() {
+      if (!settingsData) return;
+      const rows = document.querySelector("#libRows");
+      rows.innerHTML = (settingsData.libraries ?? []).map((l, idx) => `
+        <div style="display:grid;grid-template-columns:1fr auto;gap:8px;align-items:center;padding:8px 0;border-bottom:1px solid var(--line)">
+          <div>
+            <strong>${escapeHTML(l.name)}</strong>
+            <span style="color:var(--muted)">· ${l.itemCount} items · ${escapeHTML(l.kind)}</span>
+            <p style="margin:2px 0 0;font-size:12px">${escapeHTML(l.path)}</p>
+          </div>
+          <button onclick="removeLibraryRow(${idx})" aria-label="Remove ${escapeHTML(l.name)}">Remove</button>
+        </div>`).join("") || `<p style="color:var(--muted)">No libraries configured.</p>`;
+
+      document.querySelector("#allowLAN").checked = !!settingsData.allowLAN;
+      document.querySelector("#themeSel").value = settingsData.themePreset || "earthy";
+      document.querySelector("#mounts").innerHTML =
+        (settingsData.suggestedMounts ?? []).map(m => `<option value="${escapeHTML(m)}">`).join("");
+
+      const line = document.querySelector("#pairingLine");
+      if (settingsData.pairingToken) {
+        line.innerHTML = `Pairing token: <code id="tok" style="user-select:all">${settingsData.pairingToken}</code>`;
+      } else if (settingsData.tokenConfigured) {
+        line.innerHTML = `Pairing token is configured (visible only from this Mac).`;
+      } else {
+        line.textContent = "No pairing token (LAN access is open).";
+      }
+    }
+
+    let pendingLibs = null;
+    let browsedPath = "";
+    function currentLibraries() {
+      return pendingLibs ?? (settingsData?.libraries ?? []).map(l => ({
+        id: l.id, name: l.name, path: l.path, kind: l.kind,
+      }));
+    }
+    function addLibraryRow() {
+      const name = document.querySelector("#newName").value.trim();
+      const path = document.querySelector("#selectedPath").textContent.trim() ||
+                   browsedPath;
+      const kind = document.querySelector("#newKind").value;
+      if (!path) return flashStatus("Pick a folder first");
+      pendingLibs = currentLibraries().concat([{ id:"", name, path, kind }]);
+      document.querySelector("#newName").value = "";
+      document.querySelector("#selectedPath").textContent = "";
+      browsedPath = "";
+      applyPendingLibs();
+      flashStatus("Library added — Save changes to scan it");
+    }
+    function removeLibraryRow(idx) {
+      pendingLibs = currentLibraries().filter((_, i) => i !== idx);
+      applyPendingLibs();
+    }
+    function applyPendingLibs() {
+      const counts = new Map((settingsData?.libraries ?? []).map(l => [l.path, l.itemCount]));
+      settingsData.libraries = currentLibraries().map(l => ({ ...l, itemCount: counts.get(l.path) ?? 0 }));
+      renderSettings();
+      pendingLibs = currentLibraries();
+    }
+
+    async function saveSettings() {
+      const body = {};
+      if (pendingLibs) body.libraries = currentLibraries().map(({ id, name, path, kind }) => ({ id, name, path, kind }));
+      body.allowLAN = document.querySelector("#allowLAN").checked;
+      body.themePreset = document.querySelector("#themeSel").value;
+      await putSettings(body);
+      pendingLibs = null;
+      // library table may have changed -> refresh catalog behind the dialog
+      fetch(api("/api/library")).then(r => r.json()).then(data => {
+        items = data.items ?? [];
+        (data.progress ?? []).forEach(pr => progressByID.set(pr.itemID, pr));
+        renderSettings();
+        render();
+      });
+    }
+
+    async function rescanNow() {
+      const r = await fetch(api("/api/settings/rescan"), { method:"POST" });
+      flashStatus(r.status === 202 ? "Rescan started…" : "Scan already running");
+      if (r.status === 202) pollUntilScanned();
+    }
+
+    async function enrichNow() {
+      const r = await fetch(api("/api/settings/enrich"), { method:"POST" });
+      if (r.status === 202) {
+        flashStatus("Fetching posters & summaries…");
+        setTimeout(() => { loadSettings(); render(); }, 4000);
+        setTimeout(() => {
+          fetch(api("/api/library")).then(x => x.json()).then(data => {
+            items = data.items ?? [];
+            (data.progress ?? []).forEach(pr => progressByID.set(pr.itemID, pr));
+            render(); renderSettings();
+          });
+          flashStatus("Enrichment done ✓");
+        }, 12000);
+      } else {
+        flashStatus("Enrichment already running");
+      }
+    }
+
+    function pollUntilScanned(attempt = 0) {
+      if (attempt > 60) return;
+      setTimeout(() => {
+        fetch(api("/api/status")).then(r => r.json()).then(st => {
+          if (st.scanning) return pollUntilScanned(attempt + 1);
+          fetch(api("/api/library")).then(x => x.json()).then(data => {
+            items = data.items ?? [];
+            (data.progress ?? []).forEach(pr => progressByID.set(pr.itemID, pr));
+            render();
+            flashStatus("Scan complete ✓");
+          });
+        });
+      }, 2000);
+    }
+
+    async function putSettings(body) {
+      const status = document.querySelector("#settingsStatus");
+      status.textContent = "Saving…";
+      body.version = settingsData?.version;
+      try {
+        const r = await fetch(api("/api/settings"), {
+          method:"PUT", headers:{"Content-Type":"application/json"},
+          body: JSON.stringify(body),
+        });
+        if (r.status === 409) {
+          status.textContent = "Settings changed elsewhere — reloading latest";
+          await loadSettings();
+          setTimeout(() => status.textContent = "", 3500);
+          return false;
+        }
+        settingsData = await r.json();
+        renderSettings();
+        status.textContent = "Saved ✓";
+        setTimeout(() => status.textContent = "", 2500);
+        return true;
+      } catch (e) {
+        status.textContent = "Save failed";
+        return false;
+      }
+    }
+
+    function flashStatus(msg) {
+      const el = document.querySelector("#settingsStatus");
+      el.textContent = msg;
+      setTimeout(() => el.textContent = "", 3000);
+    }
+
+    // ---------- Folder browser ----------
+    async function browseTo(path) {
+      const crumbs = document.querySelector("#browseCrumbs");
+      const list = document.querySelector("#browserList");
+      list.innerHTML = `<div style="padding:10px;color:var(--muted)">Loading…</div>`;
+      try {
+        const u = api("/api/settings/browse" + (path ? "?path=" + encodeURIComponent(path) : ""));
+        const data = await (await fetch(u)).json();
+        if (data.error) { list.innerHTML = `<div style="padding:10px">${escapeHTML(data.error)}</div>`; return; }
+        browsedPath = data.path || "";
+        renderCrumbs(data);
+        document.querySelector("#selectedPath").textContent = browsedPath;
+        if ((data.entries ?? []).length === 0) {
+          list.innerHTML = `<div style="padding:10px;color:var(--muted)">No subfolders</div>`;
+          return;
+        }
+        list.innerHTML = data.entries.map(e => `
+          <button class="browse-row" onclick="browseTo('${escapeHTML(e.path).replace(/'/g, "&#39;")}')">
+            <span style="color:var(--accent);margin-right:8px">▸</span>${escapeHTML(e.name)}
+          </button>`).join("");
+      } catch (err) {
+        list.innerHTML = `<div style="padding:10px">Browse failed</div>`;
+      }
+    }
+
+    function renderCrumbs(data) {
+      const el = document.querySelector("#browseCrumbs");
+      if (!data.path) {
+        el.innerHTML = `<span style="color:var(--muted)">Choose a starting point:</span>`;
+        return;
+      }
+      const parts = data.path.split("/").filter(Boolean);
+      let acc = "";
+      let html = `<button class="crumb" onclick='browseTo("/")'>/</button> `;
+      for (const seg of parts) {
+        acc += "/" + seg;
+        html += `<button class="crumb" onclick='browseTo("${escapeHTML(acc)}")'>${escapeHTML(seg)}</button> <span style="color:var(--muted)">/</span> `;
+      }
+      el.innerHTML = html;
+    }
+
+    function chooseBrowsed() {
+      if (!browsedPath) return flashStatus("Navigate into a folder first");
+      addLibraryRow();
+    }
   </script>
 </body>
 </html>
