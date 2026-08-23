@@ -51,6 +51,7 @@ type Config struct {
 	ThemePreset  string    `json:"themePreset"`
 	FFmpegPath   string    `json:"ffmpegPath"`
 	FFprobePath  string    `json:"ffprobePath"`
+	ProbeWorkers int       `json:"probeWorkers,omitempty"`
 	Transcode    Transcode `json:"transcode"`
 	LogDir       string    `json:"logDir"`
 }
@@ -183,6 +184,11 @@ func (c *Config) applyEnv() {
 	}
 	if v := os.Getenv("SONDER_FFPROBE_PATH"); v != "" {
 		c.FFprobePath = v
+	}
+	if v := os.Getenv("SONDER_PROBE_WORKERS"); v != "" {
+		if n, err := strconv.Atoi(v); err == nil && n > 0 {
+			c.ProbeWorkers = n
+		}
 	}
 	if v := os.Getenv("SONDER_LOG_DIR"); v != "" {
 		c.LogDir = v

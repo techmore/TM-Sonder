@@ -13,6 +13,7 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"sync"
 	"syscall"
@@ -147,7 +148,15 @@ func run(configFlag, plexDB string, enrichPass bool) error {
 
 	scanner := library.NewScanner(store)
 	if _, err := lookPath(cfg.FFprobePath); err == nil {
-		scanner.SetProber(probe.NewCache(cfg.FFprobePath), 2)
+		probeWorkers := cfg.ProbeWorkers
+		if probeWorkers <= 0 {
+			probeWorkers = runtime.NumCPU() / 2
+		}
+		if probeWorkers < 2 {
+			probeWorkers = 2
+		}
+		logger.Printf("probe workers: %d", probeWorkers)
+		scanner.SetProber(probe.NewCache(cfg.FFprobePath), probeWorkers)
 		if ffmpegPath, ferr := lookPath(cfg.FFmpegPath); ferr == nil {
 			gen := &artwork.Generator{FFmpegPath: ffmpegPath, OutDir: filepath.Join(cfg.DataDir, "artwork")}
 			scanner.SetThumbnailGen(func(ctx context.Context, itemID, videoPath string, dur float64) (string, error) {

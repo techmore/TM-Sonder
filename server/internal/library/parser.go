@@ -48,6 +48,7 @@ type Parsed struct {
 	MetadataID       string
 	Edition          string
 	SplitPart        string
+	Series           string // ebook/audiobook series or author grouping
 }
 
 var (
@@ -368,11 +369,26 @@ func ParseFilename(path, libraryKind string) Parsed {
 		if t == "" {
 			t = removePlexTags(raw)
 		}
+		// Ebook filenames commonly embed the author ("Title (Author)",
+		// "Author - Title", "Title - Author"). Split it off into Studio
+		// so clients can group by author; parent dir is the fallback.
+		author := ""
+		t, author = splitEbookAuthor(t)
+		if author == "" {
+			pa := removePlexTags(parent)
+			if pa != "" && !looksLikeJunkDir(pa) {
+				author = pa
+			}
+		}
 		sub := "Book"
 		if y := extractYear(raw); y > 0 {
 			sub = "Book - " + strconv.Itoa(y)
 		}
-		return simpleParsed(t, sub, extractYear(raw), metadataSource, metadataID, edition, splitPart)
+		p := simpleParsed(t, sub, extractYear(raw), metadataSource, metadataID, edition, splitPart)
+		if author != "" {
+			p.Series = author
+		}
+		return p
 	}
 
 	// Fallback: unknown/"all" libraries infer intent from the name itself.
@@ -417,6 +433,36 @@ func firstNonZero(a, b int) int {
 		return a
 	}
 	return b
+}
+
+// splitEbookAuthor splits common ebook "Author - Title" / "Title (Author)"
+// filename shapes. Returns (title, author); author is "" when no confident
+// split exists.
+func splitEbookAuthor(s string) (string, string) {
+	s = strings.TrimSpace(s)
+	// "Title (Author Name)" trailing parenthetical with name-ish content.
+	if m := reEbookParenAuthor.FindStringSubmatch(s); m != nil {
+		return strings.TrimSpace(m[1]), strings.TrimSpace(m[2])
+	}
+	return s, ""
+}
+
+var reEbookParenAuthor = regexp.MustCompile(`^(.{2,}?)\s*\(([^)(]{2,60})\)$`)
+
+// looksLikeJunkDir reports whether a directory name is unusable as an author
+// fallback (collection piles, format tags, etc.).
+func looksLikeJunkDir(name string) bool {
+	n := strings.ToLower(name)
+	for _, junk := range []string{"ebook", "ebooks", "books", "book", "calibre",
+		"library", "mybooks", "download", "downloads", "converted", "unknown"} {
+		if n == junk {
+			return true
+		}
+	}
+	if strings.Contains(n, "collection") || strings.Contains(n, "novels") {
+		return true
+	}
+	return false
 }
 
 func simpleParsed(title, subtitle string, year int, src, id, edition, splitPart string) Parsed {

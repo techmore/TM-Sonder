@@ -472,8 +472,33 @@ func (s *Server) handleAudiobookDetail(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+// handleEbooks implements GET /api/ebooks?q= — ebook catalog mirroring the
+// audiobooks handler.
+func (s *Server) handleEbooks(w http.ResponseWriter, r *http.Request) {
+	q := strings.ToLower(strings.TrimSpace(r.URL.Query().Get("q")))
+	items := []audiobookItem{}
+	for _, it := range s.store.InternalItems() {
+		if it.Kind != api.KindEbook {
+			continue
+		}
+		if q != "" && !strings.Contains(strings.ToLower(it.Title+" "+it.Summary+" "+it.Studio), q) {
+			continue
+		}
+		items = append(items, s.toAudiobookItem(it))
+	}
+	writeJSON(w, http.StatusOK, audiobookResponse{
+		Items: items, Count: len(items),
+		Theme: themeFor(s.cfg.ThemePreset), GeneratedAt: time.Now().UTC(),
+	})
+}
+
 // handleAudiobookBrowser serves the audiobook player page (port of
 // SonderWebInterface.audiobooksHTML).
 func (s *Server) handleAudiobookBrowser(w http.ResponseWriter, r *http.Request) {
 	serveGzippableHTML(w, r, audiobooksPage)
+}
+
+// handleEbookBrowser serves the ebook browser page.
+func (s *Server) handleEbookBrowser(w http.ResponseWriter, r *http.Request) {
+	serveGzippableHTML(w, r, ebooksPage)
 }

@@ -33,10 +33,12 @@ var plexKindByFolder = map[string]string{
 }
 
 // normalizePlexFolder canonicalizes a child-directory name for lookup.
+// Separators collapse to spaces so "TV Shows", "tv_shows", and "tv-shows"
+// all match.
 func normalizePlexFolder(name string) string {
 	n := strings.ToLower(strings.TrimSpace(name))
-	n = strings.TrimSuffix(n, "s")
-	return strings.TrimSpace(n)
+	n = strings.NewReplacer("_", " ", "-", " ").Replace(n)
+	return strings.TrimSuffix(strings.Join(strings.Fields(n), " "), "s")
 }
 
 // ExpandPlexLibraries resolves any library whose kind is "plex" into one

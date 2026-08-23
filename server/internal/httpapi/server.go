@@ -164,6 +164,8 @@ func (s *Server) routes() {
 	m.HandleFunc("GET /api/audiobooks", s.handleAudiobooks)
 	m.HandleFunc("GET /api/audiobooks/{id}", s.handleAudiobookDetail)
 	m.HandleFunc("GET /audiobooks", s.handleAudiobookBrowser)
+	m.HandleFunc("GET /api/ebooks", s.handleEbooks)
+	m.HandleFunc("GET /ebooks", s.handleEbookBrowser)
 	m.HandleFunc("GET /api/settings", s.handleSettingsGet)
 	m.HandleFunc("GET /api/settings/browse", s.handleSettingsBrowse)
 	m.HandleFunc("PUT /api/settings", s.handleSettingsPut)

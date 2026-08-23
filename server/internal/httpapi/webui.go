@@ -29,6 +29,7 @@ func mustReadWeb(name string) []byte {
 var (
 	libraryPage    = newGzippedPage(func() []byte { return mustReadWeb("web/library.html") })
 	audiobooksPage = newGzippedPage(func() []byte { return mustReadWeb("web/audiobooks.html") })
+	ebooksPage     = newGzippedPage(func() []byte { return mustReadWeb("web/ebooks.html") })
 )
 
 // gzippedPage caches an embedded page's raw and gzip-encoded bytes so each

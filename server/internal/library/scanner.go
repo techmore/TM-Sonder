@@ -119,7 +119,11 @@ func (sc *Scanner) ScanAll(libs []config.Library) (ScanResult, error) {
 	for _, lib := range libs {
 		r, err := sc.scanLibraryInto(lib, keep, &pending)
 		if err != nil {
-			return res, err
+			// A broken library (unreadable subtree, vanished mount) must
+			// not abort the whole pass: later libraries still scan and,
+			// critically, RetainOnly still runs so items whose files were
+			// renamed/deleted in OTHER libraries get pruned.
+			continue
 		}
 		res.Added += r.Added
 		res.Updated += r.Updated
@@ -358,7 +362,11 @@ func (sc *Scanner) scanLibraryInto(lib config.Library, keep map[string]bool, pen
 
 		item := sc.buildItem(canonical, id, st, format, libID, lib.Kind)
 		sc.store.Upsert(item)
-		*pending = append(*pending, probeJob{ItemID: id, Path: canonical, Size: st.Size(), Mod: st.ModTime()})
+		// Skip ffprobe for formats it can't meaningfully report on (ebooks,
+		// text). Video/audio still probe for tracks + thumbnails.
+		if probeWorthy(format) {
+			*pending = append(*pending, probeJob{ItemID: id, Path: canonical, Size: st.Size(), Mod: st.ModTime()})
+		}
 		if found {
 			res.Updated++
 		} else {
@@ -372,6 +380,17 @@ func (sc *Scanner) scanLibraryInto(lib config.Library, keep map[string]bool, pen
 	return res, err
 }
 
+// probeWorthy reports whether ffprobe can extract useful metadata for the
+// format. Ebooks (and unknown types) are registered in the catalog but never
+// queued for probing — ffprobe fails on them and thumbnails don't apply.
+func probeWorthy(f api.MediaFormat) bool {
+	switch f {
+	case api.FormatEPUB, api.FormatPDF, api.FormatUnknown:
+		return false
+	}
+	return true
+}
+
 // inferKind resolves the item kind: audiobook/ebook by extension, else the
 // configured library kind ("all" falls back to episode detection + movie).
 func inferKind(path string, format api.MediaFormat, libKind string) api.MediaKind {
@@ -380,6 +399,12 @@ func inferKind(path string, format api.MediaFormat, libKind string) api.MediaKin
 		return api.KindAudiobook
 	case api.FormatEPUB, api.FormatPDF:
 		return api.KindEbook
+	case api.FormatMP4, api.FormatMOV, api.FormatMKV, api.FormatAVI:
+		// Stray video inside an ebook library must not masquerade as a
+		// book; everywhere else normal kind resolution applies.
+		if libKind == string(api.KindEbook) {
+			return api.KindMovie
+		}
 	}
 	switch libKind {
 	case string(api.KindTVShow):
@@ -464,6 +489,9 @@ func (sc *Scanner) buildItem(path, id string, st os.FileInfo, format api.MediaFo
 	if parsed.SplitPart != "" {
 		s := parsed.SplitPart
 		item.SplitPart = &s
+	}
+	if parsed.Series != "" {
+		item.Studio = parsed.Series
 	}
 
 	item.SidecarPaths = findSidecars(path)

@@ -3,6 +3,8 @@ package library
 import (
 	"fmt"
 	"testing"
+
+	"tm-sonder/server/internal/api"
 )
 
 func TestParseFilenameTV(t *testing.T) {
@@ -140,4 +142,39 @@ func indexOf(s, sub string) int {
 		}
 	}
 	return -1
+}
+
+func TestEbookAuthorSplit(t *testing.T) {
+	cases := []struct {
+		path, libKind, wantTitle, wantAuthor string
+	}{
+		{"/lib/Infinite Jest (David Foster Wallace).epub", "ebook", "Infinite Jest", "David Foster Wallace"},
+		{"/lib/Dune/Dune.epub", "ebook", "Dune", "Dune"}, // parent-dir fallback
+		{"/lib/Books/plain.epub", "ebook", "plain", ""},  // junk dir ignored
+	}
+	for _, c := range cases {
+		p := ParseFilename(c.path, c.libKind)
+		if p.Title != c.wantTitle {
+			t.Errorf("%s: title = %q, want %q", c.path, p.Title, c.wantTitle)
+		}
+		wantAuthor := c.wantAuthor
+		if c.path == "/lib/Dune/Dune.epub" {
+			wantAuthor = "Dune" // parent fallback
+		}
+		if c.path == "/lib/Books/plain.epub" {
+			wantAuthor = "" // junk dir ignored
+		}
+		if p.Series != wantAuthor {
+			t.Errorf("%s: author = %q, want %q", c.path, p.Series, wantAuthor)
+		}
+	}
+}
+
+func TestInferKindVideoInEbookLibrary(t *testing.T) {
+	if got := inferKind("/lib/x.mp4", api.FormatMP4, "ebook"); got != api.KindMovie {
+		t.Errorf("video in ebook lib = %v, want movie", got)
+	}
+	if got := inferKind("/lib/x.epub", api.FormatEPUB, "ebook"); got != api.KindEbook {
+		t.Errorf("epub = %v, want ebook", got)
+	}
 }
