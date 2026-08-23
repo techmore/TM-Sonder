@@ -406,14 +406,21 @@ type audiobookDetail struct {
 }
 
 func (s *Server) toAudiobookItem(it *library.Item) audiobookItem {
+	// Author/Narrator come from real item fields when known (enrichment or
+	// filename parsing); Studio/Tags are the legacy fallbacks for items
+	// enriched before those fields existed.
 	var author, narrator *string
-	if it.Studio != "" {
-		n := it.Studio
-		narrator = &n
-	}
-	if len(it.Tags) > 0 {
+	if it.Author != nil {
+		author = it.Author
+	} else if len(it.Tags) > 0 {
 		a := it.Tags[0]
 		author = &a
+	}
+	if it.Narrator != nil {
+		narrator = it.Narrator
+	} else if it.Studio != "" && it.Author != nil && it.Studio != *it.Author {
+		n := it.Studio
+		narrator = &n
 	}
 	return audiobookItem{
 		ID:              it.ID,

@@ -27,6 +27,16 @@ type audnexusBook struct {
 	} `json:"narrators"`
 }
 
+// firstNamed returns the first contributor name from an audnexus list.
+func firstNamed(xs []struct {
+	Name string `json:"name"`
+}) string {
+	if len(xs) == 0 {
+		return ""
+	}
+	return xs[0].Name
+}
+
 // wikiInfoboxImage fetches the rendered article page and extracts the first
 // image inside the infobox table — for films that is the release poster at
 // native resolution. Returns "" when the page has no usable image.
@@ -135,19 +145,15 @@ func (e *Enricher) audnexusLookup(ctx context.Context, in Input, cacheJSON, cach
 	if book.Image != "" {
 		e.downloadTo(ctx, book.Image, cachePoster)
 	}
-	tags := make([]string, 0, len(book.Genres)+len(book.Authors)+len(book.Narrators))
+	tags := make([]string, 0, len(book.Genres))
 	for _, g := range book.Genres {
 		tags = append(tags, g.Name)
-	}
-	for _, a := range book.Authors {
-		tags = append(tags, a.Name)
-	}
-	for _, n := range book.Narrators {
-		tags = append(tags, n.Name)
 	}
 	payload := &Enrichment{
 		Summary:   book.Description,
 		Publisher: book.Publisher,
+		Author:    firstNamed(book.Authors),
+		Narrator:  firstNamed(book.Narrators),
 		Tags:      tags,
 		Provider:  "audnexus",
 	}
@@ -214,10 +220,10 @@ func (e *Enricher) openLibraryLookup(ctx context.Context, in Input, cacheJSON, c
 	tags = append(tags, "open-library")
 
 	payload := &Enrichment{
-		Summary:   "",
-		Publisher: firstString(match.AuthorNames),
-		Tags:      tags,
-		Provider:  "open-library",
+		Summary:  "",
+		Author:   firstString(match.AuthorNames),
+		Tags:     tags,
+		Provider: "open-library",
 	}
 	writeCache(cacheJSON, payload)
 	return payload, nil

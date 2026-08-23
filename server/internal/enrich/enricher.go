@@ -39,6 +39,8 @@ type Input struct {
 type Enrichment struct {
 	Summary      string   `json:"summary"`
 	Publisher    string   `json:"publisher"`
+	Author       string   `json:"author,omitempty"`
+	Narrator     string   `json:"narrator,omitempty"`
 	PosterPath   string   `json:"posterPath,omitempty"`
 	BackdropPath string   `json:"backdropPath,omitempty"`
 	Tags         []string `json:"tags"`

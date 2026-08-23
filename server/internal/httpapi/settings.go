@@ -406,6 +406,16 @@ func RunEnrichmentPass(logger *log.Logger, store *library.Store, cacheRoot strin
 						fresh.Summary = result.Summary
 						changed = true
 					}
+					if result.Author != "" && fresh.Author == nil {
+						a := result.Author
+						fresh.Author = &a
+						changed = true
+					}
+					if result.Narrator != "" && fresh.Narrator == nil {
+						n := result.Narrator
+						fresh.Narrator = &n
+						changed = true
+					}
 					for _, tag := range result.Tags {
 						dup := false
 						for _, existing := range fresh.Tags {

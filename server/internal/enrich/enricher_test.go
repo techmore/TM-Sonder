@@ -163,7 +163,8 @@ func TestAudnexusLookupWithMock(t *testing.T) {
 		MetadataIDSource: "audible", MetadataID: "B08G9PBSFV",
 	})
 	if err != nil || got == nil || got.Summary != "An audiobook blurb" ||
-		len(got.Tags) != 3 || got.Publisher != "Audible Studios" {
+		len(got.Tags) != 1 || got.Publisher != "Audible Studios" ||
+		got.Author != "Author" || got.Narrator != "Narrator" {
 		t.Fatalf("audnexus result wrong: %v %+v", err, got)
 	}
 }
@@ -193,7 +194,7 @@ func TestOpenLibraryExactMatchOnly(t *testing.T) {
 	}
 	// Must match exact title "Dune", not "Dune Messiah".
 	foundCover := strings.Contains(got.PosterPath, "") && olHits == 1
-	if got.Publisher != "Frank Herbert" || len(got.Tags) < 3 {
+	if got.Author != "Frank Herbert" || len(got.Tags) < 3 {
 		t.Errorf("openlibrary payload wrong: %+v", got)
 	}
 	if !foundCover {

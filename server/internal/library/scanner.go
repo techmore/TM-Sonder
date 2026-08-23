@@ -471,6 +471,12 @@ func (sc *Scanner) buildItem(path, id string, st os.FileInfo, format api.MediaFo
 	}
 	if parsed.Series != "" {
 		item.Studio = parsed.Series
+		// For books the parser's "series" slot carries the filename-extracted
+		// author; mirror it so the API layer doesn't guess from Tags.
+		if kind == api.KindEbook || kind == api.KindAudiobook {
+			a := parsed.Series
+			item.Author = &a
+		}
 	}
 
 	item.SidecarPaths = findSidecars(path)

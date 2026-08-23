@@ -103,6 +103,11 @@ type MediaItem struct {
 	MetadataID             *string         `json:"metadataID"`
 	Edition                *string         `json:"edition"`
 	SplitPart              *string         `json:"splitPart"`
+	// Author/Narrator are populated for audiobooks and ebooks (enrichment
+	// and filename parsing); they are distinct from Tags, which holds
+	// genres plus provider keywords.
+	Author                 *string         `json:"author,omitempty"`
+	Narrator               *string         `json:"narrator,omitempty"`
 	IsPlaceholder          bool            `json:"isPlaceholder"`
 	PosterURL              *string         `json:"posterURL"`
 	BackdropURL            *string         `json:"backdropURL"`
