@@ -283,10 +283,20 @@
     // Collapse same-title copies into one card per title, best copy first.
     // Ranking prefers probed runtime > resolution > format browser-playability.
     const FORMAT_RANK = { mp4:3, m4v:3, mov:3, webm:3, mkv:2, avi:1 };
+    function titleHeight(i) {
+      // Fall back to a resolution hint embedded in the title ("720p", "1080P").
+      const m = (i.title || "").match(/(\d{3,4})\s*p\b/i);
+      return m ? parseInt(m[1], 10) : 0;
+    }
+    function copyHeight(i) {
+      return i.probedHeight || titleHeight(i);
+    }
     function rankCopy(i) {
-      return ((i.durationSeconds || 0) > 0 ? 1e9 : 0)
-           + (i.probedHeight || 0) * 1e4
-           + (FORMAT_RANK[(i.format||"").toLowerCase()] || 0);
+      // Resolution dominates: a higher-definition copy is the default even
+      // if the low-res one has probe data and the HD one doesn't.
+      return copyHeight(i) * 1e8
+           + ((i.durationSeconds || 0) > 0 ? 1e6 : 0)
+           + (FORMAT_RANK[(i.format||"").toLowerCase()] || 0) * 1e2;
     }
     let dedupEnabled = true;
     function visibleItems() {
@@ -311,10 +321,12 @@
         default:         list.sort((a,b)=>a.title.localeCompare(b.title));
       }
       if (dedupEnabled) {
-        // Keep the best copy of each (kind,title); prefer a copy with watch progress.
+        // Keep the best copy of each (kind,title); default to the highest
+        // definition (rankCopy), but a copy with watch progress wins so the
+        // user resumes where they left off.
         const byKey = new Map();
         for (const i of list) {
-          const key = i.kind + "\u0000" + (i.title || "").toLowerCase();
+          const key = copyKey(i);
           const prev = byKey.get(key);
           if (!prev) { byKey.set(key, i); continue; }
           const prevP = progressFor(prev.id), curP = progressFor(i.id);
@@ -336,9 +348,18 @@
     // All copies of each collapsed title, for the edition picker and the
     // per-card copy badge. Groups are rebuilt once per data/progress change
     // (rebuildCopyGroups) instead of rescanning the full catalog per card.
+    // Keys normalize punctuation/case and strip embedded release tags so
+    // "Tucker: The Man..." / "Tucker The Man..." collapse, as do titles
+    // carrying " 1080p BluRay x265" style suffixes.
     let copyGroups = new Map();
     function copyKey(i) {
-      return i.kind + "\u0000" + (i.title || "").toLowerCase();
+      let t = (i.title || "").toLowerCase();
+      t = t.replace(/\b\d{3,4}\s*p\b/gi, "")           // resolution hints
+           .replace(/[\[\(\{][^\]\)\}]*[\]\)\}]/g, "")  // any (...) [...] {...} tag group
+           .replace(/(?:bluray|webrip|web[- ]?dl|hdtv|hdrip|dvdrip|bdrip|brrip|remux|x265|x264|hevc|h264|10bit|8bit|aac|ddp5|yify|rarbg|mkvcage|s4filmes|proper|repack|unrated)\b/gi, "")
+           .replace(/\b(dual|multi|subs?|ws)\b/gi, "")
+           .replace(/[^a-z0-9]+/g, "");
+      return i.kind + "\u0000" + t;
     }
     function rebuildCopyGroups() {
       copyGroups = new Map();
@@ -372,12 +393,15 @@
       const poster = item.posterURL
         ? `<img class="poster" src="${api(item.posterURL)}" alt="" loading="lazy">`
         : "";
-      const metaBits = [item.year || "", runtimeLabel(item)].filter(Boolean).join(" • ");
+      const copies = opts.copyCount != null ? opts.copyCount : (dedupEnabled ? copiesOf(item).length : 1);
+      const h = copies > 1 ? copyHeight(item) : 0;
+      const qualityBit = h ? (h >= 2160 ? "4K" : h + "p") : "";
+      const metaBits = [item.year || "", runtimeLabel(item), qualityBit].filter(Boolean).join(" • ");
       const badge = watched
         ? `<span class="badge watched">WATCHED</span>`
         : (pct > 0 ? `<span class="badge unwatched">${Math.round(100-pct)}% LEFT</span>` : "");
-      const copies = opts.copyCount != null ? opts.copyCount : (dedupEnabled ? copiesOf(item).length : 1);
-      const copiesBadge = copies > 1 ? `<span class="badge copies">${copies} COPIES</span>` : "";
+      const copiesBadge = copies > 1
+        ? `<span class="badge copies" title="Also available in other versions">${copies} VERSIONS</span>` : "";
       return `
       <button class="card" data-id="${item.id}" data-action="open-detail"
               aria-label="${escapeHTML(item.title)}${metaBits ? ", " + metaBits : ""}">
@@ -633,8 +657,12 @@
 
     let activeVideo = null;
     function editionLabel(c) {
-      const bits = [c.format ? "." + String(c.format).toUpperCase() : ""];
-      if (c.probedHeight) bits.push(c.probedWidth + "×" + c.probedHeight);
+      // Lead with quality: resolution (probed or from the filename), then
+      // container, runtime, and edition tag.
+      const h = copyHeight(c);
+      const quality = h ? (h >= 2160 ? "4K" : h >= 720 ? h + "p" : h + "p") : "";
+      const bits = [quality,
+        c.format ? "." + String(c.format).toUpperCase() : ""];
       if (c.durationSeconds) bits.push(formatTime(c.durationSeconds));
       if (c.edition) bits.push(String(c.edition));
       return bits.filter(Boolean).join(" · ");
@@ -644,16 +672,17 @@
       if (copies.length <= 1) return "";
       return `
       <div class="editions">
-        <h4>${copies.length} copies — pick one</h4>
+        <h4>${copies.length} versions — stream in</h4>
         ${copies.map(c => {
           const cp = progressFor(c.id);
           const cw = isWatched(cp, c);
+          const current = c.id === item.id;
           return `
-          <button class="ed-row ${c.id === item.id ? "current" : ""}" data-id="${c.id}" data-action="switch-copy"
-                  aria-label="Play copy ${editionLabel(c)}">
+          <button class="ed-row ${current ? "current" : ""}" data-id="${c.id}" data-action="switch-copy"
+                  aria-label="Stream copy ${editionLabel(c)}">
             <span class="edwatch">${cw ? "WATCHED" : (cp && cp.seconds > 5 ? "RESUME" : "")}</span>
-            <span class="edlabel">${c.id === item.id ? "▶ " : ""}${escapeHTML(editionLabel(c))}</span>
-            <span class="edmeta">${c.id === item.id ? "shown above" : "switch"}</span>
+            <span class="edlabel">${current ? "▶ " : ""}${escapeHTML(editionLabel(c))}</span>
+            <span class="edmeta">${current ? "playing" : "switch"}</span>
           </button>`;
         }).join("")}
       </div>`;
