@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -132,7 +133,7 @@ func (sc *Scanner) ScanAll(libs []config.Library) (ScanResult, error) {
 	if removed := sc.store.RetainOnly(keep); removed > 0 {
 		res.Removed = removed
 		sc.store.RecordActivity("Library pruned",
-			itoa(removed)+" missing item(s) removed", "trash")
+			strconv.Itoa(removed)+" missing item(s) removed", "trash")
 	}
 
 	sc.probePending(pending)
@@ -144,8 +145,8 @@ func (sc *Scanner) ScanAll(libs []config.Library) (ScanResult, error) {
 	sc.mu.Unlock()
 
 	sc.store.RecordActivity("Library scanned",
-		"added "+itoa(res.Added)+", updated "+itoa(res.Updated)+
-			", removed "+itoa(res.Removed), "magazine")
+		"added "+strconv.Itoa(res.Added)+", updated "+strconv.Itoa(res.Updated)+
+			", removed "+strconv.Itoa(res.Removed), "magazine")
 	return res, nil
 }
 
@@ -181,28 +182,6 @@ var ErrScanInProgress = scanInProgressError{}
 type scanInProgressError struct{}
 
 func (scanInProgressError) Error() string { return "library: scan already in progress" }
-
-func itoa(n int) string {
-	if n == 0 {
-		return "0"
-	}
-	neg := n < 0
-	if neg {
-		n = -n
-	}
-	var b [20]byte
-	i := len(b)
-	for n > 0 {
-		i--
-		b[i] = byte('0' + n%10)
-		n /= 10
-	}
-	if neg {
-		i--
-		b[i] = '-'
-	}
-	return string(b[i:])
-}
 
 // probeJob identifies one file whose metadata must be (re)probed.
 type probeJob struct {
@@ -526,9 +505,9 @@ func SidecarTracks(item *Item) []api.PlaybackTrack {
 	for i, sp := range item.SidecarPaths {
 		bn := filepath.Base(sp)
 		label := strings.TrimSuffix(bn, filepath.Ext(bn))
-		u := "/subtitles/" + item.ID + "/" + itoa(i)
+		u := "/subtitles/" + item.ID + "/" + strconv.Itoa(i)
 		out = append(out, api.PlaybackTrack{
-			ID:    "sidecar:" + itoa(i),
+			ID:    "sidecar:" + strconv.Itoa(i),
 			Label: label,
 			Kind:  api.TrackSidecar,
 			URL:   &u,

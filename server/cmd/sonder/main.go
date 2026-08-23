@@ -15,7 +15,6 @@ import (
 	"path/filepath"
 	"runtime"
 	"strings"
-	"sync"
 	"syscall"
 	"time"
 
@@ -179,9 +178,6 @@ func run(configFlag, plexDB string, enrichPass bool) error {
 	srv := httpapi.New(cfg, store, scanner, tm)
 	srv.SetTrackRefresher(scanner)
 	srv.SetConfigPath(path)
-	if _, err := lookPath(cfg.FFprobePath); err == nil {
-		srv.SetChapterProvider(&chapterSource{store: store, ffprobe: cfg.FFprobePath})
-	}
 	// Populate the /api/library mediaDirectories table from config.
 	dirs := make([]api.MediaDirectory, 0, len(cfg.Libraries))
 	for _, l := range cfg.Libraries {
@@ -191,7 +187,14 @@ func run(configFlag, plexDB string, enrichPass bool) error {
 		store.SetDirectories(dirs)
 	}
 	if _, err := lookPath(cfg.FFprobePath); err == nil {
-		srv.SetChapterProvider(&chapterSource{store: store, ffprobe: cfg.FFprobePath})
+		srv.SetChapterProvider(probe.NewChapterSource(
+			func(id string) (string, time.Time, bool) {
+				it, ok := store.Get(id)
+				if !ok {
+					return "", time.Time{}, false
+				}
+				return it.FilePath, it.ModTime, true
+			}, cfg.FFprobePath))
 	}
 	srv.SetAutoSave(func() {
 		store.SaveDebounced(snapshotPath, library.DefaultSaveDelay)
@@ -278,45 +281,6 @@ func logConfigSummary(logger *log.Logger, cfg *config.Config) {
 	}
 }
 
-// chapterSource extracts audiobook chapters on demand, cached per file
-// version (path + mtime) so repeat detail requests don't re-run ffprobe.
-type chapterSource struct {
-	mu      sync.Mutex
-	store   *library.Store
-	ffprobe string
-	cache   map[string]chapterCacheEntry
-}
-
-type chapterCacheEntry struct {
-	mod      time.Time
-	chapters []api.AudiobookChapter
-}
-
-func (c *chapterSource) ChaptersFor(itemID string) ([]api.AudiobookChapter, error) {
-	it, ok := c.store.Get(itemID)
-	if !ok {
-		return nil, os.ErrNotExist
-	}
-	c.mu.Lock()
-	if c.cache == nil {
-		c.cache = make(map[string]chapterCacheEntry)
-	}
-	if e, ok := c.cache[itemID]; ok && e.mod.Equal(it.ModTime) {
-		c.mu.Unlock()
-		return e.chapters, nil
-	}
-	c.mu.Unlock()
-
-	chapters, err := probe.Chapters(context.Background(), c.ffprobe, it.FilePath)
-	if err != nil {
-		return nil, err
-	}
-	c.mu.Lock()
-	c.cache[itemID] = chapterCacheEntry{mod: it.ModTime, chapters: chapters}
-	c.mu.Unlock()
-	return chapters, nil
-}
-
 // generateToken returns a 128-bit hex pairing token.// generateToken returns a 128-bit hex pairing token.
 func generateToken() (string, error) {
 	b := make([]byte, 16)
@@ -326,7 +290,7 @@ func generateToken() (string, error) {
 	return hex.EncodeToString(b), nil
 }
 
-func deref(s *string) string {
+func derefStr(s *string) string {
 	if s == nil {
 		return ""
 	}

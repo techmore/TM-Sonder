@@ -29,7 +29,7 @@ import (
 	"tm-sonder/server/internal/library"
 )
 
-func deref(s *string) string {
+func derefStr(s *string) string {
 	if s == nil {
 		return ""
 	}
@@ -90,8 +90,8 @@ func main() {
 		for _, it := range store.InternalItems() {
 			candidates = append(candidates, cand{
 				ID: it.ID, Title: it.Title, Kind: string(it.Kind), Year: it.Year,
-				Studio: it.Studio, ShowTitle: deref(it.ShowTitle),
-				MetaSource: deref(it.MetadataIDSource), MetaID: deref(it.MetadataID),
+				Studio: it.Studio, ShowTitle: derefStr(it.ShowTitle),
+				MetaSource: derefStr(it.MetadataIDSource), MetaID: derefStr(it.MetadataID),
 			})
 		}
 	}
@@ -307,7 +307,7 @@ func fetchCatalog(base, token string) []cand {
 		}
 		out = append(out, cand{
 			ID: it.ID, Title: it.Title, Kind: it.Kind, Year: it.Year,
-			ShowTitle: deref(it.ShowTitle),
+			ShowTitle: derefStr(it.ShowTitle),
 		})
 	}
 	return out

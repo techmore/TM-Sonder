@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"io"
 	"net/http"
+	"strconv"
 	"strings"
 	"time"
 
@@ -69,7 +70,7 @@ func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {
 
 // handleDiscovery implements GET /api/discovery.
 func (s *Server) handleDiscovery(w http.ResponseWriter, r *http.Request) {
-	local := "http://127.0.0.1:" + itoa(s.cfg.Port)
+	local := "http://127.0.0.1:" + strconv.Itoa(s.cfg.Port)
 	trackRefresh := "/api/playback/{id}/refresh-tracks"
 	resp := api.DiscoveryResponse{
 		App:              AppName,
@@ -207,6 +208,7 @@ func (s *Server) handleStatus(w http.ResponseWriter, r *http.Request) {
 	state := s.scanner.State()
 	writeJSON(w, http.StatusOK, map[string]any{
 		"scanning":   state.Scanning,
+		"enriching":  s.enriching.Load(),
 		"lastScanAt": state.LastScanAt,
 		"itemsSeen":  state.ItemsSeen,
 		"lastResult": map[string]int{
