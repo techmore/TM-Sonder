@@ -2,6 +2,7 @@ package main
 
 import (
 	"log"
+	"os"
 	"path/filepath"
 	"testing"
 
@@ -11,8 +12,12 @@ import (
 )
 
 // TestRunEnrichmentPassLive exercises the actual pass function against live
-// Wikipedia with one well-known title.
+// Wikipedia with one well-known title. It requires network access, so it is
+// skipped unless SONDER_LIVE_ENRICH_TEST=1 is set (kept out of make test).
 func TestRunEnrichmentPassLive(t *testing.T) {
+	if os.Getenv("SONDER_LIVE_ENRICH_TEST") != "1" {
+		t.Skip("set SONDER_LIVE_ENRICH_TEST=1 to run the live-network enrichment test")
+	}
 	store := library.New()
 	store.Upsert(&library.Item{
 		MediaItem: api.MediaItem{
