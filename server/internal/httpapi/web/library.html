@@ -333,18 +333,32 @@
       return list;
     }
 
-    // All copies of each collapsed title, for the edition picker.
-    function copiesOf(item) {
-      const key = item.kind + "\u0000" + (item.title || "").toLowerCase();
-      return items.filter(i => !i.isPlaceholder
-        && i.kind === item.kind
-        && (i.title || "").toLowerCase() === key.split("\u0000")[1])
-        .sort((a,b) => {
+    // All copies of each collapsed title, for the edition picker and the
+    // per-card copy badge. Groups are rebuilt once per data/progress change
+    // (rebuildCopyGroups) instead of rescanning the full catalog per card.
+    let copyGroups = new Map();
+    function copyKey(i) {
+      return i.kind + "\u0000" + (i.title || "").toLowerCase();
+    }
+    function rebuildCopyGroups() {
+      copyGroups = new Map();
+      for (const i of items) {
+        if (i.isPlaceholder) continue;
+        const k = copyKey(i);
+        if (!copyGroups.has(k)) copyGroups.set(k, []);
+        copyGroups.get(k).push(i);
+      }
+      for (const group of copyGroups.values()) {
+        group.sort((a,b) => {
           const pa = progressFor(a.id), pb = progressFor(b.id);
           const aa = inProgress(pa,a)||isWatched(pa,a), ab = inProgress(pb,b)||isWatched(pb,b);
           if (aa !== ab) return aa ? -1 : 1;
           return rankCopy(b) - rankCopy(a);
         });
+      }
+    }
+    function copiesOf(item) {
+      return copyGroups.get(copyKey(item)) ?? [item];
     }
 
     function cardHTML(item, opts = {}) {
@@ -728,13 +742,23 @@
     $("#detail").addEventListener("click", e => { if (e.target === $("#detail")) closeDetail(); });
     document.addEventListener("keydown", e => { if (e.key === "Escape") closeDetail(); });
 
+    // Search input is debounced; selects fire immediately.
+    let searchDebounce = null;
     for (const [id, ev] of [["q","input"],["kind","change"],["watched","change"],["sort","change"]]) {
-      $(`#${id}`).addEventListener(ev, () => { currentPage = 1; render(); });
+      $(`#${id}`).addEventListener(ev, () => {
+        if (ev === "input") {
+          clearTimeout(searchDebounce);
+          searchDebounce = setTimeout(() => { currentPage = 1; render(); }, 200);
+        } else {
+          currentPage = 1; render();
+        }
+      });
     }
 
     fetch(api("/api/library")).then(r => r.json()).then(data => {
       items = data.items ?? [];
       (data.progress ?? []).forEach(pr => progressByID.set(pr.itemID, pr));
+      rebuildCopyGroups();
       applyHash(); // restore tab/show/page from the URL on load
       render();
     }).catch(() => {
@@ -861,6 +885,7 @@
       items = data.items ?? [];
       progressByID.clear();
       (data.progress ?? []).forEach(pr => progressByID.set(pr.itemID, pr));
+      rebuildCopyGroups();
       render();
     }
 
