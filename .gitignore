@@ -47,3 +47,21 @@ Carthage/Build/
 bin/
 server/sonder
 *.profraw
+
+# One-off maintenance scripts / working artifacts (repo-root scratch)
+/.build-rename-plan.py
+/.dedup-plan.md
+/.execute-rename.py
+/.opencode/
+/.poster-cache/
+/.poster-progress.json
+/.rename-log.json
+/.rename-plan.json
+/.tree-snapshot.json
+/duplicate-movies-report.txt
+/m4b_work/
+/poster_fetch.py
+/poster_pass2.py
+/quarantine-duplicates.sh
+/server/.ab-av1-*/
+__pycache__/
