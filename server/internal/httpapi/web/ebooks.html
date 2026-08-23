@@ -36,6 +36,7 @@
       .hero .cover { width:96px; }
     }
   </style>
+  <script src="/shared.js"></script>
 </head>
 <body>
   <header>
@@ -59,13 +60,7 @@
     const count = document.querySelector("#count");
     const updated = document.querySelector("#updated");
 
-    // When the page was opened with ?token= (LAN pairing), propagate it to
-    // every same-origin request the page makes.
-    const TOKEN = new URLSearchParams(location.search).get("token");
-    function api(path) {
-      if (!TOKEN) return path;
-      return path + (path.includes("?") ? "&" : "?") + "token=" + encodeURIComponent(TOKEN);
-    }
+    const { api, escapeHTML } = window.Sonder;
     document.querySelector("#libraryLink").href = api("/");
 
     async function loadBooks() {
@@ -118,10 +113,6 @@
             </div>
           </div>
         </div>`;
-    }
-
-    function escapeHTML(value) {
-      return String(value ?? "").replace(/[&<>"']/g, c => ({ "&":"&amp;", "<":"&lt;", ">":"&gt;", '"':"&quot;", "'":"&#39;" }[c]));
     }
 
     let debounce = null;

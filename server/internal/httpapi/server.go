@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -173,6 +174,7 @@ func (s *Server) routes() {
 	m.HandleFunc("POST /api/settings/rescan", s.handleSettingsRescan)
 	m.HandleFunc("POST /api/settings/enrich", s.handleSettingsEnrich)
 	m.HandleFunc("GET /{$}", s.handleIndex)
+	m.HandleFunc("GET /shared.js", s.handleSharedJS)
 }
 
 // Handler returns the fully wrapped HTTP handler.
@@ -195,8 +197,9 @@ func (s *Server) withGzip(next http.Handler) http.Handler {
 			strings.HasPrefix(path, "/artwork/") ||
 			strings.HasPrefix(path, "/subtitles/") ||
 			path == "/api/library" || path == "/library.json" ||
-			path == "/" || path == "/audiobooks" {
-			// /api/library and the HTML pages manage their own cached gzip.
+			path == "/" || path == "/audiobooks" || path == "/ebooks" ||
+			path == "/shared.js" {
+			// These routes manage their own cached gzip.
 			next.ServeHTTP(w, r)
 			return
 		}
@@ -303,31 +306,9 @@ func (s *Server) lanURL() *string {
 	}
 	for _, a := range addrs {
 		if ipnet, ok := a.(*net.IPNet); ok && !ipnet.IP.IsLoopback() && ipnet.IP.To4() != nil {
-			u := "http://" + ipnet.IP.String() + ":" + itoa(s.cfg.Port)
+			u := "http://" + ipnet.IP.String() + ":" + strconv.Itoa(s.cfg.Port)
 			return &u
 		}
 	}
 	return nil
-}
-
-func itoa(n int) string {
-	if n == 0 {
-		return "0"
-	}
-	neg := n < 0
-	if neg {
-		n = -n
-	}
-	var b [12]byte
-	i := len(b)
-	for n > 0 {
-		i--
-		b[i] = byte('0' + n%10)
-		n /= 10
-	}
-	if neg {
-		i--
-		b[i] = '-'
-	}
-	return string(b[i:])
 }

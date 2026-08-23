@@ -142,6 +142,7 @@
       main.grid { grid-template-columns:repeat(auto-fill,minmax(128px,1fr)); gap:12px; padding:14px; }
     }
   </style>
+  <script src="/shared.js"></script>
 </head>
 <body>
   <header>
@@ -254,12 +255,7 @@
     let items = [];
     const progressByID = new Map();
 
-    // When opened with ?token= (LAN pairing), propagate to every request.
-    const TOKEN = new URLSearchParams(location.search).get("token");
-    function api(path) {
-      if (!TOKEN) return path;
-      return path + (path.includes("?") ? "&" : "?") + "token=" + encodeURIComponent(TOKEN);
-    }
+    const { api, escapeHTML, formatTime } = window.Sonder;
 
     const BROWSER_PLAYABLE = new Set(["mp4", "m4v", "mov", "webm"]);
     const $ = sel => document.querySelector(sel);
@@ -267,10 +263,6 @@
     function kindLabel(v) {
       return ({ movie:"Movie", tvShow:"TV Show", documentary:"Documentary",
                 audiobook:"Audiobook", ebook:"Book", all:"All" })[v] || v;
-    }
-    function escapeHTML(v) {
-      return String(v ?? "").replace(/[&<>"']/g,
-        c => ({ "&":"&amp;", "<":"&lt;", ">":"&gt;", '"':"&quot;", "'":"&#39;" }[c]));
     }
     function progressFor(id) { return progressByID.get(id) ?? null; }
     function isWatched(p, item) {
@@ -281,12 +273,6 @@
     function inProgress(p, item) {
       if (!p || p.seconds <= 5) return false;
       return !isWatched(p, item);
-    }
-    function formatTime(s) {
-      const t = Math.max(0, Math.floor(Number(s) || 0));
-      const h = Math.floor(t/3600), m = Math.floor((t%3600)/60), sec = t%60;
-      return h ? `${h}:${String(m).padStart(2,"0")}:${String(sec).padStart(2,"0")}`
-               : `${m}:${String(sec).padStart(2,"0")}`;
     }
     function runtimeLabel(item) {
       const d = item.durationSeconds;
@@ -379,7 +365,7 @@
       const copies = opts.copyCount != null ? opts.copyCount : (dedupEnabled ? copiesOf(item).length : 1);
       const copiesBadge = copies > 1 ? `<span class="badge copies">${copies} COPIES</span>` : "";
       return `
-      <button class="card" data-id="${item.id}" onclick="openDetail('${item.id}')"
+      <button class="card" data-id="${item.id}" data-action="open-detail"
               aria-label="${escapeHTML(item.title)}${metaBits ? ", " + metaBits : ""}">
         <div class="frame">
           ${poster}
@@ -438,7 +424,7 @@
         ? `<span class="badge watched">WATCHED</span>`
         : (watchedCount > 0 ? `<span class="badge unwatched">${epCount-watchedCount} LEFT</span>` : "");
       return `
-      <button class="card" onclick="openShowPage('${escapeHTML(show.name).replace(/'/g,"\\'")}')" aria-label="${escapeHTML(show.name)}">
+      <button class="card" data-show="${escapeHTML(show.name)}" data-action="open-show" aria-label="${escapeHTML(show.name)}">
         <div class="frame">${poster}<span class="play-glyph" aria-hidden="true">▶</span>${badge}</div>
         <h3>${escapeHTML(show.name)}</h3>
         <p class="meta">${show.seasons.size} season${show.seasons.size===1?"":"s"} • ${epCount} episode${epCount===1?"":"s"}</p>
@@ -456,7 +442,7 @@
         ? `S${String(ep.seasonNumber).padStart(2,"0")}E${String(ep.episodeNumber).padStart(2,"0")}`
         : "—";
       return `
-      <button class="ep-row" onclick="openDetail('${ep.id}')" aria-label="${escapeHTML(code + " " + ep.title)}">
+      <button class="ep-row" data-id="${ep.id}" data-action="open-detail" aria-label="${escapeHTML(code + " " + ep.title)}">
         <span class="code">${code}</span>
         <span class="eptitle">${escapeHTML(ep.title)}</span>
         <span class="runtime">${pct>0 ? (isWatched(p,ep) ? "Watched" : formatTime(p.seconds)+" / "+runtimeLabel(ep)) : runtimeLabel(ep)}</span>
@@ -491,14 +477,57 @@
         || `<div class="empty-state">No episodes found.</div>`;
     }
 
-    function openShowPage(name) { openShow = name; currentPage = 1; setTab("tvshows", true); render(); window.scrollTo({ top:0 }); }
+    function openShowPage(name) {
+      openShow = name;
+      currentPage = 1;
+      setTab("tvshows", true);
+      render();
+      syncHash(true);
+      window.scrollTo({ top:0 });
+    }
     function leaveShow() {
       openShow = null;
       document.title = "TM Sonder";
       $("#backRow").hidden = true;
       $("#seasonList").innerHTML = "";
       render();
+      syncHash(false);
     }
+
+    // --- URL state (#tab[/show/<name>|/page/<n>]) so refresh and Back work ---
+    function syncHash(push) {
+      const parts = [activeTab];
+      if (openShow) parts.push("show", encodeURIComponent(openShow));
+      else if (currentPage > 1) parts.push("page", String(currentPage));
+      const h = "#" + parts.map(encodeURIComponent).join("/");
+      if (location.hash === h) return;
+      if (push) history.pushState(null, "", h);
+      else history.replaceState(null, "", h);
+    }
+    function applyHash() {
+      const seg = location.hash.replace(/^#\/?/, "").split("/")
+        .filter(s => s !== "").map(decodeURIComponent);
+      if (seg.length === 0) return false;
+      const tab = ["all", "movies", "tvshows"].includes(seg[0]) ? seg[0] : "all";
+      activeTab = tab;
+      $("#kind").value = tab === "movies" ? "movie" : "all";
+      for (const b of document.querySelectorAll("#tabs button"))
+        b.classList.toggle("active", b.dataset.tab === tab);
+      openShow = null;
+      currentPage = 1;
+      if (seg[1] === "show" && seg[2]) openShow = seg[2];
+      else if (seg[1] === "page") currentPage = Math.max(1, parseInt(seg[2], 10) || 1);
+      return true;
+    }
+    window.addEventListener("popstate", () => {
+      applyHash();
+      if (!openShow) {
+        $("#backRow").hidden = true;
+        $("#seasonList").innerHTML = "";
+        if (document.title !== "TM Sonder") document.title = "TM Sonder";
+      }
+      render();
+    });
 
     function setTab(tab, keepShow=false) {
       activeTab = tab;
@@ -511,7 +540,7 @@
     }
 
     for (const b of document.querySelectorAll("#tabs button")) {
-      b.addEventListener("click", () => { currentPage = 1; setTab(b.dataset.tab); render(); window.scrollTo({ top:0 }); });
+      b.addEventListener("click", () => { currentPage = 1; setTab(b.dataset.tab); render(); syncHash(true); window.scrollTo({ top:0 }); });
     }
 
     function render() {
@@ -566,15 +595,27 @@
 
       if (totalPages > 1 || list.length > PAGE_SIZE) {
         pager.innerHTML = `
-          <button ${currentPage<=1?"disabled":""} onclick="gotoPage(${currentPage-1})" aria-label="Previous page">‹ Prev</button>
+          <button ${currentPage<=1?"disabled":""} data-action="goto-page" data-page="${currentPage-1}" aria-label="Previous page">‹ Prev</button>
           <span class="pageinfo">Page ${currentPage} of ${totalPages} — ${list.length.toLocaleString()} titles</span>
-          <button ${currentPage>=totalPages?"disabled":""} onclick="gotoPage(${currentPage+1})" aria-label="Next page">Next ›</button>`;
+          <button ${currentPage>=totalPages?"disabled":""} data-action="goto-page" data-page="${currentPage+1}" aria-label="Next page">Next ›</button>`;
       } else {
         pager.innerHTML = `<span class="pageinfo">${list.length.toLocaleString()} title${list.length===1?"":"s"}</span>`;
       }
     }
 
-    function gotoPage(n) { currentPage = n; render(); window.scrollTo({ top:0 }); }
+    function gotoPage(n) { currentPage = n; render(); syncHash(true); window.scrollTo({ top:0 }); }
+
+    // Delegated clicks for grid/episode/edition rows (no inline JS strings).
+    document.addEventListener("click", e => {
+      const btn = e.target.closest("[data-action]");
+      if (!btn) return;
+      const act = btn.dataset.action;
+      if (act === "open-detail" && btn.dataset.id) openDetail(btn.dataset.id);
+      else if (act === "open-show" && btn.dataset.show) openShowPage(btn.dataset.show);
+      else if (act === "switch-copy" && btn.dataset.id) switchCopy(btn.dataset.id);
+      else if (act === "goto-page") { gotoPage(parseInt(btn.dataset.page, 10)); }
+      else if (act === "browse" && btn.dataset.path !== undefined) browseTo(btn.dataset.path);
+    });
 
     let activeVideo = null;
     function editionLabel(c) {
@@ -594,7 +635,7 @@
           const cp = progressFor(c.id);
           const cw = isWatched(cp, c);
           return `
-          <button class="ed-row ${c.id === item.id ? "current" : ""}" onclick="switchCopy('${c.id}')"
+          <button class="ed-row ${c.id === item.id ? "current" : ""}" data-id="${c.id}" data-action="switch-copy"
                   aria-label="Play copy ${editionLabel(c)}">
             <span class="edwatch">${cw ? "WATCHED" : (cp && cp.seconds > 5 ? "RESUME" : "")}</span>
             <span class="edlabel">${c.id === item.id ? "▶ " : ""}${escapeHTML(editionLabel(c))}</span>
@@ -694,6 +735,7 @@
     fetch(api("/api/library")).then(r => r.json()).then(data => {
       items = data.items ?? [];
       (data.progress ?? []).forEach(pr => progressByID.set(pr.itemID, pr));
+      applyHash(); // restore tab/show/page from the URL on load
       render();
     }).catch(() => {
       $("#grid").innerHTML = `<div class="empty-state">Could not load the library. Is the token valid?</div>`;
@@ -804,37 +846,40 @@
       if (r.status === 202) pollUntilScanned();
     }
 
-    async function enrichNow() {
-      const r = await fetch(api("/api/settings/enrich"), { method:"POST" });
-      if (r.status === 202) {
-        flashStatus("Fetching posters & summaries…");
-        setTimeout(() => { loadSettings(); render(); }, 4000);
-        setTimeout(() => {
-          fetch(api("/api/library")).then(x => x.json()).then(data => {
-            items = data.items ?? [];
-            (data.progress ?? []).forEach(pr => progressByID.set(pr.itemID, pr));
-            render(); renderSettings();
-          });
-          flashStatus("Enrichment done ✓");
-        }, 12000);
-      } else {
-        flashStatus("Enrichment already running");
-      }
-    }
-
-    function pollUntilScanned(attempt = 0) {
-      if (attempt > 60) return;
+    // Poll /api/status until the background job (scan or enrichment) finishes.
+    function pollStatus(done, attempt = 0) {
+      if (attempt > 300) return flashStatus("Still working — check back later");
       setTimeout(() => {
         fetch(api("/api/status")).then(r => r.json()).then(st => {
-          if (st.scanning) return pollUntilScanned(attempt + 1);
-          fetch(api("/api/library")).then(x => x.json()).then(data => {
-            items = data.items ?? [];
-            (data.progress ?? []).forEach(pr => progressByID.set(pr.itemID, pr));
-            render();
-            flashStatus("Scan complete ✓");
-          });
-        });
+          if (st.scanning || st.enriching) return pollStatus(done, attempt + 1);
+          done();
+        }).catch(() => pollStatus(done, attempt + 1));
       }, 2000);
+    }
+    async function refreshLibrary() {
+      const data = await (await fetch(api("/api/library"))).json();
+      items = data.items ?? [];
+      progressByID.clear();
+      (data.progress ?? []).forEach(pr => progressByID.set(pr.itemID, pr));
+      render();
+    }
+
+    async function enrichNow() {
+      const r = await fetch(api("/api/settings/enrich"), { method:"POST" });
+      if (r.status !== 202) return flashStatus("Enrichment already running");
+      flashStatus("Fetching posters & summaries…");
+      pollStatus(() => {
+        refreshLibrary().then(() => {
+          renderSettings();
+          flashStatus("Enrichment done ✓");
+        });
+      });
+    }
+
+    function pollUntilScanned() {
+      pollStatus(() => {
+        refreshLibrary().then(() => flashStatus("Scan complete ✓"));
+      });
     }
 
     async function putSettings(body) {
@@ -886,7 +931,7 @@
           return;
         }
         list.innerHTML = data.entries.map(e => `
-          <button class="browse-row" onclick="browseTo('${escapeHTML(e.path).replace(/'/g, "&#39;")}')">
+          <button class="browse-row" data-path="${escapeHTML(e.path)}" data-action="browse">
             <span style="color:var(--accent);margin-right:8px">▸</span>${escapeHTML(e.name)}
           </button>`).join("");
       } catch (err) {
@@ -902,10 +947,10 @@
       }
       const parts = data.path.split("/").filter(Boolean);
       let acc = "";
-      let html = `<button class="crumb" onclick='browseTo("/")'>/</button> `;
+      let html = `<button class="crumb" data-path="/" data-action="browse">/</button> `;
       for (const seg of parts) {
         acc += "/" + seg;
-        html += `<button class="crumb" onclick='browseTo("${escapeHTML(acc)}")'>${escapeHTML(seg)}</button> <span style="color:var(--muted)">/</span> `;
+        html += `<button class="crumb" data-path="${escapeHTML(acc)}" data-action="browse">${escapeHTML(seg)}</button> <span style="color:var(--muted)">/</span> `;
       }
       el.innerHTML = html;
     }

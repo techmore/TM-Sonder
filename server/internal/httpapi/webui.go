@@ -15,7 +15,7 @@ import (
 // JSON routes the iOS client uses. When opened with ?token= (LAN pairing),
 // the embedded JS propagates the token to every same-origin request.
 
-//go:embed web/library.html web/audiobooks.html
+//go:embed web/library.html web/audiobooks.html web/ebooks.html web/shared.js
 var webFS embed.FS
 
 func mustReadWeb(name string) []byte {
@@ -30,7 +30,25 @@ var (
 	libraryPage    = newGzippedPage(func() []byte { return mustReadWeb("web/library.html") })
 	audiobooksPage = newGzippedPage(func() []byte { return mustReadWeb("web/audiobooks.html") })
 	ebooksPage     = newGzippedPage(func() []byte { return mustReadWeb("web/ebooks.html") })
+	sharedJS       = newGzippedPage(func() []byte { return mustReadWeb("web/shared.js") })
 )
+
+// serveSharedJS writes the embedded shared.js asset, pre-gzipped when accepted.
+func (s *Server) handleSharedJS(w http.ResponseWriter, r *http.Request) {
+	raw, gz := sharedJS.bytes()
+	w.Header().Set("Content-Type", "text/javascript; charset=utf-8")
+	w.Header().Set("Cache-Control", "public, max-age=300")
+	body := raw
+	if strings.Contains(r.Header.Get("Accept-Encoding"), "gzip") {
+		w.Header().Set("Content-Encoding", "gzip")
+		w.Header().Set("Content-Length", fmt.Sprint(len(gz)))
+		body = gz
+	} else {
+		w.Header().Set("Content-Length", fmt.Sprint(len(raw)))
+	}
+	w.WriteHeader(http.StatusOK)
+	_, _ = w.Write(body)
+}
 
 // gzippedPage caches an embedded page's raw and gzip-encoded bytes so each
 // request writes pre-compressed output instead of recompressing.

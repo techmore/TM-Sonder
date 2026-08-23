@@ -45,6 +45,7 @@
       .chapter button { grid-column:1/-1; }
     }
   </style>
+  <script src="/shared.js"></script>
 </head>
 <body>
   <header>
@@ -69,13 +70,7 @@
     const count = document.querySelector("#count");
     const updated = document.querySelector("#updated");
 
-    // When the page was opened with ?token= (LAN pairing), propagate it to
-    // every same-origin request the page makes.
-    const TOKEN = new URLSearchParams(location.search).get("token");
-    function api(path) {
-      if (!TOKEN) return path;
-      return path + (path.includes("?") ? "&" : "?") + "token=" + encodeURIComponent(TOKEN);
-    }
+    const { api, escapeHTML, formatTime } = window.Sonder;
     document.querySelector("#libraryLink").href = api("/");
 
     async function loadBooks() {
@@ -187,18 +182,6 @@
 
     async function saveProgress(id, seconds, duration) {
       await fetch(api(`/api/progress/${id}`), { method:"POST", headers:{"Content-Type":"application/json"}, body:JSON.stringify({ seconds, duration }) });
-    }
-
-    function formatTime(value) {
-      const total = Math.max(0, Math.floor(Number(value) || 0));
-      const hours = Math.floor(total / 3600);
-      const minutes = Math.floor((total % 3600) / 60);
-      const seconds = total % 60;
-      return hours > 0 ? `${hours}:${String(minutes).padStart(2, "0")}:${String(seconds) .padStart(2, "0")}` : `${minutes}:${String(seconds).padStart(2, "0")}`;
-    }
-
-    function escapeHTML(value) {
-      return String(value ?? "").replace(/[&<>"']/g, c => ({ "&":"&amp;", "<":"&lt;", ">":"&gt;", '"':"&quot;", "'":"&#39;" }[c]));
     }
 
     let debounce = null;
