@@ -151,20 +151,15 @@
       <button data-tab="all" class="active">All</button>
       <button data-tab="movies">🎬 Movies</button>
       <button data-tab="tvshows">📺 TV Shows</button>
+      <button data-tab="documentaries">🎥 Documentaries</button>
+      <button data-tab="audiobooks">🎧 Audiobooks</button>
+      <button data-tab="books">📚 Books</button>
     </nav>
     <input type="search" id="q" placeholder="Search titles and summaries…" aria-label="Search library">
     <select id="watched" aria-label="Watched filter">
       <option value="all">All</option>
       <option value="unwatched">Unwatched</option>
       <option value="watched">Watched</option>
-    </select>
-    <select id="kind" aria-label="Kind filter">
-      <option value="all">All kinds</option>
-      <option value="movie">Movies</option>
-      <option value="tvShow">TV Shows</option>
-      <option value="documentary">Documentaries</option>
-      <option value="audiobook">Audiobooks</option>
-      <option value="ebook">Books</option>
     </select>
     <select id="sort" aria-label="Sort order">
       <option value="title">Title A–Z</option>
@@ -301,10 +296,14 @@
     let dedupEnabled = true;
     function visibleItems() {
       const term = $("#q").value.trim().toLowerCase();
-      const kindSel = $("#kind").value;
       const watchSel = $("#watched").value;
       let list = items.filter(i => !i.isPlaceholder);
-      if (kindSel !== "all") list = list.filter(i => i.kind === kindSel);
+      // Tabs are the kind filter; documentaries ride with movies elsewhere.
+      const kindByTab = { all:null, movies:"movie", tvshows:"tvShow",
+                          documentaries:"documentary", audiobooks:"audiobook",
+                          books:"ebook" };
+      const kindSel = kindByTab[activeTab] ?? null;
+      if (kindSel) list = list.filter(i => i.kind === kindSel);
       if (term) {
         list = list.filter(i =>
           [i.title, i.subtitle, i.showTitle, i.summary]
@@ -546,9 +545,9 @@
       const seg = location.hash.replace(/^#\/?/, "").split("/")
         .filter(s => s !== "").map(decodeURIComponent);
       if (seg.length === 0) return false;
-      const tab = ["all", "movies", "tvshows"].includes(seg[0]) ? seg[0] : "all";
+      const tabs = ["all", "movies", "tvshows", "documentaries", "audiobooks", "books"];
+      const tab = tabs.includes(seg[0]) ? seg[0] : "all";
       activeTab = tab;
-      $("#kind").value = tab === "movies" ? "movie" : "all";
       for (const b of document.querySelectorAll("#tabs button"))
         b.classList.toggle("active", b.dataset.tab === tab);
       openShow = null;
@@ -570,8 +569,6 @@
     function setTab(tab, keepShow=false) {
       activeTab = tab;
       if (!keepShow) leaveShow();
-      // Drive the existing kind filter so All/Movies behave like before.
-      $("#kind").value = tab === "movies" ? "movie" : "all";
       for (const b of document.querySelectorAll("#tabs button")) {
         b.classList.toggle("active", b.dataset.tab === tab);
       }
@@ -591,7 +588,7 @@
         .sort((a,b)=>(progressByID.get(b.id)?.updatedAt || "").localeCompare(
                       progressByID.get(a.id)?.updatedAt || ""));
 
-      $("#continueRow").hidden = continuing.length === 0 || activeTab === "movies" || activeTab === "tvshows";
+      $("#continueRow").hidden = continuing.length === 0 || activeTab !== "all";
       if (!$("#continueRow").hidden) {
         $("#continueGrid").innerHTML = continuing.map(i => cardHTML(i)).join("");
       }
@@ -613,6 +610,20 @@
           return;
         }
         grid.innerHTML = shows.map(showCardHTML).join("");
+        return;
+      }
+
+      // Kind tabs with no content get a specific hint instead of a generic
+      // "no matches" (e.g. no Documentaries library configured).
+      const tabHints = {
+        documentaries: "No documentaries yet. Add a Documentaries library in Settings.",
+        audiobooks: "No audiobooks yet. Add an Audiobooks library in Settings, or open the Audiobook player from the app menu.",
+        books: "No books yet. Add a Books library in Settings.",
+      };
+      if (list.length === 0 && tabHints[activeTab]) {
+        grid.className = "";
+        grid.innerHTML = `<div class="empty-state">${tabHints[activeTab]}</div>`;
+        pager.innerHTML = "";
         return;
       }
 
@@ -773,7 +784,7 @@
 
     // Search input is debounced; selects fire immediately.
     let searchDebounce = null;
-    for (const [id, ev] of [["q","input"],["kind","change"],["watched","change"],["sort","change"]]) {
+    for (const [id, ev] of [["q","input"],["watched","change"],["sort","change"]]) {
       $(`#${id}`).addEventListener(ev, () => {
         if (ev === "input") {
           clearTimeout(searchDebounce);
