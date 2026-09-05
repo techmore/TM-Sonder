@@ -652,6 +652,9 @@ func isSubtitleSidecar(e os.DirEntry, base string) bool {
 }
 
 // firstExisting finds the first present artwork file in folder or parent.
+// Exact-case probes run first; if none hit, a case-insensitive listing
+// fallback catches Cover.jpg / Poster.PNG style names on case-sensitive
+// mounts (ext4 NFS shares) without hurting case-correct folders.
 func firstExisting(folder, parent string, names []string, base string) string {
 	candidates := append([]string{}, names...)
 	candidates = append(candidates,
@@ -664,6 +667,33 @@ func firstExisting(folder, parent string, names []string, base string) string {
 			if st, err := os.Stat(p); err == nil && !st.IsDir() {
 				return p
 			}
+		}
+	}
+	for _, dir := range []string{folder, parent} {
+		if p := caseInsensitiveMatch(dir, candidates); p != "" {
+			return p
+		}
+	}
+	return ""
+}
+
+// caseInsensitiveMatch returns the first candidate present in dir under any
+// letter casing. Empty when dir is unreadable or holds no candidate.
+func caseInsensitiveMatch(dir string, candidates []string) string {
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return ""
+	}
+	lower := make(map[string]string, len(entries))
+	for _, e := range entries {
+		if e.IsDir() {
+			continue
+		}
+		lower[strings.ToLower(e.Name())] = e.Name()
+	}
+	for _, n := range candidates {
+		if actual, ok := lower[strings.ToLower(n)]; ok {
+			return filepath.Join(dir, actual)
 		}
 	}
 	return ""
