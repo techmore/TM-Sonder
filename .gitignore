@@ -59,9 +59,14 @@ server/sonder
 /.rename-plan.json
 /.tree-snapshot.json
 /duplicate-movies-report.txt
+/ebooks-dedupe-candidates.csv
+/ebook_phase3.py
+/ebook_restructure.py
 /m4b_work/
 /poster_fetch.py
 /poster_pass2.py
 /quarantine-duplicates.sh
+/report.txt
 /server/.ab-av1-*/
+/status.txt
 __pycache__/
