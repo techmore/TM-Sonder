@@ -45,3 +45,16 @@ xcodebuild test -project xcode-TM-Sonder.xcodeproj -scheme xcode-TM-Sonder \
 ```
 
 CI runs both on GitHub Actions (`.github/workflows/ci.yml`).
+
+## Delegate from OpenCode to Pi
+
+This repo includes an OpenCode MCP entry for Pi. Start OpenCode from the repo
+root, then ask it to use the `pi_delegate` tool for an independent coding or
+review pass. The bridge starts a fresh, non-persistent Pi RPC session in the
+current project for each call.
+
+Set `PI_BIN` if `pi` is not on OpenCode's `PATH`:
+
+```bash
+PI_BIN="$HOME/.local/bin/pi" opencode
+```
