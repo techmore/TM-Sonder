@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"runtime"
 	"sort"
 	"strconv"
 	"strings"
@@ -45,13 +46,25 @@ type ScanState struct {
 
 // Scanner walks configured libraries and reconciles them into the Store.
 type Scanner struct {
-	store   *Store
-	prober  Prober
-	thumbFn ThumbFunc
-	workers int
+	store        *Store
+	prober       Prober
+	thumbFn      ThumbFunc
+	workers      int
+	thumbWorkers int
 
 	mu    sync.Mutex
 	state ScanState
+
+	// 1-entry memo of the last directory listing consulted by the unchanged
+	// check, fresh once per scan: ScanAll clears dirlistFresh, so each
+	// folder is ReadDir'd at most once per pass and the listing is reused
+	// across that folder's files (TV walks visit the same folder once per
+	// episode). Refreshing per scan means subtitles added between scans
+	// are still detected on unchanged media files.
+	dirlistMu      sync.Mutex
+	dirlistPath    string
+	dirlistEntries []os.DirEntry
+	dirlistFresh   bool
 }
 
 // Prober supplies ffprobe-derived metadata for new or changed files.
@@ -105,6 +118,11 @@ func (sc *Scanner) ScanAll(libs []config.Library) (ScanResult, error) {
 	sc.state.Scanning = true
 	sc.state.Added, sc.state.Updated, sc.state.Removed, sc.state.Skipped = 0, 0, 0, 0
 	sc.mu.Unlock()
+
+	// Directory listings are memoized per folder for exactly one scan pass.
+	sc.dirlistMu.Lock()
+	sc.dirlistFresh = false
+	sc.dirlistMu.Unlock()
 
 	defer func() {
 		now := time.Now().UTC()
@@ -204,6 +222,51 @@ func (sc *Scanner) probePending(jobs []probeJob) {
 	}
 	ctx := context.Background()
 	in := make(chan probeJob)
+
+	// Thumbnails run in their own small pool: probing is I/O-bound on the
+	// media mount while poster generation is CPU-bound ffmpeg work, and
+	// running both back-to-back in one worker slot doubles per-file latency.
+	type thumbJob struct {
+		itemID   string
+		path     string
+		duration float64
+	}
+	thumbs := make(chan thumbJob)
+	thumbWorkers := sc.thumbWorkers
+	if thumbWorkers <= 0 {
+		thumbWorkers = runtime.NumCPU() / 4
+		if thumbWorkers < 1 {
+			thumbWorkers = 1
+		}
+		if thumbWorkers > 4 {
+			thumbWorkers = 4
+		}
+	}
+	var twg sync.WaitGroup
+	if sc.thumbFn != nil {
+		for i := 0; i < thumbWorkers; i++ {
+			twg.Add(1)
+			go func() {
+				defer twg.Done()
+				for tj := range thumbs {
+					p, err := sc.thumbFn(ctx, tj.itemID, tj.path, tj.duration)
+					if err != nil || p == "" {
+						continue
+					}
+					it, ok := sc.store.Get(tj.itemID)
+					if !ok {
+						continue
+					}
+					it.PosterPath = p
+					u := "/artwork/poster/" + it.ID
+					it.PosterURL = &u
+					it.PosterSource = "thumbnail"
+					sc.store.Upsert(it)
+				}
+			}()
+		}
+	}
+
 	var wg sync.WaitGroup
 	for i := 0; i < workers; i++ {
 		wg.Add(1)
@@ -219,15 +282,11 @@ func (sc *Scanner) probePending(jobs []probeJob) {
 					continue
 				}
 				applyProbe(it, res)
-				if sc.thumbFn != nil && it.ProbedWidth != nil && it.PosterPath == "" {
-					if p, err := sc.thumbFn(ctx, it.ID, it.FilePath, res.DurationSeconds); err == nil && p != "" {
-						it.PosterPath = p
-						u := "/artwork/poster/" + it.ID
-						it.PosterURL = &u
-						it.PosterSource = "thumbnail"
-					}
-				}
 				sc.store.Upsert(it)
+				// Upsert first so the thumbnail pool observes probed state.
+				if sc.thumbFn != nil && it.ProbedWidth != nil && it.PosterPath == "" {
+					thumbs <- thumbJob{itemID: it.ID, path: it.FilePath, duration: res.DurationSeconds}
+				}
 			}
 		}()
 	}
@@ -236,6 +295,10 @@ func (sc *Scanner) probePending(jobs []probeJob) {
 	}
 	close(in)
 	wg.Wait()
+	if sc.thumbFn != nil {
+		close(thumbs)
+		twg.Wait()
+	}
 }
 
 // applyProbe merges a probe Result into an Item per Swift field semantics:
@@ -324,7 +387,7 @@ func (sc *Scanner) scanLibraryInto(lib config.Library, keep map[string]bool, pen
 		libStale := found && (existing.LibraryID == nil || *existing.LibraryID != lib.ID)
 		unchanged := found && !libStale &&
 			existing.SizeBytes == st.Size() && existing.ModTime.Equal(st.ModTime()) &&
-			len(existing.SidecarPaths) == countSidecars(path, st)
+			len(existing.SidecarPaths) == sc.sidecarCount(path)
 		wantsFirstProbe := unchanged && sc.thumbFn != nil &&
 			existing.PosterPath == "" && existing.TrackProbeUpdatedAt == nil
 		newLocalArt := false
@@ -539,25 +602,53 @@ func findSidecars(mediaPath string) []string {
 	}
 	var out []string
 	for _, e := range entries {
-		if e.IsDir() {
-			continue
-		}
-		en := e.Name()
-		ext := strings.ToLower(strings.TrimPrefix(filepath.Ext(en), "."))
-		if !subtitleExts[ext] {
-			continue
-		}
-		bn := strings.TrimSuffix(en, filepath.Ext(en))
-		if strings.HasPrefix(bn, base) {
-			out = append(out, filepath.Join(folder, en))
+		if isSubtitleSidecar(e, base) {
+			out = append(out, filepath.Join(folder, e.Name()))
 		}
 	}
 	sort.Strings(out)
 	return out
 }
 
-func countSidecars(mediaPath string, _ os.FileInfo) int {
-	return len(findSidecars(mediaPath))
+// sidecarCount mirrors len(findSidecars(path)) but reuses a memoized
+// directory listing, fresh once per scan (ScanAll clears dirlistFresh).
+// TV folders are hit once per episode, so the memo collapses n-1 redundant
+// ReadDir calls per folder while still noticing subtitles added between scans.
+func (sc *Scanner) sidecarCount(mediaPath string) int {
+	folder := filepath.Dir(mediaPath)
+	sc.dirlistMu.Lock()
+	defer sc.dirlistMu.Unlock()
+	if sc.dirlistPath != folder || !sc.dirlistFresh {
+		entries, err := os.ReadDir(folder)
+		if err != nil {
+			sc.dirlistPath, sc.dirlistEntries, sc.dirlistFresh = "", nil, false
+			return 0
+		}
+		sc.dirlistPath, sc.dirlistEntries, sc.dirlistFresh = folder, entries, true
+	}
+	base := strings.TrimSuffix(filepath.Base(mediaPath), filepath.Ext(mediaPath))
+	n := 0
+	for _, e := range sc.dirlistEntries {
+		if isSubtitleSidecar(e, base) {
+			n++
+		}
+	}
+	return n
+}
+
+// isSubtitleSidecar reports whether a directory entry is a subtitle file
+// belonging to the media with the given base name (no extension).
+func isSubtitleSidecar(e os.DirEntry, base string) bool {
+	if e.IsDir() {
+		return false
+	}
+	en := e.Name()
+	ext := strings.ToLower(strings.TrimPrefix(filepath.Ext(en), "."))
+	if !subtitleExts[ext] {
+		return false
+	}
+	bn := strings.TrimSuffix(en, filepath.Ext(en))
+	return strings.HasPrefix(bn, base)
 }
 
 // firstExisting finds the first present artwork file in folder or parent.

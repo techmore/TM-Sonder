@@ -196,6 +196,48 @@ func TestRemovalDetection(t *testing.T) {
 	}
 }
 
+// A subtitle added between scans to an otherwise unchanged media file must
+// be picked up on the next pass: the per-scan directory-listing memo must
+// not serve a listing captured by an earlier scan.
+func TestRescanDetectsSidecarAddedBetweenScans(t *testing.T) {
+	root := fixtureTree(t)
+	store := New()
+	sc := NewScanner(store)
+	lib := []config.Library{
+		{ID: "tv", Name: "TV", Path: filepath.Join(root, "Shows"), Kind: "tvShow"},
+	}
+	if _, err := sc.ScanAll(lib); err != nil {
+		t.Fatal(err)
+	}
+	// Second pass with nothing changed; the memo now holds the Season 1
+	// listing from the previous scan.
+	if _, err := sc.ScanAll(lib); err != nil {
+		t.Fatal(err)
+	}
+	// Drop a new sidecar into the episode folder without touching the media
+	// file. Size and mtime are unchanged, so only a fresh directory listing
+	// can reveal the new sidecar.
+	newSrt := filepath.Join(root, "Shows", "Breaking Bad", "Season 1", "Breaking Bad S01E01 Pilot.en.srt")
+	if err := os.WriteFile(newSrt, []byte("sub2"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := sc.ScanAll(lib); err != nil {
+		t.Fatal(err)
+	}
+	var episode *Item
+	for _, it := range store.InternalItems() {
+		if it.Title == "Pilot" {
+			episode = it
+		}
+	}
+	if episode == nil {
+		t.Fatal("episode missing after rescan")
+	}
+	if len(episode.SidecarPaths) != 2 {
+		t.Errorf("sidecar added between scans not detected: paths = %v", episode.SidecarPaths)
+	}
+}
+
 // fakeProber records concurrency and call count for pool tests.
 type fakeProber struct {
 	onProbe func()
