@@ -238,6 +238,54 @@ func TestRescanDetectsSidecarAddedBetweenScans(t *testing.T) {
 	}
 }
 
+// An orphaned generated thumbnail (<thumbDir>/<id>.jpg whose item reference
+// was lost) must be reattached on the next scan without a re-probe.
+func TestRescanReattachesOrphanThumbnail(t *testing.T) {
+	root := fixtureTree(t)
+	store := New()
+	sc := NewScanner(store)
+	thumbDir := t.TempDir()
+	sc.SetThumbnailDir(thumbDir)
+	lib := []config.Library{
+		{ID: "movies", Name: "Movies", Path: filepath.Join(root, "Movies"), Kind: "movie"},
+	}
+	if _, err := sc.ScanAll(lib); err != nil {
+		t.Fatal(err)
+	}
+	var movie *Item
+	for _, it := range store.InternalItems() {
+		if it.Title == "Inception" {
+			movie = it
+		}
+	}
+	if movie == nil {
+		t.Fatal("episode missing after scan")
+	}
+	if movie.PosterPath != "" {
+		t.Skip("fixture movie already has local poster")
+	}
+	if err := os.WriteFile(filepath.Join(thumbDir, movie.ID+".jpg"), []byte("fakejpg"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	res, err := sc.ScanAll(lib)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.Updated != 1 {
+		t.Errorf("orphan reattach should rebuild 1 item, got %+v", res)
+	}
+	again, ok := store.Get(movie.ID)
+	if !ok {
+		t.Fatal("movie missing after rescan")
+	}
+	if again.PosterPath == "" || again.PosterSource != "thumbnail" {
+		t.Errorf("orphan thumbnail not reattached: path=%q source=%q", again.PosterPath, again.PosterSource)
+	}
+	if again.PosterURL == nil || *again.PosterURL != "/artwork/poster/"+movie.ID {
+		t.Errorf("poster URL wrong: %v", again.PosterURL)
+	}
+}
+
 // fakeProber records concurrency and call count for pool tests.
 type fakeProber struct {
 	onProbe func()

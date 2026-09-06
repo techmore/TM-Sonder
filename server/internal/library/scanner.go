@@ -49,6 +49,7 @@ type Scanner struct {
 	store        *Store
 	prober       Prober
 	thumbFn      ThumbFunc
+	thumbDir     string // artwork output dir (<id>.jpg); enables orphan reattach
 	workers      int
 	thumbWorkers int
 
@@ -92,6 +93,23 @@ func (sc *Scanner) SetProber(p Prober, workers int) {
 // It runs on the probe worker pool after each successful probe.
 func (sc *Scanner) SetThumbnailGen(fn ThumbFunc) {
 	sc.thumbFn = fn
+}
+
+// SetThumbnailDir tells the scanner where generated posters live
+// (<thumbDir>/<itemID>.jpg). buildItem reattaches an orphaned thumbnail when
+// local discovery finds nothing — e.g. after a rebuild dropped the reference
+// while the image file survived.
+func (sc *Scanner) SetThumbnailDir(dir string) {
+	sc.thumbDir = dir
+}
+
+// thumbExists reports whether a generated poster file survives on disk.
+func (sc *Scanner) thumbExists(id string) bool {
+	if sc.thumbDir == "" {
+		return false
+	}
+	st, err := os.Stat(filepath.Join(sc.thumbDir, id+".jpg"))
+	return err == nil && !st.IsDir()
 }
 
 func (sc *Scanner) State() ScanState {
@@ -397,6 +415,12 @@ func (sc *Scanner) scanLibraryInto(lib config.Library, keep map[string]bool, pen
 			if firstExisting(filepath.Dir(path), filepath.Dir(filepath.Dir(path)), artworkPosterNames, b) != "" {
 				newLocalArt = true
 			}
+			// Orphaned thumbnail: the generated file survives while the item
+			// reference was lost. Rebuild reattaches it in buildItem (no
+			// re-probe: TrackProbeUpdatedAt carries over).
+			if !newLocalArt && sc.thumbExists(id) {
+				newLocalArt = true
+			}
 		}
 		if unchanged && !wantsFirstProbe && !newLocalArt {
 			res.Skipped++
@@ -560,6 +584,14 @@ func (sc *Scanner) buildItem(path, id string, st os.FileInfo, format api.MediaFo
 		u := "/artwork/backdrop/" + id
 		item.BackdropURL = &u
 	}
+	// Orphan reattach: a generated thumbnail whose reference was lost (e.g.
+	// dropped by an older rebuild) still lives at <thumbDir>/<id>.jpg.
+	if item.PosterPath == "" && sc.thumbExists(id) {
+		item.PosterPath = filepath.Join(sc.thumbDir, id+".jpg")
+		u := "/artwork/poster/" + id
+		item.PosterURL = &u
+		item.PosterSource = "thumbnail"
+	}
 
 	// Preserve progress already recorded for this item (rescan safety).
 	if prev, ok := sc.store.ProgressFor(id); ok {
@@ -581,8 +613,10 @@ func (sc *Scanner) buildItem(path, id string, st os.FileInfo, format api.MediaFo
 		if item.DurationSeconds == 0 {
 			item.DurationSeconds = prev.DurationSeconds
 		}
-		// Keep provider artwork when local discovery came up empty.
-		if item.PosterPath == "" && prev.PosterSource != "" && prev.PosterSource != "thumbnail" && prev.PosterSource != "local" {
+		// Keep provider artwork when local discovery came up empty. Thumbnails
+		// included: the generated file survives rebuilds even when the reference
+		// was dropped (see orphan reattach below).
+		if item.PosterPath == "" && prev.PosterPath != "" {
 			item.PosterPath = prev.PosterPath
 			item.PosterURL = prev.PosterURL
 			item.PosterSource = prev.PosterSource

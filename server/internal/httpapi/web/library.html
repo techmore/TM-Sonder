@@ -407,11 +407,30 @@
       }
       return s;
     }
+    // Generic bonus-feature titles: identical across films ("Trailer" under
+    // every Featurettes/ dir) but different content. Keys are post-copyKey
+    // normalized titles; matching items always get solo cards.
+    const GENERIC_EXTRAS = new Set([
+      "trailer", "theatricaltrailer", "teaser",
+      "deletedscenes", "behindthescenes", "makingof",
+      "featurette", "bloopers", "outtakes", "gagreeel",
+      "interview", "interviews", "commentary",
+    ]);
     function rebuildCopyGroups() {
       copyGroups = new Map();
+      const extrasGroups = new Map();  // generic bonus-feature titles: never merged
       for (const i of items) {
         if (i.isPlaceholder) continue;
         const k = copyKey(i);
+        if (GENERIC_EXTRAS.has(k.split(" ")[1])) {
+          // "Trailer" / "Deleted Scenes" from different films share a key but
+          // are different content — one card per item.
+          const solo = k + " " + i.id;
+          if (!copyGroups.has(solo)) copyGroups.set(solo, []);
+          copyGroups.get(solo).push(i);
+          extrasGroups.set(solo, true);
+          continue;
+        }
         if (!copyGroups.has(k)) copyGroups.set(k, []);
         copyGroups.get(k).push(i);
       }
@@ -435,8 +454,10 @@
       };
       for (const kind of kinds) {
         if (kind !== "movie" && kind !== "documentary") continue;
-        const keys = [...copyGroups.keys()].filter(k => k.startsWith(kind + "\u0000"))
-          .map(k => k.slice(kind.length + 1)).sort();
+        const keys = [...copyGroups.keys()].filter(k => k.startsWith(kind + " "))
+          .map(k => k.slice(kind.length + 1))
+          .filter(t => !extrasGroups.has(kind + " " + t))
+          .sort();
         for (const k of keys) parent.set(k, k);
         for (let i = 0; i < keys.length; i++) {
           for (let j = i + 1; j < Math.min(i + 6, keys.length); j++) {
@@ -457,9 +478,21 @@
           }
         }
         // Re-point every group key to its merged root bucket.
+        // Solo extras cards bypass the union entirely. Keys of other kinds
+        // are identity-mapped: find() only knows this kind's union, and
+        // letting other kinds fall through would collapse each of them into
+        // a single "<kind> undefined" bucket.
         itemGroupKey = new Map();
         for (const k of [...copyGroups.keys()]) {
-          const kindx = k.split("\u0000")[0], t = k.slice(kindx.length + 1);
+          if (extrasGroups.has(k)) {
+            for (const it of copyGroups.get(k)) itemGroupKey.set(it.id, k);
+            continue;
+          }
+          const kindx = k.split(" ")[0], t = k.slice(kindx.length + 1);
+          if (kindx !== kind) {
+            for (const it of copyGroups.get(k)) itemGroupKey.set(it.id, k);
+            continue;
+          }
           const root = find(t);
           const rk = kindx + "\u0000" + root;
           if (root !== t) {

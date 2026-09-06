@@ -158,6 +158,7 @@ func run(configFlag, plexDB string, enrichPass bool) error {
 		scanner.SetProber(probe.NewCache(cfg.FFprobePath), probeWorkers)
 		if ffmpegPath, ferr := lookPath(cfg.FFmpegPath); ferr == nil {
 			gen := &artwork.Generator{FFmpegPath: ffmpegPath, OutDir: filepath.Join(cfg.DataDir, "artwork")}
+			scanner.SetThumbnailDir(gen.OutDir)
 			scanner.SetThumbnailGen(func(ctx context.Context, itemID, videoPath string, dur float64) (string, error) {
 				return gen.Generate(ctx, videoPath, itemID, dur)
 			})
