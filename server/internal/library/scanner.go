@@ -387,6 +387,7 @@ func (sc *Scanner) scanLibraryInto(lib config.Library, keep map[string]bool, pen
 		libStale := found && (existing.LibraryID == nil || *existing.LibraryID != lib.ID)
 		unchanged := found && !libStale &&
 			existing.SizeBytes == st.Size() && existing.ModTime.Equal(st.ModTime()) &&
+			existing.ParseVersion == ParserVersion &&
 			len(existing.SidecarPaths) == sc.sidecarCount(path)
 		wantsFirstProbe := unchanged && sc.thumbFn != nil &&
 			existing.PosterPath == "" && existing.TrackProbeUpdatedAt == nil
@@ -543,6 +544,7 @@ func (sc *Scanner) buildItem(path, id string, st os.FileInfo, format api.MediaFo
 	}
 
 	item.SidecarPaths = findSidecars(path)
+	item.ParseVersion = ParserVersion
 
 	// Artwork discovery.
 	base := strings.TrimSuffix(filepath.Base(path), filepath.Ext(path))
@@ -562,6 +564,33 @@ func (sc *Scanner) buildItem(path, id string, st os.FileInfo, format api.MediaFo
 	// Preserve progress already recorded for this item (rescan safety).
 	if prev, ok := sc.store.ProgressFor(id); ok {
 		item.ProgressSeconds = prev.Seconds
+	}
+	// Preserve enrichment- and probe-carried state across rebuilds (parser
+	// version bumps, library reassignment): these are not parse outputs and
+	// would otherwise vanish until the next probe/enrich pass.
+	if prev, ok := sc.store.Get(id); ok {
+		item.Summary = prev.Summary
+		item.Tags = prev.Tags
+		item.Author = prev.Author
+		item.Narrator = prev.Narrator
+		item.ProbedWidth = prev.ProbedWidth
+		item.ProbedHeight = prev.ProbedHeight
+		item.ProbedCodec = prev.ProbedCodec
+		item.ProbedBitrate = prev.ProbedBitrate
+		item.TrackProbeUpdatedAt = prev.TrackProbeUpdatedAt
+		if item.DurationSeconds == 0 {
+			item.DurationSeconds = prev.DurationSeconds
+		}
+		// Keep provider artwork when local discovery came up empty.
+		if item.PosterPath == "" && prev.PosterSource != "" && prev.PosterSource != "thumbnail" && prev.PosterSource != "local" {
+			item.PosterPath = prev.PosterPath
+			item.PosterURL = prev.PosterURL
+			item.PosterSource = prev.PosterSource
+		}
+		if item.BackdropPath == "" && prev.BackdropPath != "" {
+			item.BackdropPath = prev.BackdropPath
+			item.BackdropURL = prev.BackdropURL
+		}
 	}
 	return item
 }

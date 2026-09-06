@@ -55,6 +55,30 @@ func TestParseFilenameTV(t *testing.T) {
 			episode: 8,
 			title:   "Meeting",
 		},
+		{
+			// Dots as separators between S/E and quality chain as tail: the
+			// "1080p Bluray AAC 5.1 x265-GRP" junk must not become a second
+			// episode number or the show title (BSG-per-episode-folders case).
+			name:    "dot separated code with release chain",
+			path:    "/tv/Battlestar Galactica (2004)/Season 01/Battlestar.Galactica.(2003).S01.E01.1080p.Bluray.AAC.5.1.x265-LION[UTR].mkv",
+			kind:    "tvShow",
+			show:    "Battlestar Galactica (2003)",
+			season:  1,
+			episode: 1,
+			title:   "Episode 1",
+		},
+		{
+			// Parenthesised code after the show name ("Cheers (S08E20) 50-50
+			// Carla") — used by moviesbyrizzo-style releases. The resolution
+			// chain tail ("1080p H.264 (moviesbyrizzo)") is junk, not title.
+			name:    "parenthesised code after show",
+			path:    "/tv/Cheers (1982)/Season 08/Cheers (S08E20) 50-50 Carla 1080p H.264 (moviesbyrizzo).mkv",
+			kind:    "tvShow",
+			show:    "Cheers",
+			season:  8,
+			episode: 20,
+			title:   "50-50 Carla",
+		},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {

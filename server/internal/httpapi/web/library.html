@@ -322,10 +322,13 @@
       if (dedupEnabled) {
         // Keep the best copy of each (kind,title); default to the highest
         // definition (rankCopy), but a copy with watch progress wins so the
-        // user resumes where they left off.
+        // user resumes where they left off. Keys are the MERGED group keys
+        // (exact + fuzzy roots) so variants like "Good Will Hunting V2"
+        // fold into "Good Will Hunting" here too. Groups may have been
+        // rebuilt for a different render scope; membership maps always hold.
         const byKey = new Map();
         for (const i of list) {
-          const key = copyKey(i);
+          const key = itemGroupKey.get(i.id) ?? copyKey(i);
           const prev = byKey.get(key);
           if (!prev) { byKey.set(key, i); continue; }
           const prevP = progressFor(prev.id), curP = progressFor(i.id);
@@ -351,14 +354,58 @@
     // "Tucker: The Man..." / "Tucker The Man..." collapse, as do titles
     // carrying " 1080p BluRay x265" style suffixes.
     let copyGroups = new Map();
+    let itemGroupKey = new Map();   // item.id -> merged group key (incl. fuzzy roots)
+    function foldDiacritics(s) {
+      return s.normalize("NFD").replace(/[\u0300-\u036f]/g, "");
+    }
     function copyKey(i) {
-      let t = (i.title || "").toLowerCase();
+      let t = foldDiacritics(i.title || "").toLowerCase();
       t = t.replace(/\b\d{3,4}\s*p\b/gi, "")           // resolution hints
            .replace(/[\[\(\{][^\]\)\}]*[\]\)\}]/g, "")  // any (...) [...] {...} tag group
            .replace(/(?:bluray|webrip|web[- ]?dl|hdtv|hdrip|dvdrip|bdrip|brrip|remux|x265|x264|hevc|h264|10bit|8bit|aac|ddp5|yify|rarbg|mkvcage|s4filmes|proper|repack|unrated)\b/gi, "")
            .replace(/\b(dual|multi|subs?|ws)\b/gi, "")
+           .replace(/\bv\d+\b/gi, "")                   // V2 / v3 re-encode tags
+           .replace(/\b(?:cd|disc|dvd|pt|part)\s*\d+\b/gi, "")  // split parts (arabic; roman "Part II" may be a real sequel)
            .replace(/[^a-z0-9]+/g, "");
       return i.kind + "\u0000" + t;
+    }
+    // Near-duplicate folding: typos ("007 Jame" vs "007 James"), junk tails
+    // ("-1", " a", "-cd1", "800MB"), diacritics (Nausicaa/Nausicaä), and
+    // release-tag variants get merged into the same card. Guards keep real
+    // sequels/plurals separate: different trailing numbers ("Predator" vs
+    // "Predators", "Sherlock Holmes" vs "Holmes 2") or disjoint years never
+    // merge. Ratios calibrated on the live catalog (folds verified correct).
+    function diceRatio(a, b) {
+      if (a === b) return 1;
+      if (a.length < 4 || b.length < 4) return 0;
+      const A = new Set(), B = new Set();
+      for (let i = 0; i < a.length - 1; i++) A.add(a.slice(i, i + 2));
+      for (let i = 0; i < b.length - 1; i++) B.add(b.slice(i, i + 2));
+      let inter = 0;
+      for (const x of A) if (B.has(x)) inter++;
+      return 2 * inter / (A.size + B.size);
+    }
+    const FUZZ_MIN = 0.85;
+    function numTail(k) {
+      const m = k.match(/(\d+|[ivxl]{1,5})$/);
+      return m ? m[1] : null;
+    }
+    function isPluralPair(a, b) {
+      // Word-boundary plural: "predator"/"predators". Only when the shorter
+      // ends at a whole-token boundary of the longer and the extra letters
+      // are just an s/es tail.
+      const short = a.length <= b.length ? a : b;
+      const long = a.length <= b.length ? b : a;
+      return long.startsWith(short) && /^(?:es|s)$/.test(long.slice(short.length));
+    }
+    function yearSet(kind, key) {
+      const s = new Set();
+      for (const i of items) {
+        if (i.isPlaceholder || i.kind !== kind) continue;
+        if (copyKey(i) !== key) continue;
+        if (i.year) s.add(i.year);
+      }
+      return s;
     }
     function rebuildCopyGroups() {
       copyGroups = new Map();
@@ -367,6 +414,61 @@
         const k = copyKey(i);
         if (!copyGroups.has(k)) copyGroups.set(k, []);
         copyGroups.get(k).push(i);
+      }
+      // Union-find over near-identical keys (per kind), only for kinds with
+      // meaningful dupes (movies/documentaries). TV uses exact keys only —
+      // episode codes make fuzzy keys unreliable.
+      const kinds = new Set();
+      for (const k of copyGroups.keys()) kinds.add(k.split("\u0000")[0]);
+      const parent = new Map();
+      const find = (k) => {
+        let r = k;
+        while (parent.get(r) !== r) r = parent.get(r);
+        parent.set(k, r);
+        return r;
+      };
+      const yearsOf = new Map();
+      const yearCache = (kind, key) => {
+        const ck = kind + "\u0000" + key;
+        if (!yearsOf.has(ck)) yearsOf.set(ck, yearSet(kind, key));
+        return yearsOf.get(ck);
+      };
+      for (const kind of kinds) {
+        if (kind !== "movie" && kind !== "documentary") continue;
+        const keys = [...copyGroups.keys()].filter(k => k.startsWith(kind + "\u0000"))
+          .map(k => k.slice(kind.length + 1)).sort();
+        for (const k of keys) parent.set(k, k);
+        for (let i = 0; i < keys.length; i++) {
+          for (let j = i + 1; j < Math.min(i + 6, keys.length); j++) {
+            const a = keys[i], b = keys[j];
+            if (Math.abs(a.length - b.length) > 3) continue;
+            if (diceRatio(a, b) < FUZZ_MIN) continue;
+            if (isPluralPair(a, b)) continue;              // Predator/Predators
+            const ta = numTail(a), tb = numTail(b);
+            if ((ta && !tb) || (tb && !ta)) continue;      // sequel guard
+            if (ta && tb && ta !== tb) continue;
+            const ya = yearCache(kind, a), yb = yearCache(kind, b);
+            ya.add(0); yb.add(0);
+            if (![...ya].some(y => yb.has(y))) continue;   // year guard
+            const ra = find(a), rb = find(b);
+            if (ra === rb) continue;
+            const root = a.length <= b.length ? ra : rb;
+            parent.set(ra, root); parent.set(rb, root);
+          }
+        }
+        // Re-point every group key to its merged root bucket.
+        itemGroupKey = new Map();
+        for (const k of [...copyGroups.keys()]) {
+          const kindx = k.split("\u0000")[0], t = k.slice(kindx.length + 1);
+          const root = find(t);
+          const rk = kindx + "\u0000" + root;
+          if (root !== t) {
+            if (!copyGroups.has(rk)) copyGroups.set(rk, []);
+            copyGroups.get(rk).push(...copyGroups.get(k));
+            copyGroups.delete(k);
+          }
+          for (const it of copyGroups.get(rk) || []) itemGroupKey.set(it.id, rk);
+        }
       }
       for (const group of copyGroups.values()) {
         group.sort((a,b) => {
@@ -378,6 +480,11 @@
       }
     }
     function copiesOf(item) {
+      const gk = itemGroupKey.get(item.id);
+      if (gk) {
+        const g = copyGroups.get(gk);
+        if (g && g.length) return g;
+      }
       return copyGroups.get(copyKey(item)) ?? [item];
     }
 

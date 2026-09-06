@@ -35,6 +35,13 @@ func uuidV5(ns [16]byte, name string) string {
 	return fmt.Sprintf("%x-%x-%x-%x-%x", u[0:4], u[4:6], u[6:8], u[8:10], u[10:16])
 }
 
+// ParserVersion bumps whenever parser output semantics change. The scanner
+// treats items stamped with an older version as changed on the next scan
+// (IDs are path-derived, so progress and item identity survive the rebuild),
+// which propagates parsing fixes to already-cataloged libraries without a
+// full wipe.
+const ParserVersion = 4
+
 // Parsed is the ported result of SonderMediaParser.parseTitle. Kind is chosen
 // by the scanner from library config + extension, not by the parser.
 type Parsed struct {
@@ -52,9 +59,11 @@ type Parsed struct {
 }
 
 var (
-	reTVEpisodeShow = regexp.MustCompile(`(?i)^(.+?)[\s._-]+S(\d{1,2})E(\d{1,2})(?:[\s._-]*E?(\d{1,2}))?[\s._-]*(.*)$`)
-	reTVBare        = regexp.MustCompile(`(?i)^S(\d{1,2})E(\d{1,2})(?:[\s._-]*E?(\d{1,2}))?[\s._-]*(.*)$`)
+	reTVEpisodeShow = regexp.MustCompile(`(?i)^(.+?)[\s._-]+S(\d{1,2})[\s._-]*E(\d{1,2})[\s._-]*(.*)$`)
+	reTVBare        = regexp.MustCompile(`(?i)^S(\d{1,2})[\s._-]*E(\d{1,2})[\s._-]*(.*)$`)
 	reTVCross       = regexp.MustCompile(`(?i)^(.+?)[\s._-]+(\d{1,2})x(\d{1,2})[\s._-]*(.*)$`)
+	// Parenthesised code right after the show name: "Cheers (S08E20) Title".
+	reTVParen = regexp.MustCompile(`(?i)^(.+?)\s*\(\s*S(\d{1,2})[\s._-]*E(\d{1,2})\s*\)\s*(.*)$`)
 
 	reAbsEpisodeShow = regexp.MustCompile(`(?i)^(.+?)[\s._-]+(?:episode|ep)?[\s._-]*(\d{1,3})(?:v\d+)?(?:[\s._-]+(.+))?$`)
 	reAbsEpisodeBare = regexp.MustCompile(`(?i)^(?:episode|ep)?[\s._-]*(\d{1,3})(?:v\d+)?(?:[\s._-]+(.+))?$`)
@@ -70,8 +79,19 @@ var (
 	reEditionTag    = regexp.MustCompile(`(?i)\{edition-([^}]{1,32})\}`)
 	reSplitSuffix   = regexp.MustCompile(`(?i)(?:^|[\s._-])(cd\d+|disc\d+|disk\d+|dvd\d+|part\d+|pt\d+)$`)
 	reTrailingSplit = regexp.MustCompile(`(?i)[\s._-]+(?:cd\d+|disc\d+|disk\d+|dvd\d+|part\d+|pt\d+)$`)
-	reSeasonFolder  = regexp.MustCompile(`(?i)(?:season[\s._-]*(\d{1,2}))|(?:^s(\d{1,2})$)|(?:^series[\s._-]*(\d{1,2})$)`)
-	reSpecialsOnly  = regexp.MustCompile(`(?i)^(specials|season[\s._-]*0|s0{1,2})$`)
+
+	// Quality tail: from the first resolution token (1080p/720p/480p...) to
+	// the end — e.g. " Show S04 E18 Extended 1080p Bluray AAC" -> " Show S04 E18 Extended".
+	reTrailingQuality = regexp.MustCompile(`(?i)[\s._-]*\b(?:480p|576p|720p|1080p|2160p|4k)\b[\s\S]*$`)
+	// Release chain: resolution token followed by MORE junk tokens before the
+	// string ends ("1080p Bluray AAC 5.1 x265-GRP") — a release chain, not a
+	// lone quality suffix. Matched where used in cleanEpisodeTitle.
+	reQualityChain = regexp.MustCompile(`(?i)[\s._-]*\b(?:480p|576p|720p|1080p|2160p|4k)\b(?:[\s._-]+\S+){1,}[\s\S]*$`)
+	// Episode code + everything after it inside a show-title candidate:
+	// "Battlestar Galactica (2003) S02 E13 1080p Bluray AAC" -> "Battlestar Galactica (2003)".
+	reEpisodeCodeTail = regexp.MustCompile(`(?i)[\s._-]+S\d{1,2}[\s._]*E\d{1,2}[\s\S]*$`)
+	reSeasonFolder    = regexp.MustCompile(`(?i)(?:season[\s._-]*(\d{1,2}))|(?:^s(\d{1,2})$)|(?:^series[\s._-]*(\d{1,2})$)`)
+	reSpecialsOnly    = regexp.MustCompile(`(?i)^(specials|season[\s._-]*0|s0{1,2})$`)
 )
 
 func cleanMediaTitle(s string) string {
@@ -92,6 +112,11 @@ func removeSplitSuffix(s string) string {
 func cleanShowTitle(s string) string {
 	s = reLeadingTag.ReplaceAllString(s, "")
 	s = removePlexTags(s)
+	// Per-episode folder names leak into show titles ("Show S04 E18
+	// Extended 1080p Bluray AAC"): drop the episode code and any quality
+	// tail after it.
+	s = reEpisodeCodeTail.ReplaceAllString(s, "")
+	s = reTrailingQuality.ReplaceAllString(s, "")
 	return cleanMediaTitle(s)
 }
 
@@ -100,6 +125,10 @@ func cleanEpisodeTitle(s string) string {
 	s = reQualityParen.ReplaceAllString(s, "")
 	s = reHash8.ReplaceAllString(s, "")
 	s = removePlexTags(s)
+	// Bare trailing release chains ("1080p Bluray AAC 5.1 x265-GRP") are not
+	// a real episode name; drop from the first resolution token on. A lone
+	// quality suffix ("One Minute 1080p") is kept for Swift parity.
+	s = reQualityChain.ReplaceAllString(s, "")
 	s = cleanMediaTitle(s)
 	return strings.Trim(s, "- ")
 }
@@ -197,10 +226,13 @@ type tvMatch struct {
 
 var tvPatterns = []tvMatch{
 	{reTVEpisodeShow, func(m []string) (string, string, string, string) {
-		return m[1], m[2], m[3], m[5]
+		return m[1], m[2], m[3], m[4]
 	}},
 	{reTVBare, func(m []string) (string, string, string, string) {
-		return "", m[1], m[2], m[4]
+		return "", m[1], m[2], m[3]
+	}},
+	{reTVParen, func(m []string) (string, string, string, string) {
+		return m[1], m[2], m[3], m[4]
 	}},
 	{reTVCross, func(m []string) (string, string, string, string) {
 		return m[1], m[2], m[3], m[4]

@@ -24,6 +24,7 @@ type Item struct {
 	PosterSource string    `json:"posterSource,omitempty"` // local|thumbnail|wikipedia|audnexus|open-library
 	SizeBytes    int64     `json:"sizeBytes,omitempty"`
 	ModTime      time.Time `json:"modTime"`
+	ParseVersion int       `json:"parseVersion,omitempty"` // parser semantics stamp; older versions rebuild on rescan
 }
 
 func (i *Item) clone() *Item {
