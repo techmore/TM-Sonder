@@ -40,7 +40,7 @@ func uuidV5(ns [16]byte, name string) string {
 // (IDs are path-derived, so progress and item identity survive the rebuild),
 // which propagates parsing fixes to already-cataloged libraries without a
 // full wipe.
-const ParserVersion = 4
+const ParserVersion = 5
 
 // Parsed is the ported result of SonderMediaParser.parseTitle. Kind is chosen
 // by the scanner from library config + extension, not by the parser.
