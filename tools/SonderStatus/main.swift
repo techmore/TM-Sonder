@@ -589,6 +589,7 @@ final class StatusApp: NSObject, NSApplicationDelegate {
                 return
             }
             self.manualRestartVersion = nil
+            updateLine.title = "Updates: Running \(manualRestartVersion)"
         }
         guard let info = updateInfo else { return }
         if info.outdated, let availableVersion = info.availableVersion {
