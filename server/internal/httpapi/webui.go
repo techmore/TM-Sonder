@@ -50,9 +50,6 @@ func libraryPageForTheme(preset string) *gzippedPage {
 	if preset != "dark" && preset != "techmore" {
 		preset = "earthy"
 	}
-	if preset == "earthy" {
-		return libraryPage
-	}
 
 	libraryThemeMu.Lock()
 	defer libraryThemeMu.Unlock()
@@ -62,19 +59,43 @@ func libraryPageForTheme(preset string) *gzippedPage {
 
 	page := newGzippedPage(func() []byte {
 		raw, _, _ := libraryPage.bytes()
-		return bytes.ReplaceAll(raw, []byte(`data-theme="earthy"`), []byte(`data-theme="`+preset+`"`))
+		raw = bytes.ReplaceAll(raw, []byte(`data-theme="earthy"`), []byte(`data-theme="`+preset+`"`))
+		for _, asset := range []struct {
+			placeholder string
+			page        *gzippedPage
+		}{
+			{placeholder: "/library.css?v=asset", page: libraryCSS},
+			{placeholder: "/library.js?v=asset", page: libraryJS},
+			{placeholder: "/shared.js?v=asset", page: sharedJS},
+			{placeholder: "/favicon.png?v=asset", page: faviconPNG},
+		} {
+			version := assetVersion(asset.page)
+			raw = bytes.ReplaceAll(raw, []byte(asset.placeholder), []byte(strings.Replace(asset.placeholder, "v=asset", "v="+version, 1)))
+		}
+		return raw
 	})
 	libraryThemes[preset] = page
 	return page
+}
+
+func assetVersion(page *gzippedPage) string {
+	_, _, etag := page.bytes()
+	return strings.Trim(etag, `"`)
 }
 
 // serveAsset writes an embedded, pre-gzipped asset with ETag/304 support.
 func serveAsset(w http.ResponseWriter, r *http.Request, page *gzippedPage, contentType string) {
 	raw, gz, etag := page.bytes()
 	w.Header().Set("Content-Type", contentType)
-	// Assets have stable URLs, not content-hashed filenames. Revalidate on
-	// reload so a restart cannot pair new catalog data with stale UI code.
-	w.Header().Set("Cache-Control", "public, max-age=0, must-revalidate")
+	// Unversioned and legacy asset URLs revalidate on reload. The main page uses
+	// ETag-derived hashes, which are safe to cache immutably.
+	cacheControl := "public, max-age=0, must-revalidate"
+	if v := r.URL.Query().Get("v"); len(v) == 16 {
+		if _, err := hex.DecodeString(v); err == nil {
+			cacheControl = "public, max-age=31536000, immutable"
+		}
+	}
+	w.Header().Set("Cache-Control", cacheControl)
 	w.Header().Set("Vary", "Accept-Encoding")
 	w.Header().Set("ETag", etag)
 	if etagMatches(r.Header.Get("If-None-Match"), etag) {

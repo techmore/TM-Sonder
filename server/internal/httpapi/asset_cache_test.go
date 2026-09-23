@@ -20,3 +20,12 @@ func TestStableAssetURLsRevalidateAcrossDeployments(t *testing.T) {
 		t.Fatalf("conditional caching lost: %d", cached.Code)
 	}
 }
+
+func TestVersionedAssetURLsAreImmutable(t *testing.T) {
+	response := httptest.NewRecorder()
+	serveAsset(response, httptest.NewRequest("GET", "/library.js?v=0123456789abcdef", nil), libraryJS, "text/javascript")
+	cache := response.Header().Get("Cache-Control")
+	if !strings.Contains(cache, "max-age=31536000") || !strings.Contains(cache, "immutable") {
+		t.Fatalf("versioned asset is not immutable: %s", cache)
+	}
+}

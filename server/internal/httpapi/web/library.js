@@ -957,6 +957,7 @@
     // carrying " 1080p BluRay x265" style suffixes.
     let copyGroups = new Map();
     let itemGroupKey = new Map();   // item.id -> merged group key (incl. fuzzy roots)
+    const COPY_GROUP_CACHE_KEY = "sonder.copy-groups.v1";
     function foldDiacritics(s) {
       return s.normalize("NFD").replace(/[\u0300-\u036f]/g, "");
     }
@@ -1004,15 +1005,6 @@
       const long = a.length <= b.length ? b : a;
       return long.startsWith(short) && /^(?:es|s)$/.test(long.slice(short.length));
     }
-    function yearSet(kind, key) {
-      const s = new Set();
-      for (const i of items) {
-        if (i.isPlaceholder || i.kind !== kind) continue;
-        if (copyKey(i) !== key) continue;
-        if (i.year) s.add(i.year);
-      }
-      return s;
-    }
     // Generic bonus-feature titles: identical across films ("Trailer" under
     // every Featurettes/ dir) but different content. Keys are post-copyKey
     // normalized titles; matching items always get solo cards.
@@ -1025,9 +1017,15 @@
     function rebuildCopyGroups() {
       copyGroups = new Map();
       const extrasGroups = new Map();  // generic bonus-feature titles: never merged
+      const yearsByKey = new Map();
       for (const i of items) {
         if (i.isPlaceholder) continue;
         const k = copyKey(i);
+        if (i.year) {
+          let years = yearsByKey.get(k);
+          if (!years) { years = new Set(); yearsByKey.set(k, years); }
+          years.add(i.year);
+        }
         if (GENERIC_EXTRAS.has(k.split("\u0000")[1])) {
           // "Trailer" / "Deleted Scenes" from different films share a key but
           // are different content — one card per item.
@@ -1066,12 +1064,8 @@
         parent.set(k, r);
         return r;
       };
-      const yearsOf = new Map();
-      const yearCache = (kind, key) => {
-        const ck = kind + "\u0000" + key;
-        if (!yearsOf.has(ck)) yearsOf.set(ck, yearSet(kind, key));
-        return yearsOf.get(ck);
-      };
+      const emptyYears = new Set();
+      const yearCache = (kind, key) => yearsByKey.get(kind + "\u0000" + key) || emptyYears;
       for (const kind of kinds) {
         if (kind !== "movie" && kind !== "documentary") continue;
         const keys = [...copyGroups.keys()].filter(k => k.startsWith(kind + "\u0000"))
@@ -1124,6 +1118,10 @@
           for (const it of copyGroups.get(rk) || []) itemGroupKey.set(it.id, rk);
         }
       }
+      sortCopyGroups();
+    }
+
+    function sortCopyGroups() {
       for (const group of copyGroups.values()) {
         group.sort((a,b) => {
           const pa = progressFor(a.id), pb = progressFor(b.id);
@@ -1138,6 +1136,52 @@
       for (const [key, group] of copyGroups) {
         for (const item of group) itemGroupKey.set(item.id, key);
       }
+    }
+
+    // Fuzzy copy matching is intentionally thorough, but its result only
+    // changes when the catalog generation changes. Cache the compact
+    // itemID -> merged-group map so a normal reload can rebuild the Maps in a
+    // linear pass instead of repeating all fuzzy comparisons.
+    function restoreCopyGroups(etag) {
+      if (!etag || typeof localStorage === "undefined") return false;
+      try {
+        const cached = JSON.parse(localStorage.getItem(COPY_GROUP_CACHE_KEY) || "null");
+        if (!cached || cached.etag !== etag || !Array.isArray(cached.entries)) return false;
+        const expected = items.reduce((count, item) => count + (item.isPlaceholder ? 0 : 1), 0);
+        const membership = new Map(cached.entries);
+        if (membership.size !== expected) return false;
+
+        const nextGroups = new Map();
+        for (const item of items) {
+          if (item.isPlaceholder) continue;
+          const groupKey = membership.get(item.id);
+          if (!groupKey) return false;
+          if (!nextGroups.has(groupKey)) nextGroups.set(groupKey, []);
+          nextGroups.get(groupKey).push(item);
+        }
+        itemGroupKey = membership;
+        copyGroups = nextGroups;
+        sortCopyGroups();
+        return true;
+      } catch (_) {
+        return false;
+      }
+    }
+
+    function cacheCopyGroups(etag) {
+      if (!etag || typeof localStorage === "undefined") return;
+      const save = () => {
+        try {
+          localStorage.setItem(COPY_GROUP_CACHE_KEY, JSON.stringify({
+            etag,
+            entries: [...itemGroupKey.entries()],
+          }));
+        } catch (_) {
+          // Storage can be disabled or full; the uncached path remains valid.
+        }
+      };
+      if (typeof requestIdleCallback === "function") requestIdleCallback(save, { timeout: 2000 });
+      else setTimeout(save, 0);
     }
     function copiesOf(item) {
       const gk = itemGroupKey.get(item.id);
@@ -1908,11 +1952,17 @@
       });
     }
 
-    fetch(api("/api/library")).then(r => r.json()).then(data => {
+    fetch(api("/api/library")).then(async response => {
+      const etag = response.headers.get("ETag") || "";
+      return { etag, data: await response.json() };
+    }).then(({ etag, data }) => {
       applyTheme(data.theme?.preset || "earthy");
       items = data.items ?? [];
       (data.progress ?? []).forEach(pr => progressByID.set(pr.itemID, pr));
-      rebuildCopyGroups();
+      if (!restoreCopyGroups(etag)) {
+        rebuildCopyGroups();
+        cacheCopyGroups(etag);
+      }
       renderFacets();
       applyHash(); // restore tab/show/page from the URL on load
       render();
@@ -2173,10 +2223,17 @@
       await putSettings(body);
       pendingLibs = null;
       // library table may have changed -> refresh catalog behind the dialog
-      fetch(api("/api/library")).then(r => r.json()).then(data => {
+      fetch(api("/api/library")).then(async response => {
+        const etag = response.headers.get("ETag") || "";
+        return { etag, data: await response.json() };
+      }).then(({ etag, data }) => {
         items = data.items ?? [];
         (data.progress ?? []).forEach(pr => progressByID.set(pr.itemID, pr));
         storageData = null;
+        if (!restoreCopyGroups(etag)) {
+          rebuildCopyGroups();
+          cacheCopyGroups(etag);
+        }
         renderSettings();
         render();
       });
@@ -2199,12 +2256,17 @@
       }, 2000);
     }
     async function refreshLibrary() {
-      const data = await (await fetch(api("/api/library"))).json();
+      const response = await fetch(api("/api/library"));
+      const etag = response.headers.get("ETag") || "";
+      const data = await response.json();
       items = data.items ?? [];
       storageData = null;
       progressByID.clear();
       (data.progress ?? []).forEach(pr => progressByID.set(pr.itemID, pr));
-      rebuildCopyGroups();
+      if (!restoreCopyGroups(etag)) {
+        rebuildCopyGroups();
+        cacheCopyGroups(etag);
+      }
       render();
       refreshLibraryHealth();
     }
@@ -2226,7 +2288,11 @@
         document.querySelector("#libraryHealthSummary").textContent = "Library consistency check unavailable";
       }
     }
-    refreshLibraryHealth();
+    const scheduleIdle = (task, timeout = 1500) => {
+      if (typeof requestIdleCallback === "function") requestIdleCallback(task, { timeout });
+      else setTimeout(task, 0);
+    };
+    scheduleIdle(refreshLibraryHealth);
 
     const optimizationPanel = document.querySelector("#optimizationPage");
     let optimizationRefreshInFlight = false;
