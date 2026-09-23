@@ -387,6 +387,95 @@ body.optimize-mode #backRow { display:none !important; }
   .chip, .filter-modes button { padding:9px 13px; }
 }
 
+/* ── Techmore editorial pass ──────────────────────────────────────────── */
+[data-theme="techmore"] {
+  --bg:#d7d2bd; --panel:#eeeade; --panel2:#d1d6c2; --line:#a4ac91;
+  --text:#3f4038; --muted:#707565; --accent:#61734f; --accent-dark:#f7f5ea;
+  --gold:#bd7148; --radius:14px;
+}
+body[data-theme="techmore"] {
+  background:
+    radial-gradient(circle at 12% -10%, rgba(255,255,255,.42), transparent 34%),
+    linear-gradient(180deg,#dcd7c5 0%,var(--bg) 42%,#d1ccb7 100%);
+  letter-spacing:.01em;
+}
+body[data-theme="techmore"] header {
+  padding:16px 28px;
+  background:rgba(238,234,222,.92);
+  border-bottom:1px solid rgba(97,115,79,.34);
+  box-shadow:0 5px 24px rgba(63,64,56,.09);
+}
+body[data-theme="techmore"] h1 { font-size:26px; letter-spacing:-.55px; }
+body[data-theme="techmore"] h1 span { color:var(--gold); }
+body[data-theme="techmore"] input[type="search"],
+body[data-theme="techmore"] select {
+  background:rgba(255,255,255,.43); border-color:var(--line); border-radius:999px;
+}
+body[data-theme="techmore"] section.row { padding-left:28px; padding-right:28px; }
+body[data-theme="techmore"] section.row h2,
+body[data-theme="techmore"] .recommended-lists-head h3 {
+  color:var(--text); letter-spacing:.02em; text-transform:none; font-weight:600;
+}
+body[data-theme="techmore"] main.grid { gap:20px; padding-left:28px; padding-right:28px; }
+body[data-theme="techmore"] .card .frame {
+  border:1px solid rgba(97,115,79,.26);
+  background:linear-gradient(145deg,#b8c2a4,#f0eee2);
+  box-shadow:0 5px 13px rgba(63,64,56,.15);
+}
+body[data-theme="techmore"] .card:hover .frame,
+body[data-theme="techmore"] .card:focus-visible .frame {
+  transform:translateY(-5px); border-color:var(--accent);
+  box-shadow:0 13px 28px rgba(63,64,56,.22);
+}
+body[data-theme="techmore"] .card h3 { font-family:Inter,ui-sans-serif,system-ui,sans-serif; font-weight:650; }
+body[data-theme="techmore"] .badge.unwatched { background:var(--gold); color:#fff8ed; }
+body[data-theme="techmore"] .badge.copies { background:rgba(238,234,222,.9); color:var(--accent); }
+body[data-theme="techmore"] nav.tabs { gap:8px; }
+body[data-theme="techmore"] nav.tabs button {
+  border-radius:999px; padding:9px 16px; background:rgba(255,255,255,.3);
+}
+body[data-theme="techmore"] nav.tabs button.active {
+  background:var(--accent); border-color:var(--accent); color:#f7f5ea;
+  box-shadow:0 3px 8px rgba(97,115,79,.22);
+}
+body[data-theme="techmore"] .recommended-lists { margin:22px 28px 30px; }
+body[data-theme="techmore"] .recommended-list-grid { gap:16px; }
+body[data-theme="techmore"] .recommended-list-card {
+  min-height:190px; padding:18px; border-radius:16px;
+  background:rgba(238,234,222,.72); border-color:rgba(97,115,79,.3);
+  box-shadow:0 4px 14px rgba(63,64,56,.08);
+  transition:transform .15s ease, box-shadow .15s ease, background .15s ease;
+}
+body[data-theme="techmore"] .recommended-list-card:hover {
+  background:#f4f1e7; transform:translateY(-4px);
+  box-shadow:0 12px 24px rgba(63,64,56,.14);
+}
+body[data-theme="techmore"] .recommended-list-icon {
+  width:40px; height:40px; border-radius:12px;
+  background:var(--accent); color:#f7f5ea; box-shadow:0 4px 8px rgba(97,115,79,.2);
+}
+body[data-theme="techmore"] .recommended-list-card strong { font-family:Georgia,"Times New Roman",serif; font-size:17px; }
+body[data-theme="techmore"] .recommended-list-meta { color:var(--gold); }
+body[data-theme="techmore"] .reading-list,
+body[data-theme="techmore"] section.season,
+body[data-theme="techmore"] dialog#detail {
+  background:rgba(238,234,222,.78); border-color:rgba(97,115,79,.3);
+  box-shadow:0 5px 18px rgba(63,64,56,.09);
+}
+body[data-theme="techmore"] .reading-list { border-radius:16px; padding:18px; }
+body[data-theme="techmore"] .selected-reading-list { box-shadow:0 0 0 3px rgba(97,115,79,.16); }
+body[data-theme="techmore"] .list-detail-header { border-bottom:1px solid var(--line); padding-bottom:12px; }
+body[data-theme="techmore"] .list-detail-header h2 { font-size:25px; }
+body[data-theme="techmore"] .list-entry-title { color:var(--accent); font-weight:600; }
+body[data-theme="techmore"] .list-missing { background:rgba(189,113,72,.1); border-color:rgba(189,113,72,.42); }
+body[data-theme="techmore"] .nowplaying { background:rgba(63,64,56,.96); border-top-color:#7d8c6b; }
+@media (max-width:640px) {
+  body[data-theme="techmore"] header,
+  body[data-theme="techmore"] section.row { padding-left:16px; padding-right:16px; }
+  body[data-theme="techmore"] main.grid { padding-left:16px; padding-right:16px; gap:14px; }
+  body[data-theme="techmore"] .recommended-lists { margin-left:16px; margin-right:16px; }
+}
+
 /* ── Persistent now-playing controller ─────────────────────────────────── */
 body.np-visible { padding-bottom:116px; }
 .nowplaying {
