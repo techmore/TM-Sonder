@@ -17,7 +17,7 @@ import (
 // JSON routes the iOS client uses. When opened with ?token= (LAN pairing),
 // the embedded JS propagates the token to every same-origin request.
 
-//go:embed web/library.html web/library.css web/library.js web/audiobooks.html web/ebooks.html web/shared.js web/favicon.svg web/favicon.png
+//go:embed web/library.html web/library.css web/library.js web/audiobooks.html web/audiobooks-beta.html web/ebooks.html web/shared.js web/favicon.svg web/favicon.png
 var webFS embed.FS
 
 func mustReadWeb(name string) []byte {
@@ -33,6 +33,7 @@ var (
 	libraryCSS     = newGzippedPage(func() []byte { return mustReadWeb("web/library.css") })
 	libraryJS      = newGzippedPage(func() []byte { return mustReadWeb("web/library.js") })
 	audiobooksPage = newGzippedPage(func() []byte { return mustReadWeb("web/audiobooks.html") })
+	audiobooksBetaPage = newGzippedPage(func() []byte { return mustReadWeb("web/audiobooks-beta.html") })
 	ebooksPage     = newGzippedPage(func() []byte { return mustReadWeb("web/ebooks.html") })
 	sharedJS       = newGzippedPage(func() []byte { return mustReadWeb("web/shared.js") })
 	faviconSVG     = newGzippedPage(func() []byte { return mustReadWeb("web/favicon.svg") })

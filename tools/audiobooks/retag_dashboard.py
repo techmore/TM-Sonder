@@ -20,6 +20,67 @@ SEEN = os.path.join(ROOT, "m4b_work", "retag-seen.json")
 PLAN = os.path.join(ROOT, "m4b_work", "migration", "standardize-plan.json")
 
 LINE_RE = re.compile(r"^\[(\d+)/(\d+)\]\s+(SKIP-OK|DONE|FAIL|MISSING)\s+(.*)$")
+COLL_CACHE = os.path.join(ROOT, "m4b_work", "dashboard-collections.json")
+COLL_TTL = 300
+
+
+def server_base():
+    try:
+        c = json.load(open(os.path.expanduser("~/.config/sonder/server.json")))
+        return f"http://127.0.0.1:{c.get('port', 8097)}", c.get("pairingToken", "")
+    except OSError:
+        return "http://127.0.0.1:8097", ""
+
+
+def refresh_collections():
+    try:
+        if (os.path.exists(COLL_CACHE)
+                and time.time() - os.path.getmtime(COLL_CACHE) < COLL_TTL):
+            return
+    except OSError:
+        pass
+    try:
+        import urllib.request
+        base, token = server_base()
+        q = f"?token={token}" if token else ""
+        st = json.load(urllib.request.urlopen(base + "/api/status" + q,
+                                             timeout=15))
+        lib = json.load(urllib.request.urlopen(base + "/api/library" + q,
+                                              timeout=120))
+        items = lib["items"] if isinstance(lib, dict) else lib
+        kinds = {}
+        for k in ("movie", "tvShow", "audiobook", "ebook"):
+            sub = [i for i in items if i.get("kind") == k]
+            if k == "tvShow":
+                groups = {}
+                for i in sub:
+                    groups.setdefault(i.get("showGroupTitle")
+                                      or i.get("showTitle"), []).append(i)
+                kinds[k] = {"units": len(groups), "unit": "shows",
+                            "with_art": sum(1 for g in groups.values()
+                                            if any(x.get("posterURL")
+                                                   for x in g))}
+            else:
+                kinds[k] = {"units": len(sub),
+                            "unit": {"movie": "movies", "audiobook": "books",
+                                     "ebook": "books"}[k],
+                            "with_art": sum(1 for i in sub
+                                            if i.get("posterURL"))}
+        json.dump({"at": datetime.now().isoformat(timespec="seconds"),
+                   "scanning": st.get("scanning"),
+                   "enriching": st.get("enriching"),
+                   "itemCount": st.get("itemCount"), "kinds": kinds},
+                  open(COLL_CACHE, "w"))
+    except Exception as e:
+        json.dump({"error": str(e)[:150]},
+                  open(COLL_CACHE, "w"))
+
+
+def load_collections():
+    try:
+        return json.load(open(COLL_CACHE))
+    except (OSError, ValueError):
+        return {}
 
 
 def parse_log():
@@ -125,6 +186,32 @@ def render(s):
     last_html = "<br>".join(html.escape(l) for l in s["last"]) or "<i>no lines yet</i>"
     fails_html = "<br>".join(html.escape(l) for l in s["fails"]) or "<i>none</i>"
     active_html = html.escape(active) if active else "<i>no ffmpeg process seen</i>"
+    coll = load_collections()
+    if coll.get("error") or not coll.get("kinds"):
+        coll_info = html.escape(coll.get("error") or "unavailable")
+        coll_at = "—"
+        coll_cards = ""
+    else:
+        flags = ("scanning" if coll.get("scanning") else "",
+                 "enriching" if coll.get("enriching") else "")
+        coll_info = f"{coll.get('itemCount', '?')} items" + (
+            f" ({', '.join(f for f in flags if f)})" if any(flags) else "")
+        coll_at = html.escape(coll.get("at", "—"))
+        order = (("movie", "Movies"), ("tvShow", "TV shows"),
+                 ("audiobook", "Audiobooks"), ("ebook", "Ebooks"))
+        cards = []
+        for k, label in order:
+            d = coll["kinds"].get(k, {})
+            u, w = d.get("units", 0), d.get("with_art", 0)
+            pct = (100.0 * w / u) if u else 0
+            cards.append(
+                f'<div class="rounded-xl border border-olive-950/10 '
+                f'bg-olive-950/[0.025] p-4 text-center dark:border-white/10 '
+                f'dark:bg-white/5"><div class="font-display text-2xl">'
+                f"{w}/{u}</div><p class=\"text-sm text-olive-600 "
+                f"dark:text-olive-400\">{label} with art ({pct:.0f}%)</p>"
+                f"</div>")
+        coll_cards = "\n".join(cards)
     return f"""<!DOCTYPE html>
 <html>
 <head>
@@ -176,6 +263,14 @@ def render(s):
 </div>
 </div>
 
+<h2 class="font-display text-2xl tracking-tight mt-10">Collections</h2>
+<div class="mt-2 rounded-xl border border-olive-950/10 bg-olive-950/[0.025] p-6 dark:border-white/10 dark:bg-white/5">
+<p class="text-sm text-olive-600 dark:text-olive-400">Library <b>{coll_info}</b> · snapshot {coll_at}</p>
+<div class="mt-6 grid grid-cols-2 gap-4 lg:grid-cols-4">
+{coll_cards}
+</div>
+</div>
+
 <h2 class="font-display text-2xl tracking-tight mt-10">Current</h2>
 <div class="mt-2 rounded-xl border border-olive-950/10 bg-olive-950/[0.025] p-6 dark:border-white/10 dark:bg-white/5">
 <p class="font-mono text-sm">{cur or "—"}</p>
@@ -202,6 +297,7 @@ def main():
     ap.add_argument("--loop", action="store_true")
     args = ap.parse_args()
     while True:
+        refresh_collections()
         with open(OUT, "w") as f:
             f.write(render(parse_log()))
         print(f"dashboard -> {OUT}", flush=True)

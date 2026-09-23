@@ -1,0 +1,215 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>TM Sonder Audiobooks (Beta)</title>
+  <link rel="icon" type="image/png" href="/favicon.png">
+  <style>
+    :root { color-scheme: dark; --bg:#10130f; --panel:#171d15; --panel2:#202819; --line:#344128; --text:#eff4e8; --muted:#a8b39c; --accent:#b6d56d; --warn:#e0a14a; }
+    * { box-sizing:border-box; }
+    body { margin:0; font:14px -apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif; background:var(--bg); color:var(--text); }
+    header { position:sticky; top:0; z-index:2; display:flex; flex-wrap:wrap; gap:10px; align-items:center; padding:14px 20px; background:rgba(16,19,15,.96); border-bottom:1px solid var(--line); }
+    header h1 { margin:0; font-size:22px; margin-right:4px; }
+    .beta { font-size:11px; font-weight:700; color:#11160f; background:var(--warn); border-radius:4px; padding:2px 7px; letter-spacing:.06em; }
+    header input { flex:1; min-width:180px; background:var(--panel); border:1px solid var(--line); color:var(--text); border-radius:8px; padding:9px 12px; }
+    header select { background:var(--panel); border:1px solid var(--line); color:var(--text); border-radius:8px; padding:9px 10px; }
+    header a.button, button { background:var(--panel2); border:1px solid var(--line); color:var(--text); border-radius:8px; padding:8px 10px; text-decoration:none; cursor:pointer; }
+    button.primary { color:#11160f; background:var(--accent); border-color:var(--accent); font-weight:700; }
+    main { display:grid; grid-template-columns:minmax(0,1fr) minmax(300px, 430px); min-height:calc(100vh - 62px); }
+    .rails { padding:18px 20px 60px; overflow:auto; }
+    .rail { margin-bottom:30px; }
+    .rail > h2 { margin:0 0 3px; font-size:19px; }
+    .rail > p.sub { margin:0 0 12px; color:var(--muted); font-size:12.5px; }
+    .strip { display:grid; grid-auto-flow:column; grid-auto-columns:150px; gap:12px; overflow-x:auto; padding-bottom:8px; }
+    .card { position:relative; border:1px solid var(--line); border-radius:10px; overflow:hidden; background:var(--panel); cursor:pointer; text-align:left; color:var(--text); padding:0; }
+    .card .art { width:100%; aspect-ratio:2/3; display:grid; place-items:center; background:linear-gradient(145deg,#334124,#11160f); color:var(--accent); font-weight:800; font-size:22px; }
+    .card .art img { width:100%; height:100%; object-fit:cover; }
+    .card .cap { padding:8px 9px 10px; }
+    .card .cap strong { display:block; font-size:12.5px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+    .card .cap span { color:var(--muted); font-size:11.5px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; display:block; }
+    .card progress { width:100%; height:5px; margin-top:6px; accent-color:var(--accent); }
+    .card .peek { display:none; position:absolute; inset:auto 0 0 0; background:rgba(10,13,9,.94); padding:10px; font-size:12px; line-height:1.4; max-height:70%; overflow:hidden; }
+    .card:hover .peek, .card:focus-within .peek { display:block; }
+    .card.selected { outline:2px solid var(--accent); }
+    .shelf { display:grid; grid-template-columns:repeat(auto-fill,minmax(150px,1fr)); gap:12px; }
+    .detail { border-left:1px solid var(--line); background:#12170f; padding:22px; overflow:auto; }
+    .hero { display:grid; grid-template-columns:150px minmax(0,1fr); gap:20px; align-items:start; margin-bottom:20px; }
+    .hero .cover { width:150px; aspect-ratio:2/3; display:grid; place-items:center; border-radius:6px; overflow:hidden; background:linear-gradient(145deg,#334124,#11160f); color:var(--accent); font-weight:800; }
+    .hero .cover img { width:100%; height:100%; object-fit:cover; }
+    .pill { color:#11160f; background:var(--accent); border-radius:4px; padding:2px 6px; font-size:11px; font-weight:700; }
+    audio { width:100%; margin:15px 0 12px; }
+    .chapters { display:grid; gap:8px; margin-top:18px; }
+    .chapter { display:grid; grid-template-columns:72px minmax(0,1fr) auto; gap:10px; align-items:center; padding:10px 12px; border:1px solid var(--line); border-radius:8px; background:var(--panel); }
+    .chapter.current { border-color:var(--accent); background:#202819; }
+    .time { color:var(--muted); font-variant-numeric:tabular-nums; }
+    .empty { color:var(--muted); padding:8px 0; }
+    @media (max-width: 900px) { main { grid-template-columns:1fr; } .detail { border-left:0; border-top:1px solid var(--line); } }
+  </style>
+  <script src="/shared.js"></script>
+</head>
+<body>
+  <header>
+    <h1>Audiobooks</h1><span class="beta">BETA</span>
+    <input id="q" placeholder="Search title, author, narrator, series, or tag">
+    <select id="sort" aria-label="Sort order">
+      <option value="curated">Sort: Curated</option>
+      <option value="az">Sort: A–Z</option>
+      <option value="longest">Sort: Longest</option>
+      <option value="shortest">Sort: Shortest</option>
+    </select>
+    <a class="button" id="stableLink" href="/audiobooks">Stable layout</a>
+    <a class="button" id="libraryLink" href="/">Library</a>
+  </header>
+  <main>
+    <div class="rails" id="rails"></div>
+    <section class="detail" id="detail"><p>Select an audiobook.</p></section>
+  </main>
+  <script>
+    let books = [];
+    let selectedID = null;
+    let saveTimer = null;
+    const q = document.querySelector("#q");
+    const sortSel = document.querySelector("#sort");
+    const rails = document.querySelector("#rails");
+    const detail = document.querySelector("#detail");
+    const { api, escapeHTML, formatTime } = window.Sonder;
+    document.querySelector("#stableLink").href = api("/audiobooks");
+    document.querySelector("#libraryLink").href = api("/");
+    try { sortSel.value = localStorage.getItem("sonder-beta-sort") || "curated"; } catch (_) {}
+
+    const frac = b => (b.durationSeconds > 0 && (b.progressSeconds || 0) > 0) ? b.progressSeconds / b.durationSeconds : 0;
+    const started = b => (b.progressSeconds || 0) > 5;
+    const finished = b => frac(b) >= 0.96;
+    const byline = b => [b.author, b.series].filter(Boolean).join(" • ") || b.subtitle || "";
+
+    async function loadBooks() {
+      const response = await fetch(api(`/api/audiobooks?q=${encodeURIComponent(q.value)}`));
+      const data = await response.json();
+      books = data.items ?? [];
+      renderRails();
+      if (!selectedID && books.length > 0) openBook(pickSpotlight().id);
+      if (selectedID && !books.some(b => b.id === selectedID)) { selectedID = null; detail.innerHTML = `<p>No matching audiobook selected.</p>`; }
+    }
+
+    function pickSpotlight() {
+      const cont = books.filter(b => started(b) && !finished(b));
+      if (cont.length) return cont.sort((a, b) => (b.progressUpdatedAt || "") < (a.progressUpdatedAt || "") ? 1 : -1)[0];
+      return books[0];
+    }
+
+    function cardHTML(b) {
+      const f = frac(b);
+      return `<button class="card ${b.id === selectedID ? "selected" : ""}" onclick="openBook('${b.id}')">
+        <div class="art">${b.posterURL ? `<img loading="lazy" src="${api(b.posterURL)}" alt="">` : escapeHTML((b.title || "A")[0])}</div>
+        <div class="cap"><strong>${escapeHTML(b.title)}</strong><span>${escapeHTML(byline(b))}</span>
+        ${f > 0 ? `<progress max="1" value="${f.toFixed(3)}"></progress>` : ""}</div>
+        <div class="peek">${escapeHTML((b.summary || "").slice(0, 220))}${(b.summary || "").length > 220 ? "…" : ""}<br><span class="time">${formatTime(b.durationSeconds)} • ${b.chapterCount || "?"} chapters</span></div>
+      </button>`;
+    }
+
+    function shelfSort(list) {
+      const arr = [...list];
+      switch (sortSel.value) {
+        case "az": return arr.sort((a, b) => (a.title || "").localeCompare(b.title || ""));
+        case "longest": return arr.sort((a, b) => (b.durationSeconds || 0) - (a.durationSeconds || 0));
+        case "shortest": return arr.sort((a, b) => (a.durationSeconds || 0) - (b.durationSeconds || 0));
+        default: return arr; // curated: server catalog order
+      }
+    }
+
+    function renderRails() {
+      const cont = books.filter(b => started(b) && !finished(b))
+        .sort((a, b) => String(b.progressUpdatedAt || "").localeCompare(String(a.progressUpdatedAt || ""))).slice(0, 10);
+      const counts = {};
+      books.forEach(b => { if (b.author) counts[b.author] = (counts[b.author] || 0) + 1; });
+      const upnext = books.filter(b => !started(b))
+        .sort((a, b) => ((counts[b.author] || 0) - (counts[a.author] || 0)) || (a.title || "").localeCompare(b.title || "")).slice(0, 10);
+      const epics = shelfSort(books.filter(b => (b.durationSeconds || 0) >= 12 * 3600));
+      const quick = shelfSort(books.filter(b => (b.durationSeconds || 0) > 0 && (b.durationSeconds || 0) < 6 * 3600));
+      const shelf = shelfSort(books);
+      const rail = (title, sub, list, shelfMode) => list.length ? `<section class="rail"><h2>${title}</h2><p class="sub">${sub}</p><div class="${shelfMode ? "shelf" : "strip"}">${list.map(cardHTML).join("")}</div></section>` : "";
+      rails.innerHTML =
+        rail("Continue listening", `${cont.length} in progress`, cont) +
+        rail("Up next", "unstarted picks from your deepest shelves", upnext) +
+        rail("Long epics", "12 hours and up", epics.slice(0, 24), true) +
+        rail("Quick listens", "under 6 hours", quick.slice(0, 24), true) +
+        rail(`Full shelf`, `${books.length} titles · ${escapeHTML(sortSel.selectedOptions[0].textContent)}`, shelf, true) +
+        (books.length ? "" : `<p class="empty">No audiobooks found.</p>`);
+    }
+
+    async function openBook(id) {
+      selectedID = id;
+      renderRails();
+      detail.innerHTML = `<p>Loading...</p>`;
+      const response = await fetch(api(`/api/audiobooks/${id}`));
+      if (!response.ok) { detail.innerHTML = `<p>Audiobook unavailable.</p>`; return; }
+      const data = await response.json();
+      renderDetail(data.item, data.chapters ?? []);
+      document.querySelector(".detail").scrollIntoView({ block: "nearest" });
+    }
+
+    function renderDetail(book, chapters) {
+      const f = (book.durationSeconds > 0 && (book.progressSeconds || 0) > 0) ? book.progressSeconds / book.durationSeconds : 0;
+      detail.innerHTML = `
+        <div class="hero">
+          <div class="cover">${book.posterURL ? `<img src="${api(book.posterURL)}" alt="">` : "A"}</div>
+          <div>
+            <span class="pill">Audiobook</span>
+            <h1>${escapeHTML(book.title)}</h1>
+            <p>${escapeHTML([book.author, book.series, book.narrator ? `Narrated by ${book.narrator}` : null].filter(Boolean).join(" • "))}</p>
+            ${f > 0 ? `<p class="time">Resuming at ${Math.round(f * 100)}% • ${formatTime(book.progressSeconds)} of ${formatTime(book.durationSeconds)}</p>` : ""}
+            <audio id="player" controls src="${api("/stream/" + book.id)}"></audio>
+            <progress id="detailProgress" max="1" value="${f.toFixed(3)}"></progress>
+            <p id="nowPlaying">Chapter 1 • 0:00 / ${formatTime(book.durationSeconds)}</p>
+          </div>
+        </div>
+        <p>${escapeHTML(book.summary)}</p>
+        <div class="chapters">
+          ${chapters.map(chapter => `<div class="chapter" data-chapter="${chapter.index}">
+            <span class="time">${formatTime(chapter.startSeconds)}</span>
+            <div><strong>${escapeHTML(chapter.title)}</strong><p>${formatTime(chapter.endSeconds ? chapter.endSeconds - chapter.startSeconds : 0)}</p></div>
+            <button onclick="jumpTo(${chapter.startSeconds})">Play</button>
+          </div>`).join("")}
+        </div>`;
+      const player = document.querySelector("#player");
+      player.addEventListener("loadedmetadata", () => {
+        fetch(api(`/api/playback/${book.id}`)).then(r => r.ok ? r.json() : null).then(session => {
+          const resume = (session && (session.seconds || book.progressSeconds)) || 0;
+          if (resume > 5 && resume < Math.max(player.duration - 8, 0)) player.currentTime = resume;
+        }).catch(() => {});
+      });
+      player.addEventListener("timeupdate", () => updatePlayback(book.id, chapters, player));
+    }
+
+    function currentChapter(chapters, seconds, duration) {
+      return [...chapters].reverse().find(chapter => seconds >= chapter.startSeconds && seconds < (chapter.endSeconds ?? duration)) ?? chapters[chapters.length - 1];
+    }
+    function jumpTo(seconds) {
+      const player = document.querySelector("#player");
+      if (!player) return;
+      player.currentTime = seconds;
+      player.play();
+    }
+    async function saveProgress(id, seconds, duration) {
+      await fetch(api(`/api/progress/${id}`), { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ seconds, duration }) });
+    }
+    function updatePlayback(id, chapters, player) {
+      const duration = player.duration || 0;
+      const seconds = player.currentTime || 0;
+      const progress = document.querySelector("#detailProgress");
+      const nowPlaying = document.querySelector("#nowPlaying");
+      const current = currentChapter(chapters, seconds, duration);
+      if (progress && duration > 0) progress.value = Math.min(Math.max(seconds / duration, 0), 1);
+      if (nowPlaying) nowPlaying.textContent = `${current?.title ?? "Chapter"} • ${formatTime(seconds)} / ${formatTime(duration)}`;
+      document.querySelectorAll(".chapter").forEach(row => row.classList.toggle("current", Number(row.dataset.chapter) === current?.index));
+      if (duration > 0) { clearTimeout(saveTimer); saveTimer = setTimeout(() => { saveProgress(id, seconds, duration); }, 500); }
+    }
+
+    let debounce = null;
+    q.addEventListener("input", () => { clearTimeout(debounce); debounce = setTimeout(loadBooks, 180); });
+    sortSel.addEventListener("change", () => { try { localStorage.setItem("sonder-beta-sort", sortSel.value); } catch (_) {} renderRails(); });
+    loadBooks();
+  </script>
+</body>
+</html>

@@ -624,6 +624,9 @@ type catalogItem struct {
 	PosterURL       *string  `json:"posterURL"`
 	BackdropURL     *string  `json:"backdropURL"`
 	Tags            []string `json:"tags"`
+	// Playback resume state (beta rails). Zero/omitted when never played.
+	ProgressSeconds   float64    `json:"progressSeconds"`
+	ProgressUpdatedAt *time.Time `json:"progressUpdatedAt,omitempty"`
 }
 
 type catalogResponse struct {
@@ -662,7 +665,7 @@ func (s *Server) toCatalogItem(it *library.Item) catalogItem {
 		n := it.Studio
 		narrator = &n
 	}
-	return catalogItem{
+	out := catalogItem{
 		ID:              it.ID,
 		Title:           it.Title,
 		Subtitle:        it.Subtitle,
@@ -676,7 +679,13 @@ func (s *Server) toCatalogItem(it *library.Item) catalogItem {
 		PosterURL:       it.PosterURL,
 		BackdropURL:     it.BackdropURL,
 		Tags:            it.Tags,
+		ProgressSeconds: it.ProgressSeconds,
 	}
+	if rec, ok := s.store.ProgressFor(it.ID); ok && !rec.UpdatedAt.IsZero() {
+		u := rec.UpdatedAt
+		out.ProgressUpdatedAt = &u
+	}
+	return out
 }
 
 // mediaCatalog serves the audiobook and ebook catalog routes: kind-filtered,
@@ -749,6 +758,12 @@ func (s *Server) handleEbooks(w http.ResponseWriter, r *http.Request) {
 // SonderWebInterface.audiobooksHTML).
 func (s *Server) handleAudiobookBrowser(w http.ResponseWriter, r *http.Request) {
 	serveGzippableHTML(w, r, audiobooksPage)
+}
+
+// handleAudiobookBeta serves the opt-in experimental rails layout. Same data
+// routes as stable; only the presentation differs.
+func (s *Server) handleAudiobookBeta(w http.ResponseWriter, r *http.Request) {
+	serveGzippableHTML(w, r, audiobooksBetaPage)
 }
 
 // handleEbookBrowser serves the ebook browser page.

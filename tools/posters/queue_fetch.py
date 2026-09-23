@@ -13,9 +13,26 @@ import time
 import urllib.error
 import urllib.parse
 import urllib.request
+from datetime import datetime
 
 ROOT = "/Users/seandolbec/Projects/TM-Sonder/m4b_work/poster-queue"
 UA = {"User-Agent": "sonder-poster-queue/1.0 (contact: local)"}
+LAST_RUN = os.path.join(ROOT, ".last-fetch")
+MIN_INTERVAL = 3 * 3600  # one retry sweep every few hours is plenty polite
+BETWEEN_CALLS = 12  # seconds between API calls; well under bot etiquette
+THROTTLE = {"fails": 0}
+
+
+def enrich_running():
+    try:
+        import urllib.request as _r
+        c = json.load(open(os.path.expanduser("~/.config/sonder/server.json")))
+        base = f"http://127.0.0.1:{c.get('port', 8097)}"
+        q = f"?token={c.get('pairingToken', '')}"
+        st = json.load(_r.urlopen(base + "/api/status" + q, timeout=15))
+        return bool(st.get("enriching"))
+    except Exception:
+        return False
 
 
 def clean(t):
@@ -28,12 +45,12 @@ THROTTLE = {"fails": 0}
 
 
 def get(u, tries=3):
-    """Polite fetch: 8s baseline, honors Retry-After, exponential backoff.
+    """Polite fetch: 12s baseline, honors Retry-After, exponential backoff.
     After 5 consecutive hard blocks the whole run parks itself (circuit
     breaker) instead of extending the IP block."""
     for a in range(tries):
         try:
-            time.sleep(8)
+            time.sleep(BETWEEN_CALLS)
             req = urllib.request.urlopen(
                 urllib.request.Request(u, headers=UA), timeout=30)
             THROTTLE["fails"] = 0
@@ -62,6 +79,20 @@ def plausible(qtitle, page):
 
 
 def main():
+    if "--force" not in sys.argv:
+        try:
+            age = time.time() - os.path.getmtime(LAST_RUN)
+            if age < MIN_INTERVAL:
+                print(f"fetch ran {age / 3600:.1f}h ago, cooling down",
+                      flush=True)
+                return 0
+        except OSError:
+            pass
+    open(LAST_RUN, "w").write(datetime.now().isoformat())
+    if enrich_running():
+        print("server enrich running, yielding (retry next sweep)",
+              flush=True)
+        return 0
     q = json.load(open(os.path.join(ROOT, "queue.json")))
     covdir = os.path.join(ROOT, "covers")
     os.makedirs(covdir, exist_ok=True)

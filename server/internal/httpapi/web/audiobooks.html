@@ -54,7 +54,8 @@
   <header>
     <h1>Audiobooks</h1>
     <input id="q" placeholder="Search title, author, narrator, series, or tag">
-    <a class="button" id="libraryLink" href="/">Library</a>
+    <span><a class="button" id="betaLink" href="/audiobooks-beta">Beta layout</a>
+    <a class="button" id="libraryLink" href="/">Library</a></span>
   </header>
   <main>
     <aside>
@@ -75,6 +76,7 @@
 
     const { api, escapeHTML, formatTime } = window.Sonder;
     document.querySelector("#libraryLink").href = api("/");
+    document.querySelector("#betaLink").href = api("/audiobooks-beta");
 
     async function loadBooks() {
       const response = await fetch(api(`/api/audiobooks?q=${encodeURIComponent(q.value)}`));
