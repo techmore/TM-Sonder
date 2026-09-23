@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"tm-sonder/server/internal/api"
+	"tm-sonder/server/internal/config"
 	"tm-sonder/server/internal/library"
 )
 
@@ -754,14 +755,27 @@ func (s *Server) handleEbooks(w http.ResponseWriter, r *http.Request) {
 	s.mediaCatalog(w, r, api.KindEbook)
 }
 
-// handleAudiobookBrowser serves the audiobook player page (port of
-// SonderWebInterface.audiobooksHTML).
+// handleAudiobookBrowser serves the audiobook player page. The layout follows
+// the audiobookLayout setting ("rails" default, "classic" for the legacy
+// list); ?layout= overrides per visit.
 func (s *Server) handleAudiobookBrowser(w http.ResponseWriter, r *http.Request) {
+	layout := strings.ToLower(strings.TrimSpace(r.URL.Query().Get("layout")))
+	if layout == "" {
+		layout = config.NormalizeAudiobookLayout(s.cfg().AudiobookLayout)
+	}
+	if layout == "classic" {
+		serveGzippableHTML(w, r, audiobooksPage)
+		return
+	}
+	serveGzippableHTML(w, r, audiobooksBetaPage)
+}
+
+// handleAudiobookClassic always serves the legacy list layout ("Classic").
+func (s *Server) handleAudiobookClassic(w http.ResponseWriter, r *http.Request) {
 	serveGzippableHTML(w, r, audiobooksPage)
 }
 
-// handleAudiobookBeta serves the opt-in experimental rails layout. Same data
-// routes as stable; only the presentation differs.
+// handleAudiobookBeta always serves the rails layout (kept as a stable alias).
 func (s *Server) handleAudiobookBeta(w http.ResponseWriter, r *http.Request) {
 	serveGzippableHTML(w, r, audiobooksBetaPage)
 }

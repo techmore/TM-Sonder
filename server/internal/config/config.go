@@ -17,6 +17,10 @@ const (
 	// BookPlayer can connect with the standard host:8096 expectation.
 	DefaultPort        = 8096
 	DefaultThemePreset = "earthy"
+
+	// DefaultAudiobookLayout is the rails browser ("rails"); the legacy
+	// list view remains available as "classic".
+	DefaultAudiobookLayout = "rails"
 )
 
 var validKinds = map[string]bool{
@@ -60,6 +64,7 @@ type Config struct {
 	AllowLAN          bool      `json:"allowLAN"`
 	PairingToken      string    `json:"pairingToken"`
 	ThemePreset       string    `json:"themePreset"`
+	AudiobookLayout   string    `json:"audiobookLayout"`
 	FFmpegPath        string    `json:"ffmpegPath"`
 	FFprobePath       string    `json:"ffprobePath"`
 	ProbeWorkers      int       `json:"probeWorkers,omitempty"`
@@ -83,6 +88,7 @@ func Default() Config {
 		APIPort:     0,
 		DataDir:     dataDir,
 		ThemePreset: DefaultThemePreset,
+		AudiobookLayout: DefaultAudiobookLayout,
 		FFmpegPath:  "ffmpeg",
 		FFprobePath: "ffprobe",
 		SafeScan:    true,
@@ -267,6 +273,18 @@ func (c *Config) applyEnv() {
 	}
 	if v := os.Getenv("SONDER_TRANSCODE_PRESET"); v != "" {
 		c.Transcode.Preset = v
+	}
+	c.AudiobookLayout = NormalizeAudiobookLayout(c.AudiobookLayout)
+}
+
+// NormalizeAudiobookLayout coerces a layout preference to "rails" or
+// "classic", defaulting to rails.
+func NormalizeAudiobookLayout(v string) string {
+	switch strings.ToLower(strings.TrimSpace(v)) {
+	case "classic":
+		return "classic"
+	default:
+		return DefaultAudiobookLayout
 	}
 }
 

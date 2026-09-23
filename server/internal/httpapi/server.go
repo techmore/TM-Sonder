@@ -275,6 +275,7 @@ func (s *Server) routes() {
 	m.HandleFunc("GET /api/audiobooks", s.handleAudiobooks)
 	m.HandleFunc("GET /api/audiobooks/{id}", s.handleAudiobookDetail)
 	m.HandleFunc("GET /audiobooks", s.handleAudiobookBrowser)
+	m.HandleFunc("GET /audiobooks-classic", s.handleAudiobookClassic)
 	m.HandleFunc("GET /audiobooks-beta", s.handleAudiobookBeta)
 	m.HandleFunc("GET /api/ebooks", s.handleEbooks)
 	m.HandleFunc("GET /ebooks", s.handleEbookBrowser)
@@ -364,7 +365,7 @@ func (s *Server) withGzip(next http.Handler) http.Handler {
 			strings.HasPrefix(path, "/artwork/") ||
 			strings.HasPrefix(path, "/subtitles/") ||
 			path == "/api/library" || path == "/library.json" ||
-			path == "/" || path == "/audiobooks" || path == "/audiobooks-beta" || path == "/ebooks" ||
+			path == "/" || path == "/audiobooks" || path == "/audiobooks-classic" || path == "/audiobooks-beta" || path == "/ebooks" ||
 			path == "/shared.js" || path == "/library.css" || path == "/library.js" ||
 			path == "/favicon.svg" || path == "/favicon.png" {
 			// These routes manage their own cached gzip.

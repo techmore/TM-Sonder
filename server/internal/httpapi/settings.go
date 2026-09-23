@@ -30,6 +30,7 @@ type SettingsPayload struct {
 	PairingToken    *string        `json:"pairingToken,omitempty"`
 	RequiresPairing bool           `json:"requiresPairing"`
 	ThemePreset     string         `json:"themePreset"`
+	AudiobookLayout string         `json:"audiobookLayout"`
 	HWAccel         string         `json:"hwaccel"`
 	MaxConcurrent   int            `json:"maxConcurrent"`
 	Libraries       []LibraryEntry `json:"libraries"`
@@ -64,6 +65,7 @@ func (s *Server) settingsPayload(includeToken bool) SettingsPayload {
 		TokenConfigured: s.cfg().PairingToken != "",
 		RequiresPairing: s.requiresPairing(),
 		ThemePreset:     s.cfg().ThemePreset,
+		AudiobookLayout: config.NormalizeAudiobookLayout(s.cfg().AudiobookLayout),
 		HWAccel:         s.cfg().Transcode.HWAccel,
 		MaxConcurrent:   s.cfg().Transcode.MaxConcurrent,
 		Libraries:       libs,
@@ -127,9 +129,10 @@ func (s *Server) handleSettingsGet(w http.ResponseWriter, r *http.Request) {
 }
 
 type settingsUpdate struct {
-	AllowLAN    *bool           `json:"allowLAN"`
-	ThemePreset *string         `json:"themePreset"`
-	Libraries   *[]LibraryEntry `json:"libraries"`
+	AllowLAN        *bool           `json:"allowLAN"`
+	ThemePreset     *string         `json:"themePreset"`
+	AudiobookLayout *string         `json:"audiobookLayout"`
+	Libraries       *[]LibraryEntry `json:"libraries"`
 }
 
 // handleSettingsPut implements PUT/PATCH /api/settings: applies validated
@@ -196,6 +199,9 @@ func (s *Server) handleSettingsPut(w http.ResponseWriter, r *http.Request) {
 		}
 		if upd.ThemePreset != nil && strings.TrimSpace(*upd.ThemePreset) != "" {
 			next.ThemePreset = strings.TrimSpace(*upd.ThemePreset)
+		}
+		if upd.AudiobookLayout != nil {
+			next.AudiobookLayout = config.NormalizeAudiobookLayout(*upd.AudiobookLayout)
 		}
 	})
 	if upd.Libraries != nil {

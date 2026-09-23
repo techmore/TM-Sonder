@@ -2109,6 +2109,7 @@
 
       document.querySelector("#allowLAN").checked = !!settingsData.allowLAN;
       document.querySelector("#themeSel").value = settingsData.themePreset || "earthy";
+      document.querySelector("#layoutSel").value = settingsData.audiobookLayout || "rails";
       document.querySelector("#mounts").innerHTML =
         (settingsData.suggestedMounts ?? []).map(m => `<option value="${escapeHTML(m)}">`).join("");
 
@@ -2279,6 +2280,7 @@
       if (pendingLibs) body.libraries = currentLibraries().map(({ id, name, path, kind }) => ({ id, name, path, kind }));
       body.allowLAN = document.querySelector("#allowLAN").checked;
       body.themePreset = document.querySelector("#themeSel").value;
+      body.audiobookLayout = document.querySelector("#layoutSel").value;
       await putSettings(body);
       pendingLibs = null;
       // library table may have changed -> refresh catalog behind the dialog

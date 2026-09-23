@@ -52,9 +52,9 @@
 </head>
 <body>
   <header>
-    <h1>Audiobooks</h1>
+    <h1>Audiobooks</h1> <span style="font-size:11px;font-weight:700;color:#11160f;background:#a8b39c;border-radius:4px;padding:2px 7px;letter-spacing:.06em">CLASSIC</span>
     <input id="q" placeholder="Search title, author, narrator, series, or tag">
-    <span><a class="button" id="betaLink" href="/audiobooks-beta">Beta layout</a>
+    <span><a class="button" id="betaLink" href="/audiobooks">Rails layout</a>
     <a class="button" id="libraryLink" href="/">Library</a></span>
   </header>
   <main>
@@ -76,7 +76,7 @@
 
     const { api, escapeHTML, formatTime } = window.Sonder;
     document.querySelector("#libraryLink").href = api("/");
-    document.querySelector("#betaLink").href = api("/audiobooks-beta");
+    document.querySelector("#betaLink").href = api("/audiobooks?layout=rails");
 
     async function loadBooks() {
       const response = await fetch(api(`/api/audiobooks?q=${encodeURIComponent(q.value)}`));

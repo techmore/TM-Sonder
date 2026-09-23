@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>TM Sonder Audiobooks (Beta)</title>
+  <title>TM Sonder Audiobooks</title>
   <link rel="icon" type="image/png" href="/favicon.png">
   <style>
     :root { color-scheme: dark; --bg:#10130f; --panel:#171d15; --panel2:#202819; --line:#344128; --text:#eff4e8; --muted:#a8b39c; --accent:#b6d56d; --warn:#e0a14a; }
@@ -50,7 +50,7 @@
 </head>
 <body>
   <header>
-    <h1>Audiobooks</h1><span class="beta">BETA</span>
+    <h1>Audiobooks</h1>
     <input id="q" placeholder="Search title, author, narrator, series, or tag">
     <select id="sort" aria-label="Sort order">
       <option value="curated">Sort: Curated</option>
@@ -58,7 +58,7 @@
       <option value="longest">Sort: Longest</option>
       <option value="shortest">Sort: Shortest</option>
     </select>
-    <a class="button" id="stableLink" href="/audiobooks">Stable layout</a>
+    <a class="button" id="stableLink" href="/audiobooks-classic">Classic layout</a>
     <a class="button" id="libraryLink" href="/">Library</a>
   </header>
   <main>
@@ -74,7 +74,7 @@
     const rails = document.querySelector("#rails");
     const detail = document.querySelector("#detail");
     const { api, escapeHTML, formatTime } = window.Sonder;
-    document.querySelector("#stableLink").href = api("/audiobooks");
+    document.querySelector("#stableLink").href = api("/audiobooks-classic");
     document.querySelector("#libraryLink").href = api("/");
     try { sortSel.value = localStorage.getItem("sonder-beta-sort") || "curated"; } catch (_) {}
 
