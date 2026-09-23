@@ -213,6 +213,12 @@ func (s *Server) handleSettingsPut(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	atomic.AddInt64(&s.settingsVersion, 1)
+	// Theme and server settings are embedded in /api/library. Invalidate the
+	// memoized payload so clients do not reapply a stale theme on refresh.
+	s.libMu.Lock()
+	s.libJSON = nil
+	s.libJSONGzip = nil
+	s.libMu.Unlock()
 
 	if rescanNeeded {
 		libs := append([]config.Library(nil), updated.Libraries...)
