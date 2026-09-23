@@ -44,7 +44,7 @@ container-build: ## Apple `container` CLI micro-VM image
 	container build -t tm-sonder -f deploy/Containerfile .
 
 container-run: ## run with ./media read-only + persistent sonder-data volume
-	container run --name sonder --rm \
+	container run --name tm-sonder --rm \
 	  -p 8797:8797 \
 	  --volume "$(PWD)/media:/media:ro" \
 	  --volume sonder-data:/data \

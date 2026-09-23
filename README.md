@@ -79,6 +79,8 @@ make container-build && make container-run
   [`deploy/Containerfile`](deploy/Containerfile) can run under Apple
   Container/Orchard, Docker, or another compatible runtime. Mount media
   read-only and persist `/data`; Orchard is not required by the server or API.
+  The app container is named `tm-sonder` so it is easy to distinguish from
+  Apple's internal `buildkit` builder helper in container-management UIs.
 
 The intended native Homebrew distribution is `brew install <tap>/sonder`
 followed by `brew services start sonder`. The Homebrew and container paths use

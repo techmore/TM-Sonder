@@ -1,6 +1,6 @@
 # TM Sonder Go server — Apple Containerization micro-VM image.
 # Build: container build -t tm-sonder   (from repo root)
-# Run:   container run --name sonder -p 8797:8797 \
+# Run:   container run --name tm-sonder -p 8797:8797 \
 #          --volume /path/to/media:/media:ro --volume sonder-data:/data tm-sonder
 FROM golang:1.25 AS build
 WORKDIR /src
@@ -14,6 +14,8 @@ FROM alpine:3.20
 RUN apk add --no-cache ffmpeg ca-certificates tzdata && \
     addgroup -S sonder && adduser -S -G sonder sonder && \
     mkdir -p /data /media && chown -R sonder:sonder /data
+LABEL org.opencontainers.image.title="TM-Sonder" \
+      org.opencontainers.image.description="TM Sonder audiobook and media server"
 COPY --from=build /out/sonder /sonder
 COPY deploy/container-server.json /etc/sonder/server.json
 COPY deploy/container-entrypoint.sh /entrypoint.sh

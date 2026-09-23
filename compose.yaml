@@ -1,10 +1,13 @@
 services:
-  sonder:
+  tm-sonder:
     build:
       context: .
       dockerfile: deploy/Containerfile
     image: tm-sonder:local
-    container_name: sonder
+    container_name: tm-sonder
+    labels:
+      org.opencontainers.image.title: TM-Sonder
+      app.kubernetes.io/name: tm-sonder
     ports:
       - "8797:8797"
     environment:
