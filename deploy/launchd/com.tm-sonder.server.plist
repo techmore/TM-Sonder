@@ -7,13 +7,28 @@
 
     <key>ProgramArguments</key>
     <array>
-        <string>/usr/local/bin/sonder</string>
+        <string>__SONDER_BINARY__</string>
         <string>-config</string>
-        <string>/etc/sonder/server.json</string>
+        <string>__SONDER_CONFIG__</string>
     </array>
+
+    <!-- launchd does not inherit the interactive shell environment. These
+         values are filled in by deploy/install-launchd.sh so user-home based
+         config, imports, and helper binaries resolve the same way they do
+         from a terminal. -->
+    <key>WorkingDirectory</key>
+    <string>__SONDER_HOME__</string>
 
     <key>EnvironmentVariables</key>
     <dict>
+        <key>HOME</key>
+        <string>__SONDER_HOME__</string>
+        <key>USER</key>
+        <string>__SONDER_USER__</string>
+        <key>LOGNAME</key>
+        <string>__SONDER_USER__</string>
+        <key>PATH</key>
+        <string>/opt/homebrew/bin:/opt/homebrew/sbin:/usr/local/bin:/usr/local/sbin:/usr/bin:/bin:/usr/sbin:/sbin</string>
         <!-- Optional overrides: SONDER_PORT, SONDER_WEB_PORT,
              SONDER_API_PORT, SONDER_DATA_DIR, SONDER_ALLOW_LAN,
              SONDER_TOKEN, SONDER_CADDY_PATH, SONDER_CADDY_CONFIG -->

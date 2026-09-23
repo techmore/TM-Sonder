@@ -3,13 +3,15 @@
 set -euo pipefail
 
 PREFIX="${PREFIX:-/usr/local}"
+ROOT_DIR="$(cd "$(dirname "$0")/.." && pwd)"
 PLIST_SRC="$(cd "$(dirname "$0")/launchd" && pwd)/com.tm-sonder.server.plist"
 PLIST_DST="$HOME/Library/LaunchAgents/com.tm-sonder.server.plist"
 CONFIG_DIR="${SONDER_CONFIG_DIR:-$HOME/.config/sonder}"
 LOG_FILE="$HOME/Library/Logs/sonder.log"
+CURRENT_USER="$(id -un)"
 
 echo "==> Building sonder (darwin/arm64)"
-cd "$(cd "$(dirname "$0")/.." && pwd)/server"
+cd "$ROOT_DIR/server"
 CGO_ENABLED=0 GOOS=darwin GOARCH=arm64 go build -trimpath -ldflags "-s -w" -o sonder ./cmd/sonder
 
 echo "==> Installing binary to $PREFIX/bin"
@@ -28,7 +30,10 @@ fi
 
 echo "==> Writing LaunchAgent to $PLIST_DST"
 mkdir -p "$(dirname "$PLIST_DST")" "$(dirname "$LOG_FILE")"
-sed -e "s|/etc/sonder/server.json|$CONFIG_DIR/server.json|" \
+sed -e "s|__SONDER_BINARY__|$PREFIX/bin/sonder|g" \
+    -e "s|__SONDER_CONFIG__|$CONFIG_DIR/server.json|g" \
+    -e "s|__SONDER_HOME__|$HOME|g" \
+    -e "s|__SONDER_USER__|$CURRENT_USER|g" \
     -e "s|/var/log/sonder.log|$LOG_FILE|g" \
     "$PLIST_SRC" > "$PLIST_DST"
 
