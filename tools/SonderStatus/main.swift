@@ -290,9 +290,13 @@ final class StatusApp: NSObject, NSApplicationDelegate {
                     throw NSError(domain: "SonderStatus", code: statusCode, userInfo: [NSLocalizedDescriptionKey: message])
                 }
                 try await Task.sleep(for: .seconds(1))
-                self.refresh()
-            } catch {
-                self.showAlert(title: "Sonder could not rebind", message: error.localizedDescription)
+				self.request = nil
+				self.bindingInProgress = false
+				self.refresh()
+			} catch {
+				self.request = nil
+				self.bindingInProgress = false
+				self.showAlert(title: "Sonder could not rebind", message: error.localizedDescription)
                 self.refresh()
             }
         }

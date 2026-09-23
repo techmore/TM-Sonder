@@ -203,6 +203,14 @@ func (c *Controller) ConfigureProxy(ctx context.Context, enabled bool, domain, h
 		if err := manager.Apply(ctx, candidate); err != nil {
 			return c.proxyFailure(previous, err)
 		}
+		if err := manager.WaitHealthy(ctx, candidate); err != nil {
+			if previous.CaddyEnabled {
+				_ = c.Caddy.Apply(context.Background(), previous)
+			} else {
+				_ = manager.Stop(context.Background())
+			}
+			return c.proxyFailure(previous, err)
+		}
 	} else if previous.CaddyEnabled {
 		if err := c.Caddy.Stop(ctx); err != nil {
 			return c.proxyFailure(previous, err)
