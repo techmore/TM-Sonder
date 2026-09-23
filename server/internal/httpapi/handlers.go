@@ -143,13 +143,28 @@ func (s *Server) libraryPayload(acceptsGzip bool) ([]byte, bool, string) {
 	s.libMu.Lock()
 	defer s.libMu.Unlock()
 	gen := s.store.Generation()
-	if s.libJSON == nil || s.libGen != gen {
+	scanning := s.scanner != nil && s.scanner.State().Scanning
+	// During a scan, the loaded snapshot is more useful than rebuilding a
+	// 30MB response for every probe/update. Serve the warm snapshot while the
+	// scanner reconciles the NAS, then rebuild once the scan is complete.
+	if s.libJSON == nil || (!scanning && s.libGen != gen) {
 		s.rebuildLibraryPayload(gen)
 	}
 	if acceptsGzip && s.libJSONGzip != nil {
 		return s.libJSONGzip, true, s.libETag
 	}
 	return s.libJSON, false, s.libETag
+}
+
+// WarmLibraryCache builds the initial client payload from the loaded snapshot.
+// main calls this alongside the initial scan so a restart can serve saved
+// catalog data without making the first browser request pay the full rebuild.
+func (s *Server) WarmLibraryCache() {
+	s.libMu.Lock()
+	defer s.libMu.Unlock()
+	if s.libJSON == nil {
+		s.rebuildLibraryPayload(s.store.Generation())
+	}
 }
 
 func (s *Server) rebuildLibraryPayload(gen int64) {
@@ -187,16 +202,8 @@ func ptrTheme(v api.ThemeSnapshot) *api.ThemeSnapshot      { return &v }
 // excluded by the DTO's json:"-" tags.
 func (s *Server) wireItems() []api.MediaItem {
 	items := s.store.GroupedItems(s.cfg().Libraries)
-	internal := make(map[string]*library.Item)
-	for _, item := range s.store.InternalItems() {
-		internal[item.ID] = item
-	}
 	posters := s.curatedPosters()
 	for index := range items {
-		if item := internal[items[index].ID]; item != nil {
-			items[index].CoverEmbedded = item.ProbedHasCover
-			items[index].CoverAvailable = item.PosterPath != "" && item.PosterSource != "thumbnail"
-		}
 		key := items[index].ID
 		if items[index].ShowGroupID != nil {
 			key = *items[index].ShowGroupID

@@ -303,11 +303,14 @@ func (s *Store) Items() []api.MediaItem {
 // InternalItems returns full copies (including file paths), title-sorted.
 func (s *Store) InternalItems() []*Item {
 	s.mu.RLock()
-	defer s.mu.RUnlock()
 	out := make([]*Item, 0, len(s.items))
 	for _, it := range s.items {
 		out = append(out, it.clone())
 	}
+	s.mu.RUnlock()
+	// Sorting does not need the store lock. Keeping it outside the critical
+	// section prevents a full-catalog response from blocking poster, stream,
+	// and status lookups while 22k titles are ordered.
 	sort.Slice(out, func(a, b int) bool {
 		if out[a].Title != out[b].Title {
 			return out[a].Title < out[b].Title

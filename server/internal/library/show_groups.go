@@ -4,6 +4,7 @@ import (
 	"crypto/sha256"
 	"fmt"
 	"path/filepath"
+	"sort"
 	"strings"
 
 	"tm-sonder/server/internal/api"
@@ -20,10 +21,12 @@ func (s *Store) GroupedItems(libraries []config.Library) []api.MediaItem {
 			roots[lib.ID] = lib.Path
 		}
 	}
-	items := s.InternalItems()
-	result := make([]api.MediaItem, 0, len(items))
-	for _, item := range items {
+	s.mu.RLock()
+	result := make([]api.MediaItem, 0, len(s.items))
+	for _, item := range s.items {
 		wire := item.MediaItem
+		wire.CoverEmbedded = item.ProbedHasCover
+		wire.CoverAvailable = item.PosterPath != "" && item.PosterSource != "thumbnail"
 		if item.PosterSource == "thumbnail" && (item.Kind == api.KindMovie || item.Kind == api.KindTVShow || item.Kind == api.KindDocumentary) {
 			wire.PosterURL = nil
 		}
@@ -40,5 +43,15 @@ func (s *Store) GroupedItems(libraries []config.Library) []api.MediaItem {
 		}
 		result = append(result, wire)
 	}
+	s.mu.RUnlock()
+	// Store updates are copy-on-write, so the wire values and their nested
+	// slices remain stable after the read lock is released. Sorting outside the
+	// lock keeps catalog assembly from blocking individual artwork requests.
+	sort.Slice(result, func(a, b int) bool {
+		if result[a].Title != result[b].Title {
+			return result[a].Title < result[b].Title
+		}
+		return result[a].ID < result[b].ID
+	})
 	return result
 }

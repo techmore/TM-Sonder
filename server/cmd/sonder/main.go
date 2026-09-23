@@ -301,6 +301,14 @@ func run(configFlag, plexDB, exportPath, importPath, importMode, importPathMap s
 	initialLibs := append([]config.Library(nil), cfg.Libraries...)
 	allowLAN := cfg.AllowLAN
 
+	// Build the browser payload from the loaded snapshot independently of the
+	// NAS walk. The HTTP handler serves this warm copy while the scan runs.
+	go func() {
+		started := time.Now()
+		srv.WarmLibraryCache()
+		logger.Printf("library cache warmed in %s", time.Since(started).Round(time.Millisecond))
+	}()
+
 	// Initial scan in the background so the port opens immediately.
 	scanDone := make(chan struct{})
 	go func() {
