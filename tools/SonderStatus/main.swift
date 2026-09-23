@@ -109,20 +109,198 @@ private final class CommandOutputBuffer: @unchecked Sendable {
 }
 
 @MainActor
+private func menuLabel(_ text: String, size: CGFloat, weight: NSFont.Weight = .regular, color: NSColor = .labelColor) -> NSTextField {
+    let label = NSTextField(labelWithString: text)
+    label.font = .systemFont(ofSize: size, weight: weight)
+    label.textColor = color
+    label.lineBreakMode = .byTruncatingTail
+    label.maximumNumberOfLines = 1
+    label.translatesAutoresizingMaskIntoConstraints = false
+    return label
+}
+
+private final class MenuSectionView: NSView {
+    private let label: NSTextField
+
+    init(_ title: String) {
+        label = menuLabel(title, size: 10, weight: .semibold, color: .secondaryLabelColor)
+        super.init(frame: .zero)
+        label.stringValue = title.uppercased()
+        addSubview(label)
+        NSLayoutConstraint.activate([
+            label.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 6),
+            label.trailingAnchor.constraint(lessThanOrEqualTo: trailingAnchor, constant: -6),
+            label.topAnchor.constraint(equalTo: topAnchor, constant: 7),
+            label.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -2),
+            widthAnchor.constraint(equalToConstant: 320),
+            heightAnchor.constraint(equalToConstant: 25),
+        ])
+    }
+
+    @available(*, unavailable)
+    required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
+}
+
+private final class StatusHeaderView: NSView {
+    private let iconView = NSImageView()
+    private let titleLabel = menuLabel("TM Sonder", size: 16, weight: .semibold)
+    private let statusLabel = menuLabel("Checking server…", size: 12, weight: .semibold)
+    private let detailLabel = menuLabel("", size: 11, color: .secondaryLabelColor)
+    private let statusDot = NSView()
+
+    override var intrinsicContentSize: NSSize { NSSize(width: 320, height: 70) }
+
+    override init(frame frameRect: NSRect) {
+        super.init(frame: frameRect)
+        wantsLayer = true
+        iconView.imageScaling = .scaleProportionallyUpOrDown
+        iconView.wantsLayer = true
+        iconView.layer?.cornerRadius = 9
+        iconView.layer?.masksToBounds = true
+        iconView.translatesAutoresizingMaskIntoConstraints = false
+
+        statusDot.wantsLayer = true
+        statusDot.layer?.cornerRadius = 4
+        statusDot.translatesAutoresizingMaskIntoConstraints = false
+
+        let statusRow = NSStackView(views: [statusDot, statusLabel])
+        statusRow.orientation = .horizontal
+        statusRow.alignment = .centerY
+        statusRow.spacing = 6
+        statusRow.translatesAutoresizingMaskIntoConstraints = false
+
+        let copy = NSStackView(views: [titleLabel, statusRow, detailLabel])
+        copy.orientation = .vertical
+        copy.alignment = .leading
+        copy.spacing = 3
+        copy.translatesAutoresizingMaskIntoConstraints = false
+
+        addSubview(iconView)
+        addSubview(copy)
+        NSLayoutConstraint.activate([
+            iconView.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 10),
+            iconView.centerYAnchor.constraint(equalTo: centerYAnchor),
+            iconView.widthAnchor.constraint(equalToConstant: 40),
+            iconView.heightAnchor.constraint(equalToConstant: 40),
+            statusDot.widthAnchor.constraint(equalToConstant: 8),
+            statusDot.heightAnchor.constraint(equalToConstant: 8),
+            copy.leadingAnchor.constraint(equalTo: iconView.trailingAnchor, constant: 11),
+            copy.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -12),
+            copy.centerYAnchor.constraint(equalTo: centerYAnchor),
+            widthAnchor.constraint(equalToConstant: 320),
+            heightAnchor.constraint(equalToConstant: 70),
+        ])
+    }
+
+    @available(*, unavailable)
+    required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
+
+    func setIcon(_ image: NSImage?) { iconView.image = image }
+
+    func update(status: String, detail: String, color: NSColor) {
+        statusLabel.stringValue = status
+        detailLabel.stringValue = detail
+        statusDot.layer?.backgroundColor = color.cgColor
+    }
+
+    func setDetail(_ detail: String) { detailLabel.stringValue = detail }
+}
+
+private final class MenuMetricsView: NSView {
+    private let version = menuLabel("—", size: 12, weight: .medium)
+    private let library = menuLabel("—", size: 12, weight: .medium)
+    private let uptime = menuLabel("—", size: 12, weight: .medium)
+    private let network = menuLabel("—", size: 12, weight: .medium)
+
+    override var intrinsicContentSize: NSSize { NSSize(width: 320, height: 70) }
+
+    override init(frame frameRect: NSRect) {
+        super.init(frame: frameRect)
+        let grid = NSGridView(views: [
+            [cell("VERSION", version), cell("LIBRARY", library)],
+            [cell("UPTIME", uptime), cell("NETWORK", network)],
+        ])
+        grid.rowSpacing = 9
+        grid.columnSpacing = 18
+        grid.translatesAutoresizingMaskIntoConstraints = false
+        addSubview(grid)
+        NSLayoutConstraint.activate([
+            grid.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 12),
+            grid.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -12),
+            grid.topAnchor.constraint(equalTo: topAnchor, constant: 5),
+            grid.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -5),
+            widthAnchor.constraint(equalToConstant: 320),
+            heightAnchor.constraint(equalToConstant: 70),
+        ])
+    }
+
+    @available(*, unavailable)
+    required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
+
+    private func cell(_ title: String, _ value: NSTextField) -> NSView {
+        let heading = menuLabel(title, size: 9, weight: .semibold, color: .tertiaryLabelColor)
+        let stack = NSStackView(views: [heading, value])
+        stack.orientation = .vertical
+        stack.alignment = .leading
+        stack.spacing = 2
+        stack.translatesAutoresizingMaskIntoConstraints = false
+        return stack
+    }
+
+    func update(version: String, library: String, uptime: String, network: String) {
+        self.version.stringValue = version
+        self.library.stringValue = library
+        self.uptime.stringValue = uptime
+        self.network.stringValue = network
+    }
+}
+
+private final class MenuConnectionsView: NSView {
+    private let web = menuLabel("Web: —", size: 11, color: .secondaryLabelColor)
+    private let api = menuLabel("API: —", size: 11, color: .secondaryLabelColor)
+    private let publicPulse = menuLabel("Public: —", size: 11, color: .secondaryLabelColor)
+
+    override var intrinsicContentSize: NSSize { NSSize(width: 320, height: 56) }
+
+    override init(frame frameRect: NSRect) {
+        super.init(frame: frameRect)
+        let stack = NSStackView(views: [web, api, publicPulse])
+        stack.orientation = .vertical
+        stack.alignment = .leading
+        stack.spacing = 3
+        stack.translatesAutoresizingMaskIntoConstraints = false
+        addSubview(stack)
+        NSLayoutConstraint.activate([
+            stack.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 12),
+            stack.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -12),
+            stack.topAnchor.constraint(equalTo: topAnchor, constant: 4),
+            stack.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -4),
+            widthAnchor.constraint(equalToConstant: 320),
+            heightAnchor.constraint(equalToConstant: 56),
+        ])
+    }
+
+    @available(*, unavailable)
+    required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
+
+    func update(web: String, api: String, publicPulse: String) {
+        self.web.stringValue = "Web: \(web)"
+        self.api.stringValue = "API: \(api)"
+        self.publicPulse.stringValue = "Public: \(publicPulse)"
+    }
+}
+
+@MainActor
 final class StatusApp: NSObject, NSApplicationDelegate {
     private var item: NSStatusItem!
-    private let statusLine = NSMenuItem(title: "Checking server…", action: nil, keyEquivalent: "")
-    private let detailLine = NSMenuItem(title: "", action: nil, keyEquivalent: "")
-    private let versionLine = NSMenuItem(title: "Version: —", action: nil, keyEquivalent: "")
-    private let networkLine = NSMenuItem(title: "Network: —", action: nil, keyEquivalent: "")
-    private let webLine = NSMenuItem(title: "Web: —", action: nil, keyEquivalent: "")
-    private let apiLine = NSMenuItem(title: "API: —", action: nil, keyEquivalent: "")
-    private let uptimeLine = NSMenuItem(title: "Uptime: —", action: nil, keyEquivalent: "")
-    private let publicLine = NSMenuItem(title: "Public pulse: —", action: nil, keyEquivalent: "")
+    private let headerView = StatusHeaderView()
+    private let metricsView = MenuMetricsView()
+    private let connectionsView = MenuConnectionsView()
     private let updateLine = NSMenuItem(title: "Updates: Not checked", action: nil, keyEquivalent: "")
     private let bindMenu = NSMenu()
     private var checkUpdatesItem: NSMenuItem!
     private var installUpdateItem: NSMenuItem!
+    private var scanItem: NSMenuItem!
     private var timer: Timer?
     private var request: Task<Void, Never>?
     private var updateCheckTask: Task<Void, Never>?
@@ -130,6 +308,7 @@ final class StatusApp: NSObject, NSApplicationDelegate {
     private var baseURL = URL(string: "http://127.0.0.1:8096")!
     private var currentNetwork: NetworkEnvelope?
     private var bindingInProgress = false
+    private var scanInProgress = false
     private var updateCheckInProgress = false
     private var updateInProgress = false
     private var updateInfo: BrewInfo?
@@ -141,35 +320,56 @@ final class StatusApp: NSObject, NSApplicationDelegate {
         NSApp.setActivationPolicy(.accessory)
         item = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
         let menu = NSMenu()
-        menu.addItem(statusLine)
-        menu.addItem(detailLine)
+        let headerItem = NSMenuItem()
+        headerItem.view = headerView
+        menu.addItem(headerItem)
         menu.addItem(.separator())
-        menu.addItem(versionLine)
-        menu.addItem(networkLine)
-        menu.addItem(webLine)
-        menu.addItem(apiLine)
-        menu.addItem(uptimeLine)
-        menu.addItem(publicLine)
-        menu.addItem(updateLine)
+        let metricsItem = NSMenuItem()
+        metricsItem.view = metricsView
+        menu.addItem(metricsItem)
+        let connectionsItem = NSMenuItem()
+        connectionsItem.view = connectionsView
+        menu.addItem(connectionsItem)
+        menu.addItem(.separator())
+
+        menu.addItem(section("SERVER"))
+        add("Open Sonder", #selector(openSonder), to: menu, symbol: "safari")
+        scanItem = add("Scan Library", #selector(scanLibrary), to: menu, symbol: "arrow.triangle.2.circlepath")
+        add("Refresh Status", #selector(refresh), to: menu, symbol: "arrow.clockwise")
+
+        let networkMenu = NSMenu()
         let bindItem = NSMenuItem(title: "Bind interface", action: nil, keyEquivalent: "")
+        bindItem.image = menuSymbol("network")
         bindItem.submenu = bindMenu
-        menu.addItem(bindItem)
+        networkMenu.addItem(bindItem)
+        networkMenu.addItem(.separator())
+        add("Change web port…", #selector(changeWebPort), to: networkMenu, symbol: "arrow.left.and.right")
+        add("Change API port…", #selector(changeAPIPort), to: networkMenu, symbol: "lock.shield")
+        let accessItem = NSMenuItem(title: "Network & Access", action: nil, keyEquivalent: "")
+        accessItem.image = menuSymbol("network")
+        accessItem.submenu = networkMenu
+        menu.addItem(accessItem)
+
         menu.addItem(.separator())
-        add("Change web port…", #selector(changeWebPort), to: menu)
-        add("Change API port…", #selector(changeAPIPort), to: menu)
-        menu.addItem(.separator())
+        menu.addItem(section("UPDATES"))
+        updateLine.image = menuSymbol("arrow.down.circle")
+        menu.addItem(updateLine)
         checkUpdatesItem = add("Check for Updates…", #selector(checkForUpdates), to: menu)
+        checkUpdatesItem.image = menuSymbol("magnifyingglass")
         installUpdateItem = add("Install Update…", #selector(installUpdate), to: menu)
+        installUpdateItem.image = menuSymbol("sparkles")
         installUpdateItem.isEnabled = false
+
         menu.addItem(.separator())
-        add("Open Sonder", #selector(openSonder), to: menu)
-        add("Refresh Status", #selector(refresh), to: menu)
-        add("Open Server Logs", #selector(openLogs), to: menu)
+        menu.addItem(section("TOOLS"))
+        add("Open Server Logs", #selector(openLogs), to: menu, symbol: "doc.text.magnifyingglass")
         menu.addItem(.separator())
         let note = NSMenuItem(title: "Quitting this indicator leaves the server running", action: nil, keyEquivalent: "")
+        note.isEnabled = false
         menu.addItem(note)
-        add("Quit Status Indicator", #selector(quit), to: menu)
+        add("Quit Status Indicator", #selector(quit), to: menu, symbol: "power")
         item.menu = menu
+        headerView.setIcon(menuIcon(size: 40))
         display("Checking server…", symbol: "server.rack", detail: "")
         updateLine.title = "Updates: Checking Homebrew…"
         refreshMenuInteractivity()
@@ -187,11 +387,25 @@ final class StatusApp: NSObject, NSApplicationDelegate {
     }
 
     @discardableResult
-    private func add(_ title: String, _ action: Selector, to menu: NSMenu) -> NSMenuItem {
+    private func add(_ title: String, _ action: Selector, to menu: NSMenu, symbol: String? = nil) -> NSMenuItem {
         let entry = NSMenuItem(title: title, action: action, keyEquivalent: "")
         entry.target = self
+        if let symbol { entry.image = menuSymbol(symbol) }
         menu.addItem(entry)
         return entry
+    }
+
+    private func section(_ title: String) -> NSMenuItem {
+        let item = NSMenuItem()
+        item.view = MenuSectionView(title)
+        return item
+    }
+
+    private func menuSymbol(_ name: String) -> NSImage? {
+        let image = NSImage(systemSymbolName: name, accessibilityDescription: nil)
+        image?.isTemplate = true
+        image?.size = NSSize(width: 16, height: 16)
+        return image
     }
 
     private func configuredServer() -> ServerConnection {
@@ -269,6 +483,47 @@ final class StatusApp: NSObject, NSApplicationDelegate {
         return try decoder.decode(T.self, from: data)
     }
 
+    @objc private func scanLibrary() {
+        guard request == nil, !bindingInProgress, !scanInProgress, !updateCheckInProgress, !updateInProgress else { return }
+        scanInProgress = true
+        refreshMenuInteractivity()
+        display("Starting library scan", symbol: "arrow.triangle.2.circlepath", detail: "Reconciling media files…")
+        let connection = configuredServer()
+        request = Task { [weak self] in
+            guard let self else { return }
+            defer {
+                self.request = nil
+                self.scanInProgress = false
+                self.refreshMenuInteractivity()
+            }
+            do {
+                var request = URLRequest(url: connection.url(path: "api/settings/rescan"), timeoutInterval: 5)
+                request.httpMethod = "POST"
+                if let pairingToken = connection.pairingToken {
+                    request.setValue("Bearer \(pairingToken)", forHTTPHeaderField: "Authorization")
+                }
+                let (data, response) = try await URLSession.shared.data(for: request)
+                let statusCode = (response as? HTTPURLResponse)?.statusCode ?? -1
+                guard statusCode == 202 || statusCode == 409 else {
+                    let message = (try? JSONDecoder().decode(APIError.self, from: data)).flatMap(\.error) ?? "Scan could not start (HTTP \(statusCode))"
+                    throw NSError(domain: "SonderStatus", code: statusCode, userInfo: [NSLocalizedDescriptionKey: message])
+                }
+                self.display("Scanning library", symbol: "arrow.triangle.2.circlepath", detail: statusCode == 409 ? "A scan is already running" : "Reconciliation started")
+                try? await Task.sleep(for: .seconds(1))
+                self.request = nil
+                self.scanInProgress = false
+                self.refreshMenuInteractivity()
+                self.refresh()
+            } catch is CancellationError {
+                // The menu-bar app may be terminated while a scan request is in flight.
+            } catch {
+                self.display("Scan failed", symbol: "exclamationmark.triangle", detail: error.localizedDescription)
+                self.showAlert(title: "Sonder could not start a scan", message: error.localizedDescription)
+                self.refresh()
+            }
+        }
+    }
+
     private func render(server: ServerStatus, network envelope: NetworkEnvelope) {
         let status = envelope.status
         currentNetwork = envelope
@@ -277,11 +532,6 @@ final class StatusApp: NSObject, NSApplicationDelegate {
         if !updateInProgress {
             display(label, symbol: symbol, detail: "\(server.itemCount.formatted()) items")
         }
-        versionLine.title = "Version: \(envelope.version) (\(envelope.build))"
-        networkLine.title = "Network: \(status.state.selectedMode) · \(status.state.selectedInterface) · \(status.state.selectedIPv4)"
-        webLine.title = "Web: \(status.state.webBindAddress):\(status.state.webPort) · \(status.webHealthy ? "up" : "down")"
-        apiLine.title = "API: \(status.state.apiBindAddress):\(status.state.apiPort) · \(status.apiHealthy ? "ready" : "down")"
-        uptimeLine.title = "Uptime: \(formatUptime(status.uptimeSeconds))"
         let publicState: String
         if !status.caddy.enabled {
             publicState = "Caddy disabled"
@@ -292,7 +542,17 @@ final class StatusApp: NSObject, NSApplicationDelegate {
         } else {
             publicState = "down"
         }
-        publicLine.title = "Public pulse: \(publicState)"
+        metricsView.update(
+            version: "\(envelope.version) · \(envelope.build)",
+            library: "\(server.itemCount.formatted()) items",
+            uptime: formatUptime(status.uptimeSeconds),
+            network: status.state.selectedInterface.isEmpty ? status.state.selectedMode : status.state.selectedInterface
+        )
+        connectionsView.update(
+            web: "\(status.state.webBindAddress):\(status.state.webPort) · \(status.webHealthy ? "up" : "down")",
+            api: "\(status.state.apiBindAddress):\(status.state.apiPort) · \(status.apiHealthy ? "ready" : "down")",
+            publicPulse: publicState
+        )
         rebuildBindingMenu(status: status)
         refreshUpdateSummary()
         if let error = status.lastError, !error.isEmpty, error != lastAlertedError {
@@ -432,19 +692,16 @@ final class StatusApp: NSObject, NSApplicationDelegate {
 
     private func resetDetails() {
         currentNetwork = nil
-        versionLine.title = "Version: —"
-        networkLine.title = "Network: —"
-        webLine.title = "Web: —"
-        apiLine.title = "API: —"
-        uptimeLine.title = "Uptime: —"
-        publicLine.title = "Public pulse: —"
+        metricsView.update(version: "—", library: "—", uptime: "—", network: "—")
+        connectionsView.update(web: "—", api: "—", publicPulse: "—")
         bindMenu.removeAllItems()
     }
 
     private func refreshMenuInteractivity() {
-        let busy = bindingInProgress || updateCheckInProgress || updateInProgress
+        let busy = bindingInProgress || scanInProgress || updateCheckInProgress || updateInProgress
         checkUpdatesItem?.isEnabled = !busy
         installUpdateItem?.isEnabled = !busy && updateInfo?.outdated == true
+        scanItem?.isEnabled = !busy
     }
 
     @objc private func checkForUpdates() {
@@ -657,7 +914,8 @@ final class StatusApp: NSObject, NSApplicationDelegate {
             .map(String.init)
             .last(where: { !$0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }) ?? ""
         if !line.isEmpty {
-            detailLine.title = String(line.prefix(120))
+            let progress = String(line.prefix(120))
+            headerView.setDetail(progress)
         }
     }
 
@@ -729,10 +987,13 @@ final class StatusApp: NSObject, NSApplicationDelegate {
     }
 
     private func display(_ text: String, symbol: String, detail: String) {
-        statusLine.title = "Sonder · \(text)"
-        detailLine.title = detail
+        let color: NSColor
+        if symbol.contains("exclamation") { color = .systemOrange }
+        else if symbol.contains("arrow") { color = .systemBlue }
+        else { color = .systemGreen }
+        headerView.update(status: text, detail: detail, color: color)
         item.button?.title = ""
-        item.button?.image = menuIcon() ?? NSImage(systemSymbolName: symbol, accessibilityDescription: text)
+        item.button?.image = menuIcon(size: 18) ?? NSImage(systemSymbolName: symbol, accessibilityDescription: text)
         item.button?.image?.isTemplate = false
         item.button?.toolTip = "Sonder: \(text). \(detail)"
         item.button?.setAccessibilityLabel("Sonder: \(text)")
@@ -747,10 +1008,10 @@ final class StatusApp: NSObject, NSApplicationDelegate {
         alert.runModal()
     }
 
-    private func menuIcon() -> NSImage? {
+    private func menuIcon(size: CGFloat = 18) -> NSImage? {
         guard let path = Bundle.main.path(forResource: "TM-Sonder", ofType: "png"),
               let image = NSImage(contentsOfFile: path) else { return nil }
-        image.size = NSSize(width: 18, height: 18)
+        image.size = NSSize(width: size, height: size)
         return image
     }
 

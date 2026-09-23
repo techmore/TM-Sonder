@@ -8,14 +8,18 @@ the web listener follows Jellyfin's native 8096 default).
 The token is used only for local status/rebind requests and is never displayed
 or logged. The app does not start another server or load the media catalog.
 
-The menu shows running, scanning, updating, unreachable, or unexpected-response
-status; item count; installed version; selected interface/IP; private web/API
-binds and ports; uptime; Caddy/public pulse; and links to the authenticated web
-interface and logs. Its **Bind interface** submenu lists loopback, Wi-Fi/LAN,
-Ethernet, VPN, public, and every active exact interface ID. **Change web port…**
-and **Change API port…** submit the same atomic live exposure operation as the
-web Settings panel. Binding and port controls are disabled during a swap, and
-failed swaps produce a native alert.
+The menu is a compact native AppKit dashboard: a branded status header, a
+two-column metric grid, a connection summary, and clearly separated Server,
+Updates, and Tools sections. It shows running, scanning, updating, unreachable,
+or unexpected-response status; item count; installed version; selected
+interface/IP; private web/API binds and ports; uptime; Caddy/public pulse; and
+links to the authenticated web interface and logs. **Scan Library** starts a
+safe background reconciliation from the same menu. Its **Network & Access**
+submenu contains **Bind interface**, which lists loopback, Wi-Fi/LAN, Ethernet,
+VPN, public, and every active exact interface ID. **Change web port…** and
+**Change API port…** submit the same atomic live exposure operation as the web
+Settings panel. Binding, scanning, and port controls are disabled during a
+change, and failed operations produce a native alert.
 
 The menu also exposes **Check for Updates…** and **Install Update…** for the
 Homebrew `tm-sonder` formula. Checks refresh Homebrew metadata only when the

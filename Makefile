@@ -5,6 +5,7 @@ GO      ?= go
 BINARY  := sonder
 VERSION ?= $(shell tr -d '\n' < VERSION)
 BUILD   ?= local
+APP_BUILD ?= $(shell git rev-list --count HEAD 2>/dev/null || echo 1)
 LDFLAGS := -s -w -X main.version=$(VERSION) -X tm-sonder/server/internal/httpapi.Version=$(VERSION) -X tm-sonder/server/internal/httpapi.Build=$(BUILD)
 
 .PHONY: build mac linux status-app install-status-app uninstall-status-app test vet fmt clean install-launchd uninstall-launchd container-build container-run release-check release-build
@@ -15,7 +16,7 @@ status-app: ## Build the lightweight macOS menu-bar service indicator
 	mkdir -p "bin/Sonder Status.app/Contents/MacOS"
 	mkdir -p "bin/Sonder Status.app/Contents/Resources"
 	xcrun swiftc -swift-version 6 -O -framework AppKit tools/SonderStatus/main.swift -o "bin/Sonder Status.app/Contents/MacOS/SonderStatus"
-	cp tools/SonderStatus/Info.plist "bin/Sonder Status.app/Contents/Info.plist"
+	sed -e "s/__VERSION__/$(VERSION)/g" -e "s/__BUILD_NUMBER__/$(APP_BUILD)/g" tools/SonderStatus/Info.plist > "bin/Sonder Status.app/Contents/Info.plist"
 	cp xcode-TM-Sonder/Assets.xcassets/AppIcon.appiconset/sonder-generated-32x32@2x.png "bin/Sonder Status.app/Contents/Resources/TM-Sonder.png"
 
 install-status-app: ## build + install + bootstrap the menu-bar indicator
