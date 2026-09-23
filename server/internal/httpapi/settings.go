@@ -31,6 +31,8 @@ type SettingsPayload struct {
 	RequiresPairing bool           `json:"requiresPairing"`
 	ThemePreset     string         `json:"themePreset"`
 	AudiobookLayout string         `json:"audiobookLayout"`
+	MoviesLayout    string         `json:"moviesLayout"`
+	TVLayout        string         `json:"tvLayout"`
 	HWAccel         string         `json:"hwaccel"`
 	MaxConcurrent   int            `json:"maxConcurrent"`
 	Libraries       []LibraryEntry `json:"libraries"`
@@ -66,6 +68,8 @@ func (s *Server) settingsPayload(includeToken bool) SettingsPayload {
 		RequiresPairing: s.requiresPairing(),
 		ThemePreset:     s.cfg().ThemePreset,
 		AudiobookLayout: config.NormalizeAudiobookLayout(s.cfg().AudiobookLayout),
+		MoviesLayout:    config.NormalizeMediaLayout(s.cfg().MoviesLayout),
+		TVLayout:        config.NormalizeMediaLayout(s.cfg().TVLayout),
 		HWAccel:         s.cfg().Transcode.HWAccel,
 		MaxConcurrent:   s.cfg().Transcode.MaxConcurrent,
 		Libraries:       libs,
@@ -132,6 +136,8 @@ type settingsUpdate struct {
 	AllowLAN        *bool           `json:"allowLAN"`
 	ThemePreset     *string         `json:"themePreset"`
 	AudiobookLayout *string         `json:"audiobookLayout"`
+	MoviesLayout    *string         `json:"moviesLayout"`
+	TVLayout        *string         `json:"tvLayout"`
 	Libraries       *[]LibraryEntry `json:"libraries"`
 }
 
@@ -202,6 +208,12 @@ func (s *Server) handleSettingsPut(w http.ResponseWriter, r *http.Request) {
 		}
 		if upd.AudiobookLayout != nil {
 			next.AudiobookLayout = config.NormalizeAudiobookLayout(*upd.AudiobookLayout)
+		}
+		if upd.MoviesLayout != nil {
+			next.MoviesLayout = config.NormalizeMediaLayout(*upd.MoviesLayout)
+		}
+		if upd.TVLayout != nil {
+			next.TVLayout = config.NormalizeMediaLayout(*upd.TVLayout)
 		}
 	})
 	if upd.Libraries != nil {

@@ -21,6 +21,10 @@ const (
 	// DefaultAudiobookLayout is the rails browser ("rails"); the legacy
 	// list view remains available as "classic".
 	DefaultAudiobookLayout = "rails"
+
+	// DefaultMediaLayout is the rails browser for movies/TV ("rails");
+	// "grid" keeps the classic full-grid view.
+	DefaultMediaLayout = "rails"
 )
 
 var validKinds = map[string]bool{
@@ -65,6 +69,8 @@ type Config struct {
 	PairingToken      string    `json:"pairingToken"`
 	ThemePreset       string    `json:"themePreset"`
 	AudiobookLayout   string    `json:"audiobookLayout"`
+	MoviesLayout      string    `json:"moviesLayout"`
+	TVLayout          string    `json:"tvLayout"`
 	FFmpegPath        string    `json:"ffmpegPath"`
 	FFprobePath       string    `json:"ffprobePath"`
 	ProbeWorkers      int       `json:"probeWorkers,omitempty"`
@@ -89,6 +95,8 @@ func Default() Config {
 		DataDir:     dataDir,
 		ThemePreset: DefaultThemePreset,
 		AudiobookLayout: DefaultAudiobookLayout,
+		MoviesLayout:    DefaultMediaLayout,
+		TVLayout:        DefaultMediaLayout,
 		FFmpegPath:  "ffmpeg",
 		FFprobePath: "ffprobe",
 		SafeScan:    true,
@@ -275,6 +283,8 @@ func (c *Config) applyEnv() {
 		c.Transcode.Preset = v
 	}
 	c.AudiobookLayout = NormalizeAudiobookLayout(c.AudiobookLayout)
+	c.MoviesLayout = NormalizeMediaLayout(c.MoviesLayout)
+	c.TVLayout = NormalizeMediaLayout(c.TVLayout)
 }
 
 // NormalizeAudiobookLayout coerces a layout preference to "rails" or
@@ -285,6 +295,17 @@ func NormalizeAudiobookLayout(v string) string {
 		return "classic"
 	default:
 		return DefaultAudiobookLayout
+	}
+}
+
+// NormalizeMediaLayout coerces a movies/TV layout preference to "rails"
+// or "grid", defaulting to rails.
+func NormalizeMediaLayout(v string) string {
+	switch strings.ToLower(strings.TrimSpace(v)) {
+	case "grid":
+		return "grid"
+	default:
+		return DefaultMediaLayout
 	}
 }
 

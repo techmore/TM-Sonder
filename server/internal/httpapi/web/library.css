@@ -237,9 +237,10 @@ body[data-theme="techmore"] .nowplaying { background:rgba(64,61,54,.96); color:#
 body.storage-mode header > input, body.storage-mode header > select,
 body.optimize-mode header > input, body.optimize-mode header > select { display:none; }
 body.storage-mode #filterRow, body.storage-mode #libraryHealth,
-body.storage-mode #continueRow, body.storage-mode #backRow,
+body.storage-mode #continueRow, body.storage-mode #railsRow, body.storage-mode #backRow,
 body.optimize-mode #filterRow, body.optimize-mode #libraryHealth,
 body.optimize-mode #storagePanel, body.optimize-mode #continueRow,
+body.optimize-mode #railsRow,
 body.optimize-mode #backRow { display:none !important; }
 /* Values wrap onto as many lines as they need instead of scrolling sideways:
    a single hidden row made most genres unfindable. The tail is collapsed in

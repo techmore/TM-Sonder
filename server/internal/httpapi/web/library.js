@@ -1639,10 +1639,64 @@
         return;
       }
       if (listMode) { renderLists(); return; }
+      $("#railsRow").hidden = true;
       if (openShow) { renderShowPage(); return; }
 
       const visible = visibleItems();
       const list = activeTab === "all" ? mainPageEntries(visible) : visible;
+      // Rails view (movies/tvshows tabs): Continue strip + picks strip above
+      // the full grid. Active only with no search/facet filtering; otherwise
+      // the grid below is the result list. Classic grid mode skips strips.
+      const tabLayoutPref = activeTab === "movies"
+        ? (settingsData?.moviesLayout || "rails")
+        : activeTab === "tvshows"
+        ? (settingsData?.tvLayout || "rails")
+        : "grid";
+      const railsActive = (activeTab === "movies" || activeTab === "tvshows") &&
+        tabLayoutPref === "rails" &&
+        $("#q").value.trim() === "" && selectedFacetValues.size === 0 &&
+        $("#watched").value === "all" && !openShow;
+      const railsRow = $("#railsRow");
+      railsRow.hidden = true;
+      if (railsActive) {
+        const byUpdated = (a, b) => (progressByID.get(b.id)?.updatedAt || "")
+          .localeCompare(progressByID.get(a.id)?.updatedAt || "");
+        const railStrip = (title, sub, cards) => cards.length ? `
+          <h2>${escapeHTML(title)}</h2><p class="sub" style="color:var(--muted);font-size:12.5px;margin:0 0 12px">${escapeHTML(sub)}</p>
+          <main class="grid rail-mode" style="margin-bottom:26px">${cards.join("")}</main>` : "";
+        let blocks = "";
+        if (activeTab === "movies") {
+          const cont = visible.filter(i => inProgress(progressFor(i.id), i)).sort(byUpdated).slice(0, 10);
+          const fresh = visible.filter(i => !isWatched(progressFor(i.id), i) && !inProgress(progressFor(i.id), i))
+            .sort((a, b) => (b.year || 0) - (a.year || 0)).slice(0, 12);
+          blocks = railStrip("Continue Watching", `${cont.length} in progress`, cont.map(i => cardHTML(i))) +
+                   railStrip("Unwatched picks", "newest unwatched", fresh.map(i => cardHTML(i)));
+        } else {
+          const shows = buildShowGroups();
+          const showProg = s => {
+            let prog = null, started = false;
+            for (const eps of s.seasons.values()) for (const e of eps) {
+              const p = progressFor(e.id);
+              if (inProgress(p, e)) { prog = p; started = true; }
+            }
+            return { prog, started };
+          };
+          const cont = shows.filter(s => showProg(s).started)
+            .sort((a, b) => (showProg(b).prog?.updatedAt || "").localeCompare(showProg(a).prog?.updatedAt || "")).slice(0, 10);
+          const fresh = shows.filter(s => {
+            for (const eps of s.seasons.values()) for (const e of eps) {
+              if (isWatched(progressFor(e.id), e) || inProgress(progressFor(e.id), e)) return false;
+            }
+            return true;
+          }).slice(0, 12);
+          blocks = railStrip("Continue Watching", `${cont.length} shows in progress`, cont.map(showCardHTML)) +
+                   railStrip("Unstarted", "nothing played yet", fresh.map(showCardHTML));
+        }
+        if (blocks) {
+          document.querySelector("#railsBlocks").innerHTML = blocks;
+          railsRow.hidden = false;
+        }
+      }
       const continuing = items.filter(i =>
         ["movie","tvShow","documentary"].includes(i.kind) &&
         inProgress(progressFor(i.id), i))
@@ -2110,6 +2164,8 @@
       document.querySelector("#allowLAN").checked = !!settingsData.allowLAN;
       document.querySelector("#themeSel").value = settingsData.themePreset || "earthy";
       document.querySelector("#layoutSel").value = settingsData.audiobookLayout || "rails";
+      document.querySelector("#moviesLayoutSel").value = settingsData.moviesLayout || "rails";
+      document.querySelector("#tvLayoutSel").value = settingsData.tvLayout || "rails";
       document.querySelector("#mounts").innerHTML =
         (settingsData.suggestedMounts ?? []).map(m => `<option value="${escapeHTML(m)}">`).join("");
 
@@ -2281,6 +2337,8 @@
       body.allowLAN = document.querySelector("#allowLAN").checked;
       body.themePreset = document.querySelector("#themeSel").value;
       body.audiobookLayout = document.querySelector("#layoutSel").value;
+      body.moviesLayout = document.querySelector("#moviesLayoutSel").value;
+      body.tvLayout = document.querySelector("#tvLayoutSel").value;
       await putSettings(body);
       pendingLibs = null;
       // library table may have changed -> refresh catalog behind the dialog
