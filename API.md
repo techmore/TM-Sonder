@@ -27,6 +27,34 @@ Base URL comes from `/api/discovery` as `localURL` or `lanURL`.
 - Auth is based on the **connection peer address**, not the client-controlled `Host` header.
 - Product default: server enabled, **LAN off**. Enabling LAN auto-generates a pairing token.
 
+## Network binding and public proxy
+
+`GET /api/network/interfaces` returns only interfaces that are currently up
+and have an IPv4 address. Each entry includes its exact ID (`en0`, `bridge0`,
+`utun4`, and so on), detected type, IPv4 address, and supported binding modes.
+`GET /api/network/status` returns the persisted runtime state, web/API health,
+Caddy/public pulse, uptime, and the external prerequisites for public access.
+
+`POST /api/network/rebind` accepts `{ "mode": "wifi/lan", "interfaceID": "" }`
+or an exact ID such as `{ "mode": "interface", "interfaceID": "utun4" }`.
+The server validates the target before stopping anything, writes
+`<dataDir>/runtime-state.json` atomically, restarts the per-user LaunchAgent,
+updates and validates Caddy, checks local web/API readiness, and rolls back the
+previous state when a post-switch check fails. The response is `202` because
+launchd may replace the process while the operation is in flight; poll the
+status endpoint for the final state. The menu-bar companion shows
+“Rebinding web + Caddy…” and disables binding controls during the swap.
+
+`PUT /api/network/proxy` accepts `enabled`, `publicDomain`,
+`publicHealthCheckURL`, and `caddyBindAddress`. It changes only the persisted
+proxy state and Caddy configuration. Caddy never configures DNS, router or
+firewall forwarding, or WireGuard routes. The API listener defaults to
+`127.0.0.1:8798`. The selected web listener is a pairing-protected frontend
+that proxies to that private listener, so browser and Jellyfin-compatible URLs
+remain usable over the LAN without exposing the API process or a database port
+directly. The catalog is a local JSON snapshot; no database port is opened by
+the server.
+
 ## Discovery
 
 | Method | Path | Purpose |
@@ -101,6 +129,10 @@ Includes:
 | GET | `/api/data/export` | Download a versioned, media-independent Sonder data bundle containing catalog metadata, lists, tags, order, and progress. |
 | POST | `/api/data/import` | Restore or merge a data bundle. Accepts `mode` (`replace` or `merge`) and optional `pathMappings`; never starts a scan. |
 | GET | `/api/status` | Server/library scan status. |
+| GET | `/api/network/interfaces` | Active IPv4-only interface inventory. |
+| GET | `/api/network/status` | Runtime bind/API/Caddy health and public prerequisites. |
+| POST | `/api/network/rebind` | Validate and asynchronously switch the web interface. |
+| PUT/PATCH | `/api/network/proxy` | Persist Caddy domain/health/bind settings and apply them. |
 | GET | `/api/optimization/queue` | Generated recommendations for AAC M4B and selected large H.264 files. |
 | GET | `/api/optimization/audiobooks/jobs` | Persistent audiobook job queue and status. |
 | POST | `/api/optimization/audiobooks/jobs` | Queue selected recommendation IDs for staged Opus conversion. |

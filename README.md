@@ -34,16 +34,23 @@ make mac                    # → bin/sonder-darwin-arm64
 
 On first run the server writes a commented config template. Edit `libraries`
 to point at your media roots, then restart. Key config fields:
-`port`, `dataDir`, `libraries[]`, `allowLAN`, `safeScan`, `probeWorkers`,
-`thumbWorkers`, `transcode`. Every field also has a `SONDER_*` environment override (see the
-generated template).
+`port`/`webPort`, `apiPort`, `dataDir`, `libraries[]`, `allowLAN`, `safeScan`,
+`probeWorkers`, `thumbWorkers`, `transcode`, and optional Caddy paths. Every
+field also has a `SONDER_*` environment override (see the generated template).
 
 Requirements: `ffprobe` and `ffmpeg` on `PATH` (or configured paths) for track
 probing, thumbnails, chapters, and transcoding. The server runs fine without
 them, minus those features.
 
-Default port: `8797`. Local-only until LAN is enabled; enabling LAN
-auto-generates a pairing token (persisted in `dataDir/pairing-token`).
+The web listener defaults to `8797`; the private readiness/API listener uses
+`8798` on `127.0.0.1`. Local-only until LAN is enabled; enabling LAN
+auto-generates a pairing token (persisted in `dataDir/pairing-token`). The
+active interface selection is stored separately in
+`<dataDir>/runtime-state.json`, so changing adapters does not rescan or alter
+the catalog.
+The LAN-facing web listener is a pairing-protected frontend over the private
+API listener, so existing browser and Jellyfin-compatible routes keep working
+without binding the API process or catalog storage to the network.
 
 ### Operations
 
@@ -53,6 +60,12 @@ make vet
 make fmt
 make install-launchd        # build + install + bootstrap + health check
 make container-build && make container-run
+
+sonder app interfaces --json
+sonder app status --json
+sonder app proxy status
+sonder app restart wifi       # also: ethernet, vpn, loopback, public, en0, utun4
+sonder app proxy enable --domain books.example.com --health https://books.example.com/api/health
 ```
 
 - **Portable data:** the catalog is persisted to `<dataDir>/library.json` as a
@@ -67,6 +80,16 @@ make container-build && make container-run
   still holds items, so an unmounted NAS share cannot wipe the catalog. Set
   `"safeScan": false` to let a deliberately emptied library prune normally.
 - **Bonjour:** advertised as `_tmsonder._tcp` when LAN is enabled.
+- **Network binding:** `sonder app interfaces --json` lists only active IPv4
+  interfaces. Use `sonder app restart loopback`, `wifi`, `ethernet`, `vpn`,
+  `public`, or an exact ID such as `en0`/`utun4`. Each swap validates first,
+  keeps the API on loopback, updates Caddy when enabled, and rolls back on a
+  failed health check. `sonder app status --json` and `sonder app proxy status`
+  expose the same state used by the menu-bar companion.
+- **Public exposure:** enabling Caddy only manages Sonder's reverse-proxy
+  configuration. DNS records, router/firewall TCP 80/443 forwarding, and
+  WireGuard routes remain explicit external prerequisites. The catalog is a
+  local JSON snapshot in `dataDir`; no database listener is opened or exposed.
 - **`/debug/pprof/*`:** loopback-only.
 - **`?transcode=1`:** on-the-fly fragmented-MP4 transcode for containers
   AVPlayer cannot play directly. See `API.md` for `mode`, `ss`, and `sub`.

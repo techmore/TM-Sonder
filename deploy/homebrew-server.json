@@ -2,6 +2,8 @@
 // or use it as a starting point for `brew services start tm-sonder`.
 {
   "port": 8797,
+  "webPort": 8797,
+  "apiPort": 8798,
   "dataDir": "~/Library/Application Support/TM-Sonder-Server",
   "libraries": [
     { "id": "media", "name": "Media", "path": "/path/to/media", "kind": "all" }

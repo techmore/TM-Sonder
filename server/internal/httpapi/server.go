@@ -10,6 +10,8 @@ import (
 	"log"
 	"net"
 	"net/http"
+	"net/http/httputil"
+	"net/url"
 	"os"
 	"path/filepath"
 	"runtime/debug"
@@ -23,6 +25,7 @@ import (
 	"tm-sonder/server/internal/audiobookopt"
 	"tm-sonder/server/internal/config"
 	"tm-sonder/server/internal/library"
+	"tm-sonder/server/internal/runtimecontrol"
 	"tm-sonder/server/internal/transcode"
 )
 
@@ -59,6 +62,7 @@ type Server struct {
 	refresher          TrackRefresher
 	chapters           ChapterProvider
 	audiobookOptimizer *audiobookopt.Manager
+	runtimeControl     *runtimecontrol.Controller
 	onMutation         func()
 	onProgress         func()
 
@@ -147,6 +151,12 @@ func (s *Server) SetConfigPath(path string) { s.configPath = path }
 // enrichment triggered from the API can persist their results.
 func (s *Server) SetSnapshotPath(path string) { s.snapshotPath = path }
 
+// SetRuntimeControl wires the interface/Caddy controller used by the status
+// companion and the network management endpoints.
+func (s *Server) SetRuntimeControl(controller *runtimecontrol.Controller) {
+	s.runtimeControl = controller
+}
+
 // persistConfig atomically writes the current in-memory config to the config
 // file. Note: // comments from a hand-edited file are lost on save.
 func (s *Server) persistConfig() error {
@@ -222,6 +232,11 @@ func (s *Server) routes() {
 	m.HandleFunc("GET /api/library", s.handleLibrary)
 	m.HandleFunc("GET /library.json", s.handleLibrary)
 	m.HandleFunc("GET /api/status", s.handleStatus)
+	m.HandleFunc("GET /api/network/interfaces", s.handleNetworkInterfaces)
+	m.HandleFunc("GET /api/network/status", s.handleNetworkStatus)
+	m.HandleFunc("POST /api/network/rebind", s.handleNetworkRebind)
+	m.HandleFunc("PUT /api/network/proxy", s.handleNetworkProxy)
+	m.HandleFunc("PATCH /api/network/proxy", s.handleNetworkProxy)
 	m.HandleFunc("GET /api/library/health", s.handleLibraryHealth)
 	m.HandleFunc("GET /api/optimization/queue", s.handleOptimizationQueue)
 	m.HandleFunc("GET /api/optimization/audiobooks/jobs", s.handleAudiobookOptimizationJobs)
@@ -277,6 +292,38 @@ func (s *Server) routes() {
 // Handler returns the fully wrapped HTTP handler.
 func (s *Server) Handler() http.Handler {
 	return withLocalPprof(s.withAccessLog(s.withGzip(s.withAuth(s.withRecovery(s.mux)))))
+}
+
+// WebHandler is the LAN-facing frontend. It enforces the original request's
+// LAN/pairing policy, then proxies the request to the loopback-only API
+// listener. Keeping the catalog handlers behind that private listener makes
+// the process boundary real while preserving the existing browser and
+// Jellyfin/Audiobookshelf URLs for remote clients.
+func (s *Server) WebHandler(privateAPIAddress string) http.Handler {
+	target, err := url.Parse("http://" + privateAPIAddress)
+	if err != nil {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			writeError(w, http.StatusInternalServerError, "Invalid private API address")
+		})
+	}
+	proxy := httputil.NewSingleHostReverseProxy(target)
+	proxy.ErrorHandler = func(w http.ResponseWriter, r *http.Request, err error) {
+		s.logger.Printf("web proxy to private API failed: %v", err)
+		writeError(w, http.StatusBadGateway, "Private API unavailable")
+	}
+	originalDirector := proxy.Director
+	proxy.Director = func(r *http.Request) {
+		originalHost := r.Host
+		originalDirector(r)
+		if originalHost != "" {
+			r.Header.Set("X-Forwarded-Host", originalHost)
+		}
+		// The private listener deliberately sees a loopback peer and host. The
+		// outer withAuth call has already applied the real remote client's
+		// pairing/LAN policy before this proxy hop.
+		r.Host = target.Host
+	}
+	return s.withAccessLog(s.withAuth(s.withRecovery(proxy)))
 }
 
 // withRecovery converts a handler panic into a 500 instead of dropping the

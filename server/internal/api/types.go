@@ -145,6 +145,8 @@ type ServerSettings struct {
 	IsEnabled       bool   `json:"isEnabled"`
 	AllowLAN        bool   `json:"allowLAN"`
 	Port            int    `json:"port"`
+	WebPort         int    `json:"webPort,omitempty"`
+	APIPort         int    `json:"apiPort,omitempty"`
 	ThemePreset     string `json:"themePreset"`
 	RequiresPairing bool   `json:"requiresPairing"`
 }
@@ -267,6 +269,9 @@ type DiscoveryEndpoints struct {
 	Subtitles            *string `json:"subtitles"`
 	Poster               *string `json:"poster"`
 	Backdrop             *string `json:"backdrop"`
+	NetworkInterfaces    *string `json:"networkInterfaces,omitempty"`
+	NetworkStatus        *string `json:"networkStatus,omitempty"`
+	NetworkRebind        *string `json:"networkRebind,omitempty"`
 }
 
 type DiscoveryResponse struct {

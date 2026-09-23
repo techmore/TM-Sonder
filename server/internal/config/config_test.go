@@ -3,6 +3,7 @@ package config
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -67,6 +68,30 @@ func TestLoadFromFile(t *testing.T) {
 	}
 	if cfg.Transcode.MaxConcurrent != 4 {
 		t.Errorf("transcode not applied: %+v", cfg.Transcode)
+	}
+}
+
+func TestExplicitWebAPIAndCaddySettings(t *testing.T) {
+	p := write(t, `{
+		"webPort": 9010,
+		"apiPort": 9011,
+		"dataDir": "`+t.TempDir()+`",
+		"caddyPath": "/opt/homebrew/bin/caddy",
+		"caddyConfigPath": "~/Library/Application Support/TM-Sonder-Server/Caddyfile",
+		"caddyLaunchdLabel": "com.example.caddy"
+	}`)
+	cfg, err := Load(p)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.Port != 9010 || cfg.WebPort != 9010 || cfg.APIPort != 9011 {
+		t.Fatalf("ports not normalized: %+v", cfg)
+	}
+	if cfg.CaddyPath != "/opt/homebrew/bin/caddy" || cfg.CaddyLaunchdLabel != "com.example.caddy" {
+		t.Fatalf("Caddy settings not loaded: %+v", cfg)
+	}
+	if strings.HasPrefix(cfg.CaddyConfigPath, "~") {
+		t.Fatalf("Caddy config path was not expanded: %q", cfg.CaddyConfigPath)
 	}
 }
 

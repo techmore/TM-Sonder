@@ -50,6 +50,8 @@ func (s *Server) serverSettings() api.ServerSettings {
 		IsEnabled:       true,
 		AllowLAN:        s.cfg().AllowLAN,
 		Port:            s.cfg().Port,
+		WebPort:         s.cfg().WebPort,
+		APIPort:         s.cfg().APIPort,
 		ThemePreset:     s.cfg().ThemePreset,
 		RequiresPairing: s.requiresPairing(),
 	}
@@ -107,6 +109,9 @@ func (s *Server) handleDiscovery(w http.ResponseWriter, r *http.Request) {
 			Subtitles:            strPtr("/subtitles/{id}/{index}"),
 			Poster:               strPtr("/artwork/poster/{id}"),
 			Backdrop:             strPtr("/artwork/backdrop/{id}"),
+			NetworkInterfaces:    strPtr("/api/network/interfaces"),
+			NetworkStatus:        strPtr("/api/network/status"),
+			NetworkRebind:        strPtr("/api/network/rebind"),
 		},
 		Theme: themeFor(s.cfg().ThemePreset),
 	}

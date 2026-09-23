@@ -39,10 +39,10 @@ launchctl enable "gui/$(id -u)/com.tm-sonder.server"
 launchctl kickstart -k "gui/$(id -u)/com.tm-sonder.server"
 
 echo "==> Health check"
-PORT=$(python3 -c "import json;print(json.load(open('$CONFIG_DIR/server.json')).get('port',8797))")
+API_PORT=$(python3 -c "import json,re; raw=open('$CONFIG_DIR/server.json').read(); c=json.loads(re.sub(r'(?m)^\\s*//.*$','',raw)); print(c.get('apiPort', c.get('webPort', c.get('port',8797)) + 1))")
 for i in $(seq 1 20); do
-    if curl -fsS "http://127.0.0.1:$PORT/api/health" >/dev/null 2>&1; then
-        echo "OK: sonder healthy on port $PORT"
+    if curl -fsS "http://127.0.0.1:$API_PORT/api/health" >/dev/null 2>&1; then
+        echo "OK: sonder private API healthy on port $API_PORT"
         echo "Label: com.tm-sonder.server  |  uninstall: deploy/uninstall-launchd.sh"
         exit 0
     fi

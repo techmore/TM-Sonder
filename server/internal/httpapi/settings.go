@@ -22,6 +22,8 @@ import (
 type SettingsPayload struct {
 	Version         int            `json:"version"`
 	Port            int            `json:"port"`
+	WebPort         int            `json:"webPort,omitempty"`
+	APIPort         int            `json:"apiPort,omitempty"`
 	DataDir         string         `json:"dataDir"`
 	AllowLAN        bool           `json:"allowLAN"`
 	TokenConfigured bool           `json:"tokenConfigured"`
@@ -54,6 +56,8 @@ func (s *Server) settingsPayload(includeToken bool) SettingsPayload {
 	p := SettingsPayload{
 		Version:         int(atomic.LoadInt64(&s.settingsVersion)),
 		Port:            s.cfg().Port,
+		WebPort:         s.cfg().WebPort,
+		APIPort:         s.cfg().APIPort,
 		DataDir:         s.cfg().DataDir,
 		AllowLAN:        s.cfg().AllowLAN,
 		TokenConfigured: s.cfg().PairingToken != "",

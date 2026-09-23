@@ -47,19 +47,27 @@ type Transcode struct {
 }
 
 type Config struct {
-	Port         int       `json:"port"`
-	DataDir      string    `json:"dataDir"`
-	Libraries    []Library `json:"libraries"`
-	AllowLAN     bool      `json:"allowLAN"`
-	PairingToken string    `json:"pairingToken"`
-	ThemePreset  string    `json:"themePreset"`
-	FFmpegPath   string    `json:"ffmpegPath"`
-	FFprobePath  string    `json:"ffprobePath"`
-	ProbeWorkers int       `json:"probeWorkers,omitempty"`
-	ThumbWorkers int       `json:"thumbWorkers,omitempty"`
-	SafeScan     bool      `json:"safeScan"`
-	Transcode    Transcode `json:"transcode"`
-	LogDir       string    `json:"logDir"`
+	// Port is retained as the backwards-compatible web port key. WebPort is
+	// the preferred name for new installs; Load normalizes the two so the
+	// rest of the application can continue to expose the existing API shape.
+	Port              int       `json:"port"`
+	WebPort           int       `json:"webPort,omitempty"`
+	APIPort           int       `json:"apiPort,omitempty"`
+	DataDir           string    `json:"dataDir"`
+	Libraries         []Library `json:"libraries"`
+	AllowLAN          bool      `json:"allowLAN"`
+	PairingToken      string    `json:"pairingToken"`
+	ThemePreset       string    `json:"themePreset"`
+	FFmpegPath        string    `json:"ffmpegPath"`
+	FFprobePath       string    `json:"ffprobePath"`
+	ProbeWorkers      int       `json:"probeWorkers,omitempty"`
+	ThumbWorkers      int       `json:"thumbWorkers,omitempty"`
+	SafeScan          bool      `json:"safeScan"`
+	Transcode         Transcode `json:"transcode"`
+	LogDir            string    `json:"logDir"`
+	CaddyPath         string    `json:"caddyPath,omitempty"`
+	CaddyConfigPath   string    `json:"caddyConfigPath,omitempty"`
+	CaddyLaunchdLabel string    `json:"caddyLaunchdLabel,omitempty"`
 }
 
 func Default() Config {
@@ -69,6 +77,8 @@ func Default() Config {
 	}
 	return Config{
 		Port:        DefaultPort,
+		WebPort:     0,
+		APIPort:     0,
 		DataDir:     dataDir,
 		ThemePreset: DefaultThemePreset,
 		FFmpegPath:  "ffmpeg",
@@ -114,11 +124,27 @@ func Load(path string) (*Config, error) {
 		}
 		cfg.DataDir = expandHome(cfg.DataDir)
 		cfg.LogDir = expandHome(cfg.LogDir)
+		cfg.CaddyConfigPath = expandHome(cfg.CaddyConfigPath)
 		for i := range cfg.Libraries {
 			cfg.Libraries[i].Path = expandHome(cfg.Libraries[i].Path)
 		}
 	}
 	cfg.applyEnv()
+	// Port predates the explicit web/API split. Keep it synchronized so
+	// existing handlers and clients continue to see the same web port while
+	// new runtime state can bind the private API independently.
+	if cfg.WebPort > 0 && cfg.Port == DefaultPort {
+		cfg.Port = cfg.WebPort
+	}
+	if cfg.WebPort <= 0 {
+		cfg.WebPort = cfg.Port
+	}
+	if cfg.Port <= 0 {
+		cfg.Port = cfg.WebPort
+	}
+	if cfg.APIPort <= 0 {
+		cfg.APIPort = cfg.WebPort + 1
+	}
 	// Resolve "plex" meta-libraries into per-kind child libraries before
 	// validation so downstream code only ever sees concrete kinds.
 	libs, err := ExpandPlexLibraries(cfg.Libraries)
@@ -172,6 +198,18 @@ func (c *Config) applyEnv() {
 	if v := os.Getenv("SONDER_PORT"); v != "" {
 		if n, err := strconv.Atoi(v); err == nil {
 			c.Port = n
+			c.WebPort = n
+		}
+	}
+	if v := os.Getenv("SONDER_WEB_PORT"); v != "" {
+		if n, err := strconv.Atoi(v); err == nil {
+			c.WebPort = n
+			c.Port = n
+		}
+	}
+	if v := os.Getenv("SONDER_API_PORT"); v != "" {
+		if n, err := strconv.Atoi(v); err == nil {
+			c.APIPort = n
 		}
 	}
 	if v := os.Getenv("SONDER_DATA_DIR"); v != "" {
@@ -208,6 +246,15 @@ func (c *Config) applyEnv() {
 	if v := os.Getenv("SONDER_LOG_DIR"); v != "" {
 		c.LogDir = v
 	}
+	if v := os.Getenv("SONDER_CADDY_PATH"); v != "" {
+		c.CaddyPath = v
+	}
+	if v := os.Getenv("SONDER_CADDY_CONFIG"); v != "" {
+		c.CaddyConfigPath = v
+	}
+	if v := os.Getenv("SONDER_CADDY_LAUNCHD_LABEL"); v != "" {
+		c.CaddyLaunchdLabel = v
+	}
 	if v := os.Getenv("SONDER_TRANSCODE_MAX_CONCURRENT"); v != "" {
 		if n, err := strconv.Atoi(v); err == nil && n > 0 {
 			c.Transcode.MaxConcurrent = n
@@ -232,6 +279,15 @@ func parseBool(v string) bool {
 func (c *Config) validate() error {
 	if c.Port < 1 || c.Port > 65535 {
 		return fmt.Errorf("config: port %d out of range 1-65535", c.Port)
+	}
+	if c.WebPort < 1 || c.WebPort > 65535 {
+		return fmt.Errorf("config: webPort %d out of range 1-65535", c.WebPort)
+	}
+	if c.APIPort < 1 || c.APIPort > 65535 {
+		return fmt.Errorf("config: apiPort %d out of range 1-65535", c.APIPort)
+	}
+	if c.WebPort != c.Port {
+		return fmt.Errorf("config: port (%d) and webPort (%d) must match; use webPort as the preferred key", c.Port, c.WebPort)
 	}
 	if c.DataDir == "" {
 		return fmt.Errorf("config: dataDir is required")
@@ -281,6 +337,8 @@ var templateBytes = []byte(`// TM Sonder Go server configuration.
 //
 // Environment overrides (highest precedence):
 //   SONDER_PORT, SONDER_DATA_DIR, SONDER_ALLOW_LAN, SONDER_TOKEN,
+//   SONDER_WEB_PORT, SONDER_API_PORT, SONDER_CADDY_PATH,
+//   SONDER_CADDY_CONFIG, SONDER_CADDY_LAUNCHD_LABEL,
 //   SONDER_SAFE_SCAN, SONDER_THEME_PRESET, SONDER_FFMPEG_PATH,
 //   SONDER_FFPROBE_PATH, SONDER_PROBE_WORKERS, SONDER_THUMB_WORKERS,
 //   SONDER_LOG_DIR,
@@ -288,6 +346,8 @@ var templateBytes = []byte(`// TM Sonder Go server configuration.
 //   SONDER_TRANSCODE_PRESET
 {
   "port": 8797,
+  "webPort": 8797,
+  "apiPort": 8798,
   "dataDir": "~/Library/Application Support/TM-Sonder-Server",
   "libraries": [
     { "id": "movies", "name": "Movies", "path": "/path/to/media", "kind": "movie" }
@@ -301,6 +361,9 @@ var templateBytes = []byte(`// TM Sonder Go server configuration.
   "probeWorkers": 0,
   "thumbWorkers": 0,
   "transcode": { "maxConcurrent": 2, "hwaccel": "videotoolbox", "preset": "veryfast" },
-  "logDir": ""
+  "logDir": "",
+  "caddyPath": "caddy",
+  "caddyConfigPath": "~/Library/Application Support/TM-Sonder-Server/Caddyfile",
+  "caddyLaunchdLabel": ""
 }
 `)

@@ -14,8 +14,9 @@
 
     <key>EnvironmentVariables</key>
     <dict>
-        <!-- Optional overrides: SONDER_PORT, SONDER_DATA_DIR,
-             SONDER_ALLOW_LAN, SONDER_TOKEN, SONDER_HWACCEL -->
+        <!-- Optional overrides: SONDER_PORT, SONDER_WEB_PORT,
+             SONDER_API_PORT, SONDER_DATA_DIR, SONDER_ALLOW_LAN,
+             SONDER_TOKEN, SONDER_CADDY_PATH, SONDER_CADDY_CONFIG -->
     </dict>
 
     <key>RunAtLoad</key>

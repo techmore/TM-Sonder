@@ -2,6 +2,8 @@
 // the library list for the media mounted at /media.
 {
   "port": 8797,
+  "webPort": 8797,
+  "apiPort": 8798,
   "dataDir": "/data",
   "libraries": [
     { "id": "media", "name": "Media", "path": "/media", "kind": "all" }
