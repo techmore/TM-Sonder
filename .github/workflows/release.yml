@@ -48,7 +48,7 @@ jobs:
             os="$1"; arch="$2"
             name="tm-sonder-${version}-${os}-${arch}"
             mkdir -p "dist/stage/$name"
-            CGO_ENABLED=0 GOOS="$os" GOARCH="$arch" go build -trimpath -ldflags "$ldflags" -o "dist/stage/$name/sonder" ./server/cmd/sonder
+            (cd server && CGO_ENABLED=0 GOOS="$os" GOARCH="$arch" go build -trimpath -ldflags "$ldflags" -o "../dist/stage/$name/sonder" ./cmd/sonder)
             cp README.md API.md VERSION "dist/stage/$name/"
             tar -C dist/stage -czf "dist/$name.tar.gz" "$name"
           done
