@@ -473,6 +473,18 @@ func TestIndexPage(t *testing.T) {
 	}
 }
 
+func TestIndexPageRendersSavedThemeBeforeHydration(t *testing.T) {
+	f := newFixture(t, func(cfg *config.Config) { cfg.ThemePreset = "techmore" })
+	resp, body := get(t, f.ts.URL+"/")
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("status = %d", resp.StatusCode)
+	}
+	if !strings.Contains(body, `<html lang="en" data-theme="techmore">`) ||
+		!strings.Contains(body, `<body data-theme="techmore">`) {
+		t.Fatalf("saved theme was not rendered into initial HTML")
+	}
+}
+
 func TestRefreshTracksWithoutProberReturnsSession(t *testing.T) {
 	f := newFixture(t, nil)
 	f.addItem(t, "r1", "Refreshable")

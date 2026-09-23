@@ -92,7 +92,9 @@
     const { api, escapeHTML, formatTime } = window.Sonder;
 
     function applyTheme(preset) {
-      document.body.dataset.theme = preset || "earthy";
+      const theme = preset || "earthy";
+      document.documentElement.dataset.theme = theme;
+      document.body.dataset.theme = theme;
     }
 
     // Query/element helpers tolerate a missing DOM so the pure logic in this

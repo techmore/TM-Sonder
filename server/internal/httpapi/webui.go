@@ -8,6 +8,7 @@ import (
 	"encoding/hex"
 	"fmt"
 	"net/http"
+	"strings"
 	"sync"
 )
 
@@ -36,7 +37,36 @@ var (
 	sharedJS       = newGzippedPage(func() []byte { return mustReadWeb("web/shared.js") })
 	faviconSVG     = newGzippedPage(func() []byte { return mustReadWeb("web/favicon.svg") })
 	faviconPNG     = newGzippedPage(func() []byte { return mustReadWeb("web/favicon.png") })
+	libraryThemeMu sync.Mutex
+	libraryThemes  = map[string]*gzippedPage{}
 )
+
+// libraryPageForTheme renders the saved preset into the document before the
+// browser can paint. The JavaScript still reapplies the setting after its API
+// response, but the first paint now uses the same palette and cannot flash the
+// default dark theme.
+func libraryPageForTheme(preset string) *gzippedPage {
+	preset = strings.ToLower(strings.TrimSpace(preset))
+	if preset != "dark" && preset != "techmore" {
+		preset = "earthy"
+	}
+	if preset == "earthy" {
+		return libraryPage
+	}
+
+	libraryThemeMu.Lock()
+	defer libraryThemeMu.Unlock()
+	if page := libraryThemes[preset]; page != nil {
+		return page
+	}
+
+	page := newGzippedPage(func() []byte {
+		raw, _, _ := libraryPage.bytes()
+		return bytes.ReplaceAll(raw, []byte(`data-theme="earthy"`), []byte(`data-theme="`+preset+`"`))
+	})
+	libraryThemes[preset] = page
+	return page
+}
 
 // serveAsset writes an embedded, pre-gzipped asset with ETag/304 support.
 func serveAsset(w http.ResponseWriter, r *http.Request, page *gzippedPage, contentType string) {
