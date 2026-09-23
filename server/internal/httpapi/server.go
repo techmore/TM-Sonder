@@ -235,6 +235,8 @@ func (s *Server) routes() {
 	m.HandleFunc("GET /api/network/interfaces", s.handleNetworkInterfaces)
 	m.HandleFunc("GET /api/network/status", s.handleNetworkStatus)
 	m.HandleFunc("POST /api/network/rebind", s.handleNetworkRebind)
+	m.HandleFunc("POST /api/network/exposure", s.handleNetworkExposure)
+	m.HandleFunc("PATCH /api/network/exposure", s.handleNetworkExposure)
 	m.HandleFunc("PUT /api/network/proxy", s.handleNetworkProxy)
 	m.HandleFunc("PATCH /api/network/proxy", s.handleNetworkProxy)
 	m.HandleFunc("GET /api/library/health", s.handleLibraryHealth)
@@ -610,7 +612,8 @@ func (s *Server) lanURL() *string {
 	}
 	for _, a := range addrs {
 		if ipnet, ok := a.(*net.IPNet); ok && !ipnet.IP.IsLoopback() && ipnet.IP.To4() != nil {
-			u := "http://" + ipnet.IP.String() + ":" + strconv.Itoa(s.cfg().Port)
+			webPort, _ := s.activePorts()
+			u := "http://" + ipnet.IP.String() + ":" + strconv.Itoa(webPort)
 			return &u
 		}
 	}

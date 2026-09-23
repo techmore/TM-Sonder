@@ -42,8 +42,16 @@ The server validates the target before stopping anything, writes
 updates and validates Caddy, checks local web/API readiness, and rolls back the
 previous state when a post-switch check fails. The response is `202` because
 launchd may replace the process while the operation is in flight; poll the
-status endpoint for the final state. The menu-bar companion shows
-“Rebinding web + Caddy…” and disables binding controls during the swap.
+status endpoint for the final state. Caddy is only touched when it is enabled.
+
+`POST` or `PATCH /api/network/exposure` applies interface and port exposure as
+one operation. The body may include `mode`, `interfaceID`, `webPort`, and
+`apiPort`; omitted ports retain their current values. Ports must be distinct
+and within `1..65535`. It returns `202` with a `target` runtime state and a
+`statusURL`; clients should poll until `rebinding` is false and both listener
+health flags are true. The web Settings panel and menu-bar companion use this
+route so a port change is applied live, with automatic reconnection when the
+web port changes.
 
 `PUT /api/network/proxy` accepts `enabled`, `publicDomain`,
 `publicHealthCheckURL`, and `caddyBindAddress`. It changes only the persisted
@@ -132,6 +140,7 @@ Includes:
 | GET | `/api/network/interfaces` | Active IPv4-only interface inventory. |
 | GET | `/api/network/status` | Runtime bind/API/Caddy health and public prerequisites. |
 | POST | `/api/network/rebind` | Validate and asynchronously switch the web interface. |
+| POST/PATCH | `/api/network/exposure` | Atomically update interface and web/API ports, then report live listener health. |
 | PUT/PATCH | `/api/network/proxy` | Persist Caddy domain/health/bind settings and apply them. |
 | GET | `/api/optimization/queue` | Generated recommendations for AAC M4B and selected large H.264 files. |
 | GET | `/api/optimization/audiobooks/jobs` | Persistent audiobook job queue and status. |

@@ -487,7 +487,7 @@ func runAppCLI(args []string) (handled bool, err error) {
 	}
 	args = args[1:]
 	if len(args) == 0 {
-		return true, errors.New("usage: sonder app interfaces|status|proxy status|restart <mode-or-interface>")
+		return true, errors.New("usage: sonder app interfaces|status|exposure|proxy status|restart <mode-or-interface>")
 	}
 	configPath := ""
 	jsonOutput := false
@@ -640,6 +640,52 @@ func runAppCLI(args []string) (handled bool, err error) {
 		}
 		fmt.Println("external prerequisites: DNS, router/firewall TCP 80/443 forwarding, and any WireGuard routes")
 		return true, nil
+	case "exposure", "ports":
+		_, state, controller, loadErr := load()
+		if loadErr != nil {
+			return true, loadErr
+		}
+		modeValue := cliOption(args[1:], "--mode")
+		mode := state.SelectedMode
+		interfaceID := state.SelectedInterface
+		if modeValue != "" {
+			mode, interfaceID = cliBinding(modeValue)
+		}
+		if requestedInterface := cliOption(args[1:], "--interface"); requestedInterface != "" {
+			interfaceID = requestedInterface
+			if modeValue == "" {
+				mode = network.ModeExact
+			}
+		}
+		webPort, parseErr := cliIntOption(args[1:], "--web-port")
+		if parseErr != nil {
+			return true, parseErr
+		}
+		apiPort, parseErr := cliIntOption(args[1:], "--api-port")
+		if parseErr != nil {
+			return true, parseErr
+		}
+		if webPort == 0 && apiPort == 0 && modeValue == "" && interfaceID == state.SelectedInterface {
+			return true, errors.New("provide --web-port, --api-port, --mode, or --interface")
+		}
+		ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+		defer cancel()
+		result, switchErr := controller.SwitchExposure(ctx, mode, interfaceID, webPort, apiPort)
+		if switchErr != nil {
+			return true, switchErr
+		}
+		if jsonOutput {
+			data, marshalErr := json.MarshalIndent(result, "", "  ")
+			if marshalErr != nil {
+				return true, marshalErr
+			}
+			fmt.Println(string(data))
+		} else {
+			fmt.Printf("exposure active: mode=%s interface=%s web=%s:%d api=%s:%d\n",
+				result.SelectedMode, result.SelectedInterface, result.WebBindAddress, result.WebPort,
+				result.APIBindAddress, result.APIPort)
+		}
+		return true, nil
 	case "restart":
 		if len(args) != 2 {
 			return true, errors.New("usage: sonder app restart wifi|ethernet|vpn|loopback|public|<interface-id>")
@@ -673,6 +719,18 @@ func cliOption(args []string, name string) string {
 	return ""
 }
 
+func cliIntOption(args []string, name string) (int, error) {
+	raw := cliOption(args, name)
+	if raw == "" {
+		return 0, nil
+	}
+	value, err := strconv.Atoi(raw)
+	if err != nil {
+		return 0, fmt.Errorf("%s must be an integer", name)
+	}
+	return value, nil
+}
+
 func ptrConfig(cfg config.Config) *config.Config { return &cfg }
 
 func fileExists(path string) bool {
@@ -692,6 +750,8 @@ func cliBinding(value string) (network.BindingMode, string) {
 		return network.ModeVPN, ""
 	case "public", "all":
 		return network.ModePublic, ""
+	case "interface", "exact":
+		return network.ModeExact, ""
 	default:
 		return network.ModeExact, value
 	}

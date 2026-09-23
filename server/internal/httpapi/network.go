@@ -82,7 +82,70 @@ func (s *Server) handleNetworkRebind(w http.ResponseWriter, r *http.Request) {
 		"accepted":    true,
 		"mode":        mode,
 		"interfaceID": request.InterfaceID,
-		"message":     "Rebinding web + Caddy…",
+		"message":     "Rebinding web + API (Caddy optional)…",
+	})
+}
+
+// handleNetworkExposure applies interface and port changes as one atomic
+// operation. It returns before the managed process restart so a web client can
+// keep polling /api/network/status while the listeners move.
+func (s *Server) handleNetworkExposure(w http.ResponseWriter, r *http.Request) {
+	if s.runtimeControl == nil {
+		writeError(w, http.StatusServiceUnavailable, "network controller is unavailable")
+		return
+	}
+	var request struct {
+		Mode        string `json:"mode"`
+		InterfaceID string `json:"interfaceID"`
+		WebPort     *int   `json:"webPort"`
+		APIPort     *int   `json:"apiPort"`
+	}
+	if err := jsonDecode(w, r, &request); err != nil {
+		writeError(w, http.StatusBadRequest, "Invalid network exposure request")
+		return
+	}
+	if request.WebPort != nil && (*request.WebPort < 1 || *request.WebPort > 65535) {
+		writeError(w, http.StatusBadRequest, "webPort must be between 1 and 65535")
+		return
+	}
+	if request.APIPort != nil && (*request.APIPort < 1 || *request.APIPort > 65535) {
+		writeError(w, http.StatusBadRequest, "apiPort must be between 1 and 65535")
+		return
+	}
+	mode := network.BindingMode(strings.TrimSpace(request.Mode))
+	interfaceID := strings.TrimSpace(request.InterfaceID)
+	if mode == "" {
+		if interfaceID != "" {
+			mode = network.ModeExact
+		}
+	} else if interfaceID == "" && !isNamedBindingMode(mode) {
+		// Accept the same concise exact-ID form as /api/network/rebind.
+		interfaceID = string(mode)
+		mode = network.ModeExact
+	}
+	webPort, apiPort := 0, 0
+	if request.WebPort != nil {
+		webPort = *request.WebPort
+	}
+	if request.APIPort != nil {
+		apiPort = *request.APIPort
+	}
+	target, err := s.runtimeControl.PlanExposure(r.Context(), mode, interfaceID, webPort, apiPort)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	go func() {
+		_, err := s.runtimeControl.SwitchExposure(context.Background(), mode, interfaceID, webPort, apiPort)
+		if err != nil {
+			s.logger.Printf("network exposure change failed: %v", err)
+		}
+	}()
+	writeJSON(w, http.StatusAccepted, map[string]any{
+		"accepted":  true,
+		"target":    target,
+		"statusURL": "/api/network/status",
+		"message":   "Applying network exposure; listeners will reconnect when healthy",
 	})
 }
 

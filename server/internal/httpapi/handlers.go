@@ -46,12 +46,13 @@ func themeFor(preset string) api.ThemeSnapshot {
 }
 
 func (s *Server) serverSettings() api.ServerSettings {
+	webPort, apiPort := s.activePorts()
 	return api.ServerSettings{
 		IsEnabled:       true,
 		AllowLAN:        s.cfg().AllowLAN,
-		Port:            s.cfg().Port,
-		WebPort:         s.cfg().WebPort,
-		APIPort:         s.cfg().APIPort,
+		Port:            webPort,
+		WebPort:         webPort,
+		APIPort:         apiPort,
 		ThemePreset:     s.cfg().ThemePreset,
 		RequiresPairing: s.requiresPairing(),
 	}
@@ -73,7 +74,8 @@ func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {
 
 // handleDiscovery implements GET /api/discovery.
 func (s *Server) handleDiscovery(w http.ResponseWriter, r *http.Request) {
-	local := "http://127.0.0.1:" + strconv.Itoa(s.cfg().Port)
+	webPort, _ := s.activePorts()
+	local := "http://127.0.0.1:" + strconv.Itoa(webPort)
 	trackRefresh := "/api/playback/{id}/refresh-tracks"
 	resp := api.DiscoveryResponse{
 		App:              AppName,
@@ -84,7 +86,7 @@ func (s *Server) handleDiscovery(w http.ResponseWriter, r *http.Request) {
 		IsEnabled:        true,
 		AllowLAN:         s.cfg().AllowLAN,
 		RequiresPairing:  s.requiresPairing(),
-		Port:             s.cfg().Port,
+		Port:             webPort,
 		LocalURL:         local,
 		LanURL:           s.lanURL(),
 		DiscoveryMethods: []string{"bonjour", "manual", "tailscale"},
@@ -112,10 +114,31 @@ func (s *Server) handleDiscovery(w http.ResponseWriter, r *http.Request) {
 			NetworkInterfaces:    strPtr("/api/network/interfaces"),
 			NetworkStatus:        strPtr("/api/network/status"),
 			NetworkRebind:        strPtr("/api/network/rebind"),
+			NetworkExposure:      strPtr("/api/network/exposure"),
 		},
 		Theme: themeFor(s.cfg().ThemePreset),
 	}
 	writeJSON(w, http.StatusOK, resp)
+}
+
+func (s *Server) activePorts() (webPort, apiPort int) {
+	webPort, apiPort = s.cfg().WebPort, s.cfg().APIPort
+	if s.runtimeControl != nil {
+		state := s.runtimeControl.CurrentState()
+		if state.WebPort > 0 {
+			webPort = state.WebPort
+		}
+		if state.APIPort > 0 {
+			apiPort = state.APIPort
+		}
+	}
+	if webPort <= 0 {
+		webPort = s.cfg().Port
+	}
+	if apiPort <= 0 {
+		apiPort = webPort + 1
+	}
+	return webPort, apiPort
 }
 
 func strPtr(s string) *string { return &s }

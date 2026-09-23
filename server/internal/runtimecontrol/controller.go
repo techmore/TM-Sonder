@@ -69,34 +69,51 @@ func (c *Controller) InterfacesForAPI() ([]network.Interface, error) {
 	return c.interfaces()
 }
 
-// ValidateBinding performs the no-side-effect portion of a switch. HTTP
-// callers use it before returning 202 so an unavailable adapter or malformed
-// Caddy candidate is reported immediately to the menu bar.
-func (c *Controller) ValidateBinding(ctx context.Context, mode network.BindingMode, interfaceID string) error {
+// CurrentState returns the last authoritative runtime snapshot. The runtime
+// state is the source of truth for live listener ports; server.json remains
+// the source of truth for library and application settings.
+func (c *Controller) CurrentState() network.RuntimeState {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.State
+}
+
+// PlanExposure performs the no-side-effect portion of a network exposure
+// change. HTTP callers use it before returning 202 so an unavailable adapter,
+// invalid port pair, or malformed Caddy candidate is reported immediately.
+// Zero ports retain their current values for PATCH-style callers.
+func (c *Controller) PlanExposure(ctx context.Context, mode network.BindingMode, interfaceID string, webPort, apiPort int) (network.RuntimeState, error) {
 	interfaces, err := c.interfaces()
 	if err != nil {
-		return fmt.Errorf("enumerate interfaces: %w", err)
-	}
-	binding, err := network.Resolve(mode, interfaceID, interfaces)
-	if err != nil {
-		return fmt.Errorf("validate target interface: %w", err)
+		return network.RuntimeState{}, fmt.Errorf("enumerate interfaces: %w", err)
 	}
 	c.mu.Lock()
 	state := c.State
 	caddy := c.Caddy
 	c.mu.Unlock()
-	state.SelectedMode = binding.Mode
-	state.SelectedInterface = binding.InterfaceID
-	state.SelectedIPv4 = binding.IPv4
-	state.WebBindAddress = binding.WebBindAddress
-	state.APIBindAddress = binding.APIBindAddress
-	state.CaddyUpstream = net.JoinHostPort(binding.IPv4, strconv.Itoa(state.WebPort))
-	if state.CaddyEnabled {
-		if err := caddy.Validate(ctx, state); err != nil {
-			return fmt.Errorf("validate Caddy before swap: %w", err)
+	if mode == "" {
+		mode = state.SelectedMode
+		if interfaceID == "" {
+			interfaceID = state.SelectedInterface
 		}
 	}
-	return nil
+	candidate, err := network.PlanExposure(state, mode, interfaceID, webPort, apiPort, interfaces)
+	if err != nil {
+		return state, fmt.Errorf("validate network exposure: %w", err)
+	}
+	if candidate.CaddyEnabled {
+		if err := caddy.Validate(ctx, candidate); err != nil {
+			return state, fmt.Errorf("validate Caddy before swap: %w", err)
+		}
+	}
+	return candidate, nil
+}
+
+// ValidateBinding performs the no-side-effect portion of an interface switch.
+// It remains as a compatibility wrapper for existing menu/CLI callers.
+func (c *Controller) ValidateBinding(ctx context.Context, mode network.BindingMode, interfaceID string) error {
+	_, err := c.PlanExposure(ctx, mode, interfaceID, 0, 0)
+	return err
 }
 
 func (c *Controller) save(state network.RuntimeState) error {
@@ -137,6 +154,13 @@ func (c *Controller) restart(ctx context.Context, state network.RuntimeState) er
 // Switch validates the requested target before persisting or restarting. The
 // returned state is only authoritative after all health checks pass.
 func (c *Controller) Switch(ctx context.Context, mode network.BindingMode, interfaceID string) (network.RuntimeState, error) {
+	return c.SwitchExposure(ctx, mode, interfaceID, 0, 0)
+}
+
+// SwitchExposure applies a binding and/or port change through the same
+// validated restart and health-check sequence. The database and catalog are
+// never involved.
+func (c *Controller) SwitchExposure(ctx context.Context, mode network.BindingMode, interfaceID string, webPort, apiPort int) (network.RuntimeState, error) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	if c.rebinding.Load() {
@@ -150,7 +174,17 @@ func (c *Controller) Switch(ctx context.Context, mode network.BindingMode, inter
 		return c.State, fmt.Errorf("enumerate interfaces: %w", err)
 	}
 	state := c.State
-	result, err := network.SwitchBinding(ctx, state, mode, interfaceID, interfaces, network.SwitchHooks{
+	result, err := network.SwitchExposure(ctx, state, mode, interfaceID, webPort, apiPort, interfaces, c.switchHooks())
+	if err != nil {
+		c.State.LastError = err.Error()
+		return c.State, err
+	}
+	c.State = result
+	return result, nil
+}
+
+func (c *Controller) switchHooks() network.SwitchHooks {
+	return network.SwitchHooks{
 		SaveState:     c.save,
 		ValidateCaddy: c.Caddy.Validate,
 		Restart:       c.restart,
@@ -168,13 +202,7 @@ func (c *Controller) Switch(ctx context.Context, mode network.BindingMode, inter
 			}
 			return waitURL(ctx, state.PublicHealthCheckURL, "")
 		},
-	})
-	if err != nil {
-		c.State.LastError = err.Error()
-		return c.State, err
 	}
-	c.State = result
-	return result, nil
 }
 
 // ConfigureProxy changes only the managed Caddy state. The library catalog

@@ -115,6 +115,9 @@ final class StatusApp: NSObject, NSApplicationDelegate {
         bindItem.submenu = bindMenu
         menu.addItem(bindItem)
         menu.addItem(.separator())
+        add("Change web port…", #selector(changeWebPort), to: menu)
+        add("Change API port…", #selector(changeAPIPort), to: menu)
+        menu.addItem(.separator())
         add("Open Sonder", #selector(openSonder), to: menu)
         add("Refresh Status", #selector(refresh), to: menu)
         add("Open Server Logs", #selector(openLogs), to: menu)
@@ -140,6 +143,8 @@ final class StatusApp: NSObject, NSApplicationDelegate {
         let config = FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent(".config/sonder/server.json")
         var port = 8798
         var pairingToken: String?
+        var dataDirectory = FileManager.default.homeDirectoryForCurrentUser
+            .appendingPathComponent("Library/Application Support/TM-Sonder-Server")
         if let data = try? Data(contentsOf: config),
            let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any] {
             let webPort = (object["webPort"] as? Int) ?? (object["port"] as? Int) ?? 8797
@@ -150,6 +155,16 @@ final class StatusApp: NSObject, NSApplicationDelegate {
             if let configuredToken = object["pairingToken"] as? String, !configuredToken.isEmpty {
                 pairingToken = configuredToken
             }
+            if let configuredDataDirectory = object["dataDir"] as? String, !configuredDataDirectory.isEmpty {
+                dataDirectory = URL(fileURLWithPath: (configuredDataDirectory as NSString).expandingTildeInPath)
+            }
+        }
+        let runtimeState = dataDirectory.appendingPathComponent("runtime-state.json")
+        if let data = try? Data(contentsOf: runtimeState),
+           let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+           let configuredPort = object["apiPort"] as? Int,
+           (1...65535).contains(configuredPort) {
+            port = configuredPort
         }
         return ServerConnection(
             baseURL: URL(string: "http://127.0.0.1:\(port)")!,
@@ -263,11 +278,58 @@ final class StatusApp: NSObject, NSApplicationDelegate {
     @objc private func selectBinding(_ sender: NSMenuItem) {
         guard !bindingInProgress,
               let values = sender.representedObject as? [String: String],
-              let mode = values["mode"] else { return }
+              let mode = values["mode"],
+              let state = currentNetwork?.status.state else { return }
         let interfaceID = values["interfaceID"] ?? ""
+        startExposureChange(mode: mode, interfaceID: interfaceID, webPort: state.webPort, apiPort: state.apiPort,
+                            message: "Rebinding web + API…",
+                            detail: "Validating \(interfaceID.isEmpty ? mode : interfaceID)")
+    }
+
+    @objc private func changeWebPort() {
+        promptForPort(title: "Change web port", current: currentNetwork?.status.state.webPort, changingWebPort: true)
+    }
+
+    @objc private func changeAPIPort() {
+        promptForPort(title: "Change private API port", current: currentNetwork?.status.state.apiPort, changingWebPort: false)
+    }
+
+    private func promptForPort(title: String, current: Int?, changingWebPort: Bool) {
+        guard let state = currentNetwork?.status.state else {
+            showAlert(title: "Sonder status unavailable", message: "Refresh the status indicator before changing port exposure.")
+            refresh()
+            return
+        }
+        let alert = NSAlert()
+        alert.messageText = title
+        alert.informativeText = "Ports apply live after the listeners restart. The API remains loopback-only."
+        let field = NSTextField(string: String(current ?? (changingWebPort ? 8797 : 8798)))
+        field.frame = NSRect(x: 0, y: 0, width: 180, height: 24)
+        alert.accessoryView = field
+        alert.addButton(withTitle: "Apply")
+        alert.addButton(withTitle: "Cancel")
+        guard alert.runModal() == .alertFirstButtonReturn else { return }
+        guard let port = Int(field.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)), (1...65535).contains(port) else {
+            showAlert(title: "Invalid port", message: "Choose a port between 1 and 65535.")
+            return
+        }
+        let webPort = changingWebPort ? port : state.webPort
+        let apiPort = changingWebPort ? state.apiPort : port
+        guard webPort != apiPort else {
+            showAlert(title: "Ports must be different", message: "Choose a different web and private API port.")
+            return
+        }
+        startExposureChange(mode: state.selectedMode, interfaceID: state.selectedInterface,
+                            webPort: webPort, apiPort: apiPort,
+                            message: "Applying port exposure…",
+                            detail: "Validating web \(webPort) · API \(apiPort)")
+    }
+
+    private func startExposureChange(mode: String, interfaceID: String, webPort: Int, apiPort: Int, message: String, detail: String) {
+        guard !bindingInProgress else { return }
         bindingInProgress = true
         for item in bindMenu.items { item.isEnabled = false }
-        display("Rebinding web + Caddy…", symbol: "arrow.triangle.2.circlepath", detail: "Validating \(interfaceID.isEmpty ? mode : interfaceID)")
+        display(message, symbol: "arrow.triangle.2.circlepath", detail: detail)
         let connection = configuredServer()
         request = Task { [weak self] in
             guard let self else { return }
@@ -276,17 +338,22 @@ final class StatusApp: NSObject, NSApplicationDelegate {
                 self.bindingInProgress = false
             }
             do {
-                var request = URLRequest(url: connection.url(path: "api/network/rebind"), timeoutInterval: 5)
+                var request = URLRequest(url: connection.url(path: "api/network/exposure"), timeoutInterval: 5)
                 request.httpMethod = "POST"
                 request.setValue("application/json", forHTTPHeaderField: "Content-Type")
                 if let pairingToken = connection.pairingToken {
                     request.setValue("Bearer \(pairingToken)", forHTTPHeaderField: "Authorization")
                 }
-                request.httpBody = try JSONSerialization.data(withJSONObject: ["mode": mode, "interfaceID": interfaceID])
+                request.httpBody = try JSONSerialization.data(withJSONObject: [
+                    "mode": mode,
+                    "interfaceID": interfaceID,
+                    "webPort": webPort,
+                    "apiPort": apiPort,
+                ])
                 let (data, response) = try await URLSession.shared.data(for: request)
                 let statusCode = (response as? HTTPURLResponse)?.statusCode ?? -1
                 guard (200..<300).contains(statusCode) else {
-                    let message = (try? JSONDecoder().decode(APIError.self, from: data)).flatMap(\.error) ?? "Rebind failed (HTTP \(statusCode))"
+                    let message = (try? JSONDecoder().decode(APIError.self, from: data)).flatMap(\.error) ?? "Exposure change failed (HTTP \(statusCode))"
                     throw NSError(domain: "SonderStatus", code: statusCode, userInfo: [NSLocalizedDescriptionKey: message])
                 }
                 try await Task.sleep(for: .seconds(1))
@@ -296,7 +363,7 @@ final class StatusApp: NSObject, NSApplicationDelegate {
 			} catch {
 				self.request = nil
 				self.bindingInProgress = false
-				self.showAlert(title: "Sonder could not rebind", message: error.localizedDescription)
+				self.showAlert(title: "Sonder could not update exposure", message: error.localizedDescription)
                 self.refresh()
             }
         }

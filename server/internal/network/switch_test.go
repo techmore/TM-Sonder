@@ -74,3 +74,51 @@ func TestSwitchBindingRestoresPreviousStateAfterFailedHealthCheck(t *testing.T) 
 		t.Fatalf("rollback state = %+v", saved[1])
 	}
 }
+
+func TestPlanExposureChangesPortsAndKeepsAPIPrivate(t *testing.T) {
+	current := RuntimeState{
+		SelectedMode: ModeLoopback, SelectedInterface: "lo0", SelectedIPv4: "127.0.0.1",
+		WebBindAddress: "127.0.0.1", APIBindAddress: "127.0.0.1", WebPort: 8797, APIPort: 8798,
+	}
+	interfaces := []Interface{{ID: "lo0", Type: TypeLoopback, IPv4: "127.0.0.1", Active: true, Loopback: true}}
+	got, err := PlanExposure(current, ModeLoopback, "", 18897, 18898, interfaces)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.WebPort != 18897 || got.APIPort != 18898 || got.WebBindAddress != "127.0.0.1" || got.APIBindAddress != "127.0.0.1" {
+		t.Fatalf("planned exposure = %+v", got)
+	}
+	if got.CaddyUpstream != "127.0.0.1:18897" {
+		t.Fatalf("Caddy upstream = %q", got.CaddyUpstream)
+	}
+	if _, err := PlanExposure(current, ModeLoopback, "", 18897, 18897, interfaces); err == nil {
+		t.Fatal("accepted the same port for web and API")
+	}
+	if _, err := PlanExposure(current, ModeLoopback, "", 0, 70000, interfaces); err == nil {
+		t.Fatal("accepted an invalid API port")
+	}
+}
+
+func TestSwitchPortsUsesAtomicHealthSequence(t *testing.T) {
+	current := RuntimeState{
+		SelectedMode: ModeLoopback, SelectedInterface: "lo0", SelectedIPv4: "127.0.0.1",
+		WebBindAddress: "127.0.0.1", APIBindAddress: "127.0.0.1", WebPort: 8797, APIPort: 8798,
+	}
+	interfaces := []Interface{{ID: "lo0", Type: TypeLoopback, IPv4: "127.0.0.1", Active: true, Loopback: true}}
+	var events []string
+	got, err := SwitchPorts(context.Background(), current, 18897, 18898, interfaces, SwitchHooks{
+		SaveState: func(RuntimeState) error { events = append(events, "save"); return nil },
+		Restart:   func(context.Context, RuntimeState) error { events = append(events, "restart"); return nil },
+		WaitWeb:   func(context.Context, RuntimeState) error { events = append(events, "web-health"); return nil },
+		WaitAPI:   func(context.Context, RuntimeState) error { events = append(events, "api-ready"); return nil },
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(events, []string{"save", "restart", "web-health", "api-ready"}) {
+		t.Fatalf("events = %v", events)
+	}
+	if got.WebPort != 18897 || got.APIPort != 18898 {
+		t.Fatalf("switched ports = %+v", got)
+	}
+}

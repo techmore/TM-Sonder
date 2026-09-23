@@ -94,3 +94,24 @@ func TestWebHandlerProxiesThroughPrivateAPIListener(t *testing.T) {
 		t.Fatalf("remote frontend status = %d, want 403", rec.Code)
 	}
 }
+
+func TestNetworkExposureRejectsPortCollisionBeforeRestart(t *testing.T) {
+	f := newFixture(t, nil)
+	interfaces := []network.Interface{{ID: "lo0", Type: network.TypeLoopback, IPv4: "127.0.0.1", Active: true, Loopback: true}}
+	f.s.SetRuntimeControl(&runtimecontrol.Controller{
+		State: network.RuntimeState{
+			SelectedMode: network.ModeLoopback, SelectedInterface: "lo0", SelectedIPv4: "127.0.0.1",
+			WebBindAddress: "127.0.0.1", APIBindAddress: "127.0.0.1", WebPort: 8797, APIPort: 8798,
+		},
+		InterfacesFn: func() ([]network.Interface, error) { return interfaces, nil },
+	})
+	req := httptest.NewRequest(http.MethodPost, "/api/network/exposure", strings.NewReader(`{"webPort":18897,"apiPort":18897}`))
+	req.Header.Set("Content-Type", "application/json")
+	req.RemoteAddr = "127.0.0.1:1234"
+	req.Host = "127.0.0.1:8797"
+	rec := httptest.NewRecorder()
+	f.s.Handler().ServeHTTP(rec, req)
+	if rec.Code != http.StatusBadRequest || !strings.Contains(rec.Body.String(), "must be different") {
+		t.Fatalf("collision response = %d %s", rec.Code, rec.Body.String())
+	}
+}

@@ -272,6 +272,7 @@ type DiscoveryEndpoints struct {
 	NetworkInterfaces    *string `json:"networkInterfaces,omitempty"`
 	NetworkStatus        *string `json:"networkStatus,omitempty"`
 	NetworkRebind        *string `json:"networkRebind,omitempty"`
+	NetworkExposure      *string `json:"networkExposure,omitempty"`
 }
 
 type DiscoveryResponse struct {

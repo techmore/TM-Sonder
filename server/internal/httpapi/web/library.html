@@ -237,10 +237,44 @@
           <option value="earthy">Earthy</option><option value="dark">Dark</option>
         </select>
       </label>
+      <h4 style="margin:18px 0 8px">Live network exposure</h4>
+      <div style="display:grid;gap:8px;max-width:520px">
+        <label style="display:flex;gap:8px;align-items:center;justify-content:space-between">
+          Bind mode:
+          <select id="networkMode" style="min-width:190px;background:var(--panel2);border:1px solid var(--line);color:var(--text);border-radius:8px;padding:6px 10px">
+            <option value="loopback">Loopback only</option>
+            <option value="wifi/lan">Wi‑Fi / LAN</option>
+            <option value="ethernet">Ethernet</option>
+            <option value="vpn">VPN / WireGuard</option>
+            <option value="public">All interfaces</option>
+            <option value="interface">Exact interface</option>
+          </select>
+        </label>
+        <label style="display:flex;gap:8px;align-items:center;justify-content:space-between">
+          Interface:
+          <select id="networkInterface" style="min-width:190px;background:var(--panel2);border:1px solid var(--line);color:var(--text);border-radius:8px;padding:6px 10px"></select>
+        </label>
+        <label style="display:flex;gap:8px;align-items:center;justify-content:space-between">
+          Web port:
+          <input id="networkWebPort" type="number" min="1" max="65535" inputmode="numeric" style="width:190px;background:var(--panel2);border:1px solid var(--line);color:var(--text);border-radius:8px;padding:6px 10px">
+        </label>
+        <label style="display:flex;gap:8px;align-items:center;justify-content:space-between">
+          Private API port:
+          <input id="networkAPIPort" type="number" min="1" max="65535" inputmode="numeric" style="width:190px;background:var(--panel2);border:1px solid var(--line);color:var(--text);border-radius:8px;padding:6px 10px">
+        </label>
+        <div class="actions">
+          <button type="button" class="primary" id="applyNetworkExposureBtn">Apply live</button>
+          <span id="networkExposureStatus" style="color:var(--muted);align-self:center" role="status" aria-live="polite"></span>
+        </div>
+      </div>
+      <p style="color:var(--muted);font-size:12.5px;margin:8px 0">
+        Changes validate first, then restart only the web/API process and report health as it comes back.
+        The API and database stay private. Caddy is optional and remains off unless you explicitly enable it.
+      </p>
       <p style="color:var(--muted);font-size:12px;margin:8px 0">
         NAS: mount the share in Finder (⌘K → smb://your-nas/share). It appears under
-        /Volumes and in the path suggestions above. Port, data dir, and ffmpeg settings
-        live in the config file and need a restart to change.
+        /Volumes and in the path suggestions above. Data dir and ffmpeg settings still
+        live in the config file.
       </p>
       <p id="pairingLine" style="font-size:12.5px;margin:8px 0"></p>
 

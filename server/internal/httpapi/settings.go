@@ -45,6 +45,7 @@ type LibraryEntry struct {
 }
 
 func (s *Server) settingsPayload(includeToken bool) SettingsPayload {
+	webPort, apiPort := s.activePorts()
 	counts := s.store.CountByLibrary()
 	libs := make([]LibraryEntry, 0, len(s.cfg().Libraries))
 	for _, l := range s.cfg().Libraries {
@@ -55,9 +56,9 @@ func (s *Server) settingsPayload(includeToken bool) SettingsPayload {
 	}
 	p := SettingsPayload{
 		Version:         int(atomic.LoadInt64(&s.settingsVersion)),
-		Port:            s.cfg().Port,
-		WebPort:         s.cfg().WebPort,
-		APIPort:         s.cfg().APIPort,
+		Port:            webPort,
+		WebPort:         webPort,
+		APIPort:         apiPort,
 		DataDir:         s.cfg().DataDir,
 		AllowLAN:        s.cfg().AllowLAN,
 		TokenConfigured: s.cfg().PairingToken != "",

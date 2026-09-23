@@ -84,8 +84,12 @@ sonder app proxy enable --domain books.example.com --health https://books.exampl
   interfaces. Use `sonder app restart loopback`, `wifi`, `ethernet`, `vpn`,
   `public`, or an exact ID such as `en0`/`utun4`. Each swap validates first,
   keeps the API on loopback, updates Caddy when enabled, and rolls back on a
-  failed health check. `sonder app status --json` and `sonder app proxy status`
-  expose the same state used by the menu-bar companion.
+  failed health check. Live port exposure can be changed with
+  `sonder app exposure --web-port 8897 --api-port 8898` or the web Settings
+  panel; `POST /api/network/exposure` applies mode, interface, and ports as
+  one operation and reports listener health while they reconnect. The
+  `sonder app status --json` and `sonder app proxy status` commands expose the
+  same state used by the menu-bar companion.
 - **Public exposure:** enabling Caddy only manages Sonder's reverse-proxy
   configuration. DNS records, router/firewall TCP 80/443 forwarding, and
   WireGuard routes remain explicit external prerequisites. The catalog is a

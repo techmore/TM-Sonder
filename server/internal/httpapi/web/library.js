@@ -1757,7 +1757,13 @@
 
     // ---------- Settings ----------
     let settingsData = null;
+    let networkStatusData = null;
+    let networkExposureApplying = false;
     document.querySelector("#settingsBtn").addEventListener("click", openSettings);
+    document.querySelector("#applyNetworkExposureBtn").addEventListener("click", applyNetworkExposure);
+    on("#networkMode", "change", event => {
+      if (event.target.value !== "interface") document.querySelector("#networkInterface").value = "";
+    });
     on("#dataImportBtn", "click", () => $("#dataImportFile")?.click());
     on("#dataImportFile", "change", async e => {
       const file = e.target.files?.[0];
@@ -1793,6 +1799,7 @@
       const dlg = document.querySelector("#settingsDlg");
       dlg.showModal();
       loadSettings();
+      loadNetworkExposure();
     }
 
     async function loadSettings() {
@@ -1831,6 +1838,127 @@
         line.innerHTML = `Pairing token is configured (visible only from this Mac).`;
       } else {
         line.textContent = "No pairing token (LAN access is open).";
+      }
+    }
+
+    async function loadNetworkExposure() {
+      const status = document.querySelector("#networkExposureStatus");
+      status.textContent = "Checking listeners…";
+      try {
+        const response = await fetch(api("/api/network/status"), { cache: "no-store" });
+        const payload = await response.json();
+        if (!response.ok) throw new Error(payload.error || "Network status unavailable");
+        networkStatusData = payload.status;
+        renderNetworkExposure(networkStatusData);
+      } catch (error) {
+        status.textContent = error.message || "Network status unavailable";
+      }
+    }
+
+    function renderNetworkExposure(status) {
+      if (!status?.state) return;
+      const mode = document.querySelector("#networkMode");
+      const iface = document.querySelector("#networkInterface");
+      const webPort = document.querySelector("#networkWebPort");
+      const apiPort = document.querySelector("#networkAPIPort");
+      const line = document.querySelector("#networkExposureStatus");
+      const apply = document.querySelector("#applyNetworkExposureBtn");
+      const interfaces = status.interfaces ?? [];
+      const options = [`<option value="">Automatic for selected mode</option>`].concat(
+        interfaces.filter(item => item.active).map(item =>
+          `<option value="${escapeHTML(item.id)}">${escapeHTML(item.id)} · ${escapeHTML(item.ipv4)}</option>`)
+      );
+      iface.innerHTML = options.join("");
+      mode.value = status.state.selectedMode || "loopback";
+      iface.value = status.state.selectedInterface || "";
+      webPort.value = status.state.webPort || "";
+      apiPort.value = status.state.apiPort || "";
+      const caddy = status.caddy?.enabled ? `Caddy ${status.caddy.listening ? "listening" : "down"}` : "Caddy off";
+      line.textContent = networkExposureApplying || status.rebinding
+        ? "Applying exposure… reconnecting listeners"
+        : `Web ${status.state.webBindAddress}:${status.state.webPort} ${status.webHealthy ? "up" : "down"} · API 127.0.0.1:${status.state.apiPort} ${status.apiHealthy ? "ready" : "down"} · ${caddy}`;
+      apply.disabled = networkExposureApplying || status.rebinding;
+    }
+
+    function exposureStatusURL(target) {
+      const state = target?.state || target || {};
+      const u = new URL("/api/network/status", window.location.href);
+      let host = state.webBindAddress || state.selectedIPv4 || window.location.hostname;
+      if (host === "0.0.0.0" || host === "::" || !host) host = window.location.hostname;
+      u.hostname = host;
+      if (state.webPort) u.port = String(state.webPort);
+      if (Sonder.TOKEN) u.searchParams.set("token", Sonder.TOKEN);
+      return u.toString();
+    }
+
+    function pollNetworkExposure(target, attempt = 0) {
+      if (attempt > 120) {
+        networkExposureApplying = false;
+        document.querySelector("#networkExposureStatus").textContent = "Timed out waiting for listeners";
+        loadNetworkExposure();
+        return;
+      }
+      setTimeout(async () => {
+        try {
+          const response = await fetch(exposureStatusURL(target), { cache: "no-store" });
+          const payload = await response.json();
+          if (!response.ok) throw new Error(payload.error || "Network status unavailable");
+          const status = payload.status;
+          networkStatusData = status;
+          renderNetworkExposure(status);
+          const expected = target?.state || target || {};
+          const settled = !status.rebinding && status.webHealthy && status.apiHealthy &&
+            (!expected.webPort || status.state.webPort === expected.webPort) &&
+            (!expected.apiPort || status.state.apiPort === expected.apiPort);
+          if (!settled) return pollNetworkExposure(target, attempt + 1);
+          networkExposureApplying = false;
+          renderNetworkExposure(status);
+          const currentPort = Number(window.location.port || (window.location.protocol === "https:" ? 443 : 80));
+          if (expected.webPort && currentPort !== expected.webPort) {
+            document.querySelector("#networkExposureStatus").textContent = `Live on port ${expected.webPort}; reopening…`;
+            window.location.assign(exposureStatusURL(expected).replace("/api/network/status", "/"));
+          } else {
+            document.querySelector("#networkExposureStatus").textContent = "Exposure updated ✓";
+          }
+        } catch (_) {
+          pollNetworkExposure(target, attempt + 1);
+        }
+      }, 500);
+    }
+
+    async function applyNetworkExposure() {
+      const status = document.querySelector("#networkExposureStatus");
+      const body = {
+        mode: document.querySelector("#networkMode").value,
+        interfaceID: document.querySelector("#networkInterface").value,
+        webPort: Number(document.querySelector("#networkWebPort").value),
+        apiPort: Number(document.querySelector("#networkAPIPort").value),
+      };
+      if (!Number.isInteger(body.webPort) || !Number.isInteger(body.apiPort) || body.webPort < 1 || body.webPort > 65535 || body.apiPort < 1 || body.apiPort > 65535) {
+        status.textContent = "Ports must be between 1 and 65535";
+        return;
+      }
+      if (body.webPort === body.apiPort) {
+        status.textContent = "Web and API ports must be different";
+        return;
+      }
+      networkExposureApplying = true;
+      renderNetworkExposure(networkStatusData);
+      status.textContent = "Validating exposure…";
+      try {
+        const response = await fetch(api("/api/network/exposure"), {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(body),
+        });
+        const payload = await response.json().catch(() => ({}));
+        if (!response.ok) throw new Error(payload.error || "Exposure change rejected");
+        status.textContent = "Applying exposure…";
+        pollNetworkExposure(payload.target, 0);
+      } catch (error) {
+        networkExposureApplying = false;
+        status.textContent = error.message || "Exposure change failed";
+        renderNetworkExposure(networkStatusData);
       }
     }
 

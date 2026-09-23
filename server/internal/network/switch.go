@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"net"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -27,26 +28,91 @@ type SwitchHooks struct {
 // previous runtime state and proxy configuration are restored on a best-effort
 // basis and the original failure is returned with its stage name.
 func SwitchBinding(ctx context.Context, current RuntimeState, mode BindingMode, interfaceID string, interfaces []Interface, hooks SwitchHooks) (RuntimeState, error) {
+	return SwitchExposure(ctx, current, mode, interfaceID, current.WebPort, current.APIPort, interfaces, hooks)
+}
+
+// SwitchPorts applies a port-only change while retaining the current binding
+// mode and selected interface. It is the narrow operation used by clients
+// that only need to change what port is exposed.
+func SwitchPorts(ctx context.Context, current RuntimeState, webPort, apiPort int, interfaces []Interface, hooks SwitchHooks) (RuntimeState, error) {
+	mode := current.SelectedMode
+	if mode == "" {
+		mode = ModeLoopback
+	}
+	return SwitchExposure(ctx, current, mode, current.SelectedInterface, webPort, apiPort, interfaces, hooks)
+}
+
+// SwitchExposure atomically changes the selected interface and/or listener
+// ports. Validation happens before state is saved or a process is restarted.
+func SwitchExposure(ctx context.Context, current RuntimeState, mode BindingMode, interfaceID string, webPort, apiPort int, interfaces []Interface, hooks SwitchHooks) (RuntimeState, error) {
+	candidate, err := PlanExposure(current, mode, interfaceID, webPort, apiPort, interfaces)
+	if err != nil {
+		return current, fmt.Errorf("validate network exposure: %w", err)
+	}
+	return applyExposure(ctx, current, candidate, hooks)
+}
+
+// PlanExposure produces the complete runtime state for a prospective exposure
+// change without causing any side effects. A zero port means retain the
+// currently active port, which lets PATCH-style clients change only one side.
+func PlanExposure(current RuntimeState, mode BindingMode, interfaceID string, webPort, apiPort int, interfaces []Interface) (RuntimeState, error) {
+	if webPort <= 0 {
+		webPort = current.WebPort
+	}
+	if apiPort <= 0 {
+		apiPort = current.APIPort
+	}
+	if err := validatePorts(webPort, apiPort); err != nil {
+		return current, err
+	}
+	if mode == "" {
+		mode = current.SelectedMode
+	}
+	if mode == "" {
+		mode = ModeLoopback
+	}
+	if interfaceID == "" && mode == ModeExact {
+		interfaceID = current.SelectedInterface
+	}
 	binding, err := Resolve(mode, interfaceID, interfaces)
 	if err != nil {
-		return current, fmt.Errorf("validate target interface: %w", err)
+		return current, err
 	}
-	if hooks.SaveState == nil {
-		return current, fmt.Errorf("switch binding: runtime-state writer is not configured")
-	}
-	if hooks.Restart == nil {
-		return current, fmt.Errorf("switch binding: process restart is not configured")
-	}
-
 	candidate := current
 	candidate.SelectedMode = binding.Mode
 	candidate.SelectedInterface = binding.InterfaceID
 	candidate.SelectedIPv4 = binding.IPv4
 	candidate.WebBindAddress = binding.WebBindAddress
-	candidate.APIBindAddress = binding.APIBindAddress
-	candidate.CaddyUpstream = net.JoinHostPort(binding.IPv4, strings.TrimSpace(fmt.Sprint(candidate.WebPort)))
+	// The API remains private even when the web listener is moved to LAN/VPN.
+	candidate.APIBindAddress = "127.0.0.1"
+	candidate.WebPort = webPort
+	candidate.APIPort = apiPort
+	candidate.CaddyUpstream = net.JoinHostPort(binding.IPv4, strconv.Itoa(webPort))
 	candidate.ProcessStartTime = time.Now().UTC()
 	candidate.LastError = ""
+	return candidate, nil
+}
+
+func validatePorts(webPort, apiPort int) error {
+	if webPort < 1 || webPort > 65535 {
+		return fmt.Errorf("web port must be between 1 and 65535")
+	}
+	if apiPort < 1 || apiPort > 65535 {
+		return fmt.Errorf("API port must be between 1 and 65535")
+	}
+	if webPort == apiPort {
+		return fmt.Errorf("web port and API port must be different")
+	}
+	return nil
+}
+
+func applyExposure(ctx context.Context, current, candidate RuntimeState, hooks SwitchHooks) (RuntimeState, error) {
+	if hooks.SaveState == nil {
+		return current, fmt.Errorf("switch exposure: runtime-state writer is not configured")
+	}
+	if hooks.Restart == nil {
+		return current, fmt.Errorf("switch exposure: process restart is not configured")
+	}
 
 	// Caddy syntax is checked before persisting state or asking launchd to stop
 	// anything. This is the important guard against a bad proxy edit taking the

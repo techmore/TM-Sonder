@@ -9,10 +9,12 @@ or logged. The app does not start another server or load the media catalog.
 
 The menu shows running, scanning, updating, unreachable, or unexpected-response
 status; item count; installed version; selected interface/IP; private web/API
-binds; uptime; Caddy/public pulse; and links to the authenticated web
+binds and ports; uptime; Caddy/public pulse; and links to the authenticated web
 interface and logs. Its **Bind interface** submenu lists loopback, Wi-Fi/LAN,
-Ethernet, VPN, public, and every active exact interface ID. Binding controls
-are disabled during a swap, and failed swaps produce a native alert.
+Ethernet, VPN, public, and every active exact interface ID. **Change web port…**
+and **Change API port…** submit the same atomic live exposure operation as the
+web Settings panel. Binding and port controls are disabled during a swap, and
+failed swaps produce a native alert.
 Opening Sonder from the menu includes the local pairing token in the web URL;
 the status poll itself uses a Bearer header instead. Quitting the indicator does
 not stop the launchd server. It has no Dock icon.
