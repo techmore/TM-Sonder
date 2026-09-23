@@ -4,7 +4,7 @@ services:
       context: .
       dockerfile: deploy/Containerfile
       args:
-        VERSION: ${SONDER_VERSION:-0.2.0}
+        VERSION: ${SONDER_VERSION:-0.2.1}
         BUILD: ${SONDER_BUILD:-compose}
     image: tm-sonder:local
     container_name: tm-sonder

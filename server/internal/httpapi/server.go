@@ -271,6 +271,7 @@ func (s *Server) routes() {
 	m.HandleFunc("GET /library.css", s.handleLibraryCSS)
 	m.HandleFunc("GET /library.js", s.handleLibraryJS)
 	m.HandleFunc("GET /favicon.svg", s.handleFavicon)
+	m.HandleFunc("GET /favicon.png", s.handleFaviconPNG)
 }
 
 // Handler returns the fully wrapped HTTP handler.
@@ -315,7 +316,7 @@ func (s *Server) withGzip(next http.Handler) http.Handler {
 			path == "/api/library" || path == "/library.json" ||
 			path == "/" || path == "/audiobooks" || path == "/ebooks" ||
 			path == "/shared.js" || path == "/library.css" || path == "/library.js" ||
-			path == "/favicon.svg" {
+			path == "/favicon.svg" || path == "/favicon.png" {
 			// These routes manage their own cached gzip.
 			next.ServeHTTP(w, r)
 			return

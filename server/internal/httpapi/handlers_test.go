@@ -438,6 +438,11 @@ func TestIndexPage(t *testing.T) {
 		!strings.Contains(bodyIcon, "TM Sonder") {
 		t.Errorf("favicon not served: %d %s %.120s", respIcon.StatusCode, respIcon.Header.Get("Content-Type"), bodyIcon)
 	}
+	respPNG, bodyPNG := get(t, f.ts.URL+"/favicon.png")
+	if respPNG.StatusCode != 200 || respPNG.Header.Get("Content-Type") != "image/png" ||
+		len(bodyPNG) < 8 || bodyPNG[:8] != "\x89PNG\r\n\x1a\n" {
+		t.Errorf("generated favicon not served: %d %s (%d bytes)", respPNG.StatusCode, respPNG.Header.Get("Content-Type"), len(bodyPNG))
+	}
 	// Audiobook browser page.
 	resp2, body2 := get(t, f.ts.URL+"/audiobooks")
 	if resp2.StatusCode != 200 || !strings.Contains(body2, "Audiobooks") ||

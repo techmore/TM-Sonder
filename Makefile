@@ -16,7 +16,7 @@ status-app: ## Build the lightweight macOS menu-bar service indicator
 	mkdir -p "bin/Sonder Status.app/Contents/Resources"
 	xcrun swiftc -swift-version 6 -O -framework AppKit tools/SonderStatus/main.swift -o "bin/Sonder Status.app/Contents/MacOS/SonderStatus"
 	cp tools/SonderStatus/Info.plist "bin/Sonder Status.app/Contents/Info.plist"
-	cp xcode-TM-Sonder/Assets.xcassets/AppIcon.appiconset/sonder-mac-32x32@2x.png "bin/Sonder Status.app/Contents/Resources/TM-Sonder.png"
+	cp xcode-TM-Sonder/Assets.xcassets/AppIcon.appiconset/sonder-generated-32x32@2x.png "bin/Sonder Status.app/Contents/Resources/TM-Sonder.png"
 
 mac: ## darwin/arm64 optimized binary in bin/
 	cd server && CGO_ENABLED=0 GOOS=darwin GOARCH=arm64 $(GO) build -trimpath -ldflags "$(LDFLAGS)" -o ../bin/$(BINARY)-darwin-arm64 ./cmd/sonder
