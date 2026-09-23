@@ -1,0 +1,2431 @@
+    let items = [];
+    let lists = [];
+    const progressByID = new Map();
+
+    const { api, escapeHTML, formatTime } = window.Sonder;
+
+    // Query/element helpers tolerate a missing DOM so the pure logic in this
+    // file can be evaluated in tests without a browser.
+    const $ = sel => (typeof document === "undefined" ? null : document.querySelector(sel));
+    function on(selector, event, handler) {
+      const el = $(selector);
+      if (el && typeof el.addEventListener === "function") el.addEventListener(event, handler);
+    }
+
+    // --- built-in player ---------------------------------------------------
+    // One persistent media element, kept outside every re-rendered region, so
+    // audio keeps playing while you browse. The controller docks to the bottom
+    // and drives both audio and video; video can be collapsed to audio-only.
+    const DIRECT_AUDIO = new Set(["mp3", "m4a", "m4b", "aac", "flac", "wav", "ogg"]);
+    const DIRECT_VIDEO = new Set(["mp4", "m4v", "mov", "webm"]);
+    const VIDEO_KINDS = new Set(["movie", "tvShow", "documentary"]);
+
+    // playbackPlan decides how an item plays in the built-in player: a direct
+    // byte-range stream when the browser can decode the container, otherwise
+    // the server's on-the-fly fMP4 transcode (mkv, avi, ...). Audiobook
+    // containers such as .m4b are MP4 audio and play directly when the browser
+    // supports their probed codec (including Opus in MP4).
+    function playbackPlan(item) {
+      const format = String(item.format || "").toLowerCase();
+      const kind = String(item.kind || "");
+      if (DIRECT_AUDIO.has(format)) return { mode: "audio", url: "/stream/" + item.id };
+      if (DIRECT_VIDEO.has(format)) return { mode: "video", url: "/stream/" + item.id };
+      if (VIDEO_KINDS.has(kind)) return { mode: "video", url: "/stream/" + item.id + "?transcode=1" };
+      return null;
+    }
+
+    function mediaLabel(mode) { return mode === "audio" ? "Audio" : "Video"; }
+
+    let nowPlayingItem = null;
+    let nowPlayingMode = "audio";
+    let npSeeking = false;
+    let npLastSaved = 0;
+
+    function npMedia() { return $("#npMedia"); }
+
+    function startPlaybackById(id) {
+      const item = items.find(candidate => candidate.id === id);
+      if (!item) return;
+      if (nowPlayingItem && nowPlayingItem.id === id) { togglePlay(); return; }
+      const record = progressFor(id);
+      startPlayback(item, record && record.seconds > 5 ? record.seconds : 0);
+    }
+
+    function startPlayback(item, resumeAt = 0) {
+      const plan = playbackPlan(item);
+      const media = npMedia();
+      if (!plan || !media) return;
+      saveProgress(true);
+
+      nowPlayingItem = item;
+      nowPlayingMode = plan.mode;
+      npLastSaved = 0;
+      npSeeking = false;
+
+      media.src = api(plan.url);
+      media.playbackRate = Number($("#npRate")?.value) || 1;
+      media.onerror = () => {
+        const codecs = Array.isArray(item.probedAudioCodecs) ? item.probedAudioCodecs : [];
+        const hasOpus = codecs.some(codec => String(codec).toLowerCase() === "opus");
+        const opusSupport = typeof document !== "undefined"
+          ? document.createElement("audio").canPlayType('audio/mp4; codecs="opus"') : "";
+        if (hasOpus && !opusSupport) {
+          const status = $("#npStatus");
+          if (status) status.textContent = "This browser cannot decode Opus in MP4. Try the iOS app or a browser with Opus-in-MP4 support.";
+        }
+      };
+
+      const host = $("#nowPlaying");
+      if (host) {
+        host.hidden = false;
+        // Video starts visible; audio never shows a video surface.
+        host.classList.toggle("np-audio-mode", plan.mode === "audio");
+      }
+      if (typeof document !== "undefined") document.body.classList.add("np-visible");
+      const expand = $("#npExpand");
+      if (expand) {
+        expand.hidden = plan.mode === "audio";
+        expand.textContent = "⤡";
+        expand.setAttribute("aria-label", "Hide video and keep playing");
+        expand.setAttribute("aria-pressed", "true");
+      }
+
+      const status = $("#npStatus");
+      if (status) {
+        status.textContent = plan.mode === "audio"
+          ? "Plays in the background — these controls stay while you browse."
+          : "";
+      }
+      renderNowPlaying();
+      updateMediaSession(item);
+
+      media.addEventListener("loadedmetadata", () => {
+        const duration = media.duration || 0;
+        if (resumeAt > 5 && resumeAt < Math.max(duration - 8, 0)) media.currentTime = resumeAt;
+        media.play().catch(() => {});
+        onTimeUpdate();
+      }, { once: true });
+    }
+
+    function togglePlay() {
+      const media = npMedia();
+      if (!nowPlayingItem || !media) return;
+      if (media.paused) media.play().catch(() => {}); else media.pause();
+    }
+
+    function skipBy(delta) {
+      const media = npMedia();
+      if (!nowPlayingItem || !media || !Number.isFinite(media.duration)) return;
+      media.currentTime = Math.min(Math.max(media.currentTime + delta, 0), media.duration || 0);
+      onTimeUpdate();
+    }
+
+    function stopPlayback() {
+      const media = npMedia();
+      saveProgress(true);
+      if (media) {
+        media.pause();
+        media.removeAttribute("src");
+        media.load();
+      }
+      nowPlayingItem = null;
+      const host = $("#nowPlaying");
+      if (host) host.hidden = true;
+      if (typeof document !== "undefined") document.body.classList.remove("np-visible");
+      if (typeof navigator !== "undefined" && "mediaSession" in navigator) {
+        navigator.mediaSession.metadata = null;
+        navigator.mediaSession.playbackState = "none";
+      }
+      const status = $("#npStatus");
+      if (status) status.textContent = "";
+      render();
+    }
+
+    // Progress is written on a 15s cadence, on pause/ended, and when the page
+    // is hidden or unloaded, so background listening still records position.
+    function saveProgress(force = false) {
+      const media = npMedia();
+      const item = nowPlayingItem;
+      if (!item || !media || !media.duration || !Number.isFinite(media.currentTime)) return;
+      if (!force && Math.abs(media.currentTime - npLastSaved) < 15) return;
+      npLastSaved = media.currentTime;
+      const payload = { seconds: media.currentTime, duration: media.duration };
+      progressByID.set(item.id, {
+        itemID: item.id, seconds: payload.seconds, duration: payload.duration,
+        updatedAt: new Date().toISOString(),
+      });
+      fetch(api("/api/progress/" + item.id), {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload), keepalive: true,
+      }).catch(() => {});
+    }
+
+    function renderNowPlaying() {
+      const item = nowPlayingItem;
+      const host = $("#nowPlaying");
+      if (!item) { if (host) host.hidden = true; return; }
+
+      const title = $("#npTitle");
+      if (title) {
+        title.textContent = item.showTitle && item.seasonNumber != null
+          ? `${item.showTitle} — ${item.title}` : item.title;
+      }
+      const sub = $("#npSub");
+      if (sub) {
+        sub.textContent = [kindLabel(item.kind), item.author || item.studio || "", item.year || ""]
+          .filter(Boolean).join(" • ");
+      }
+      const art = $("#npArt");
+      if (art) {
+        const src = item.posterURL ? api(item.posterURL) : "";
+        art.innerHTML = src ? `<img src="${escapeHTML(src)}" alt="">` : "♪";
+        art.setAttribute("aria-label", `Now playing: ${item.title}`);
+      }
+      onPlayStateChange();
+    }
+
+    function onPlayStateChange() {
+      const media = npMedia();
+      if (!media) return;
+      const playing = !media.paused && !media.ended;
+      const button = $("#npPlayPause");
+      if (button) {
+        button.textContent = playing ? "❚❚" : "▶";
+        button.setAttribute("aria-label", playing ? "Pause" : "Play");
+        button.setAttribute("aria-pressed", playing ? "true" : "false");
+      }
+      if (typeof navigator !== "undefined" && "mediaSession" in navigator) {
+        navigator.mediaSession.playbackState = playing ? "playing" : "paused";
+      }
+    }
+
+    function onTimeUpdate() {
+      const media = npMedia();
+      if (!media) return;
+      const duration = media.duration || 0;
+      const current = media.currentTime || 0;
+      const seek = $("#npSeek");
+      if (seek && !npSeeking && duration > 0) seek.value = String(Math.round((current / duration) * 1000));
+      const cur = $("#npCur"); if (cur) cur.textContent = formatTime(current);
+      const dur = $("#npDur"); if (dur) dur.textContent = formatTime(duration);
+      updatePositionState();
+      saveProgress(false);
+    }
+
+    // Media Session gives OS/lock-screen controls and keeps playback alive in
+    // the background where the platform supports it.
+    function updateMediaSession(item) {
+      if (typeof navigator === "undefined" || !("mediaSession" in navigator)) return;
+      const artwork = item.posterURL
+        ? [{ src: api(item.posterURL), sizes: "512x512", type: "image/jpeg" }]
+        : [];
+      try {
+        navigator.mediaSession.metadata = new MediaMetadata({
+          title: item.title || "",
+          artist: item.author || item.studio || "",
+          album: item.showTitle || "",
+          artwork,
+        });
+      } catch { /* MediaMetadata unsupported */ }
+      const media = npMedia();
+      const handler = (action, fn) => {
+        try { navigator.mediaSession.setActionHandler(action, fn); } catch { /* unsupported action */ }
+      };
+      handler("play", () => media && media.play());
+      handler("pause", () => media && media.pause());
+      handler("seekbackward", details => skipBy(-((details && details.seekOffset) || 30)));
+      handler("seekforward", details => skipBy((details && details.seekOffset) || 30));
+      handler("seekto", details => {
+        if (media && details && details.seekTime != null) media.currentTime = details.seekTime;
+      });
+      handler("stop", () => stopPlayback());
+    }
+
+    function updatePositionState() {
+      if (typeof navigator === "undefined" || !("mediaSession" in navigator)) return;
+      const session = navigator.mediaSession;
+      if (!session.setPositionState) return;
+      const media = npMedia();
+      if (!media || !media.duration || !Number.isFinite(media.duration) || media.duration <= 0) return;
+      try {
+        session.setPositionState({
+          duration: media.duration,
+          playbackRate: media.playbackRate || 1,
+          position: Math.min(Math.max(media.currentTime || 0, 0), media.duration),
+        });
+      } catch { /* transient state, safe to skip */ }
+    }
+
+    function onDocument(event, handler) {
+      if (typeof document !== "undefined" && typeof document.addEventListener === "function") {
+        document.addEventListener(event, handler);
+      }
+    }
+
+    // Wire the controller once; `on` tolerates a missing DOM so the pure logic
+    // above stays testable outside a browser.
+    on("#npPlayPause", "click", () => togglePlay());
+    on("#npBack", "click", () => skipBy(-30));
+    on("#npFwd", "click", () => skipBy(30));
+    on("#npClose", "click", () => stopPlayback());
+    on("#npArt", "click", () => { if (nowPlayingItem) openDetail(nowPlayingItem.id, true); });
+    on("#npExpand", "click", () => {
+      const host = $("#nowPlaying");
+      const button = $("#npExpand");
+      if (!host) return;
+      const collapsed = host.classList.toggle("np-audio-mode");
+      if (button) {
+        button.textContent = collapsed ? "⤢" : "⤡";
+        button.setAttribute("aria-label", collapsed ? "Show video" : "Hide video and keep playing");
+        button.setAttribute("aria-pressed", collapsed ? "false" : "true");
+      }
+    });
+    on("#npRate", "change", event => {
+      const media = npMedia();
+      if (media) media.playbackRate = Number(event.target.value) || 1;
+      updatePositionState();
+    });
+    on("#npSeek", "input", event => {
+      npSeeking = true;
+      const media = npMedia();
+      if (media && media.duration) {
+        media.currentTime = (Number(event.target.value) / 1000) * media.duration;
+        const cur = $("#npCur");
+        if (cur) cur.textContent = formatTime(media.currentTime);
+      }
+    });
+    on("#npSeek", "change", () => { npSeeking = false; });
+    on("#npMedia", "timeupdate", () => onTimeUpdate());
+    on("#npMedia", "play", () => onPlayStateChange());
+    on("#npMedia", "pause", () => { onPlayStateChange(); saveProgress(true); });
+    on("#npMedia", "ended", () => { onPlayStateChange(); saveProgress(true); });
+    on("#npMedia", "loadedmetadata", () => onTimeUpdate());
+    on("#npMedia", "error", () => {
+      const status = $("#npStatus");
+      if (status) status.textContent = "This stream could not be played here. Try “Open stream URL” instead.";
+    });
+    onDocument("keydown", event => {
+      if (!nowPlayingItem) return;
+      const target = event.target;
+      const typing = target && (target.tagName === "INPUT" || target.tagName === "SELECT" ||
+        target.tagName === "TEXTAREA" || target.isContentEditable);
+      if (typing) return;
+      if (event.code === "Space" || event.key === " ") { event.preventDefault(); togglePlay(); }
+      else if (event.key === "ArrowLeft") { event.preventDefault(); skipBy(-15); }
+      else if (event.key === "ArrowRight") { event.preventDefault(); skipBy(15); }
+    });
+    onDocument("visibilitychange", () => {
+      if (typeof document !== "undefined" && document.visibilityState === "hidden") saveProgress(true);
+    });
+    onDocument("pagehide", () => saveProgress(true));
+
+    // --- metadata facets (genres / authors / narrators / studios) ----------
+    // Facets are scoped to the items in the current tab, so movie genres and
+    // book subjects never share one list. Modes with no values are hidden
+    // rather than shown as dead buttons.
+    const kindByTab = { all:null, movies:"movie", tvshows:"tvShow",
+                        documentaries:"documentary", audiobooks:"audiobook",
+                        books:"ebook" };
+    const FACETS = [
+      { key: "genres",    label: "Genres" },
+      { key: "authors",   label: "Authors" },
+      { key: "narrators", label: "Narrators" },
+      { key: "series",   label: "Series" },
+      { key: "studios",   label: "Studios" },
+    ];
+    const FACET_LABEL = Object.fromEntries(FACETS.map(f => [f.key, f.label]));
+    // Provider bookkeeping that must never surface as a genre.
+    const PROVIDER_MARKERS = new Set(["wikipedia", "open-library", "audnexus", "plex", "tmdb", "imdb", "tvdb"]);
+
+    // --- genre taxonomy ------------------------------------------------------
+    // Genres arrive as hundreds of near-unique strings ("political science",
+    // "political science--philosophy", "science politique--philosophie"), so the
+    // Genres row leads with a short list of super-categories and only shows the
+    // sub-genres of the one you open. Rules are ordered and the first match
+    // wins, so narrow clusters are listed before broad ones. Nothing is thrown
+    // away: a value matching no rule falls into "Unsorted" and stays clickable.
+    const GENRE_CATEGORIES = [
+      { key: "fiction", label: "Fiction & Literature", patterns: [
+        /\bfiction/, /\bnovels?\b/, /\bliterature\b/, /\bliterary\b/, /\bpoetry\b/, /\bpoems?\b/,
+        /\bdrama\b/, /\bfantasy\b/, /science fiction/, /\bhorror\b/, /\bthriller/, /\bsuspense/,
+        /\bmystery\b/, /\bdetective/, /\bcrime\b/, /\bromance\b/, /\badventurous\b/, /\badventure/,
+        /\bshort stories\b/, /\bjuvenile\b/, /young adult/, /children's (fiction|stories)/,
+        /\bfairy tales\b/, /\bmytholog/, /\bgraphic novels?\b/, /\bcomics?\b/, /\bsatire\b/,
+        /\bhumou?r\b/, /\bepic\b/, /\bwestern stories\b/, /\bnonfiction\b|\bnon-fiction\b/,
+        /\bmurder\b/, /criticism and interpretation/, /\badaptations?\b/, /ficción juvenil/,
+      ]},
+      { key: "psychology", label: "Psychology & Self-Help", patterns: [
+        /\bpsycholog/, /\bpsychoanaly/, /self-help/, /self-improvement/, /self-esteem/,
+        /self-actualization/, /self-care/, /\bmotivat/, /\bbehaviou?r/, /\bemotions?\b/,
+        /émotions/, /\bfeelings\b/, /\bsuccess\b/, /\bcoping\b/, /\bmindfulness/, /\bhabits?\b/,
+        /neurodiversity/, /\btherapy\b/, /addict/, /substance abuse/, /\bsmoking/, /\bphobias?\b/,
+        /\bconsciousness\b/, /\bguilt\b/, /\bshame\b/, /\bpleasure\b/, /brainwashing|brainwash/,
+        /\bbrain\b/, /\battitude/, /\bpersonality/, /\bmental health/, /\bstress\b/, /\bhappiness/,
+        /\bconscience/, /\baltruism/, /eudaimon|eudaemonics/, /\bfriendship/, /\bautis/,
+        /\blistening\b/, /\bmorale\b/, /saddness|sadness/, /\bcharacter\b/, /\bmind\b/,
+        /\bcompulsive/, /human behavio/, /\binfluence\b/, /\binterpersonal/,
+      ]},
+      { key: "philosophy", label: "Philosophy & Religion", patterns: [
+        /\bphilosoph/, /\bethic/, /\bmoral/, /\breligion/, /\btheolog/, /\bchristian/, /\bcatholic/,
+        /\bprotestant/, /\bbuddh/, /\bhindu/, /\bkrishna/, /\bbhagavad/, /\bbhakti/, /\byoga\b/,
+        /\bmeditation/, /\bspiritual/, /\bmetaphysic/, /\bontology\b/, /\bepistemolog/,
+        /existential/, /\bvirtues?\b/, /\bvertus\b/, /\bgod\b/, /\bprayer/, /\bcults?\b/,
+        /\bwitchcraft/, /society of friends/, /\bquakers?\b/, /\bfaith\b/, /\bbelief\b/,
+        /\bidealism/, /materialism/, /\bsublime\b/, /\babsolute\b/, /\bconduct of life\b/,
+        /\bself\b/, /\bpostmodern/, /ethik|ethiek/, /\bglaube\b|\bgeloof\b|\bfoi\b/,
+        /\bchristendom/, /filozofija|filosofie/, /\bdeterminism/, /\bstoic/, /\bmarxis/,
+        /matérialisme|materialisme/,
+      ]},
+      { key: "history", label: "History & Biography", patterns: [
+        /\bhistory\b/, /\bhistorical\b/, /\bbiograph/, /\bautobiograph/, /\bmemoir/, /\bdiaries\b/,
+        /world war/, /\bancient\b/, /\bmedieval\b/, /\bantiquit/, /\bcivilization/, /\bcampaigns\b/,
+        /\bpresidents\b/, /\bpioneers?\b/, /frontier and pioneer/, /concentration camps/, /\bgenocide/,
+        /\bempire\b/, /\bmonarchy\b/, /\b20th century\b/, /\b19th century\b/, /\b18th century\b/,
+        /\bnormandy/, /september 11/, /persian gulf war/, /\biraq war/, /\bkorea\b/, /cold war/,
+        /\bunited states\b/, /\bdeath and burial\b/, /\bearly works\b/, /avant 1800/,
+      ]},
+      { key: "politics", label: "Politics, War & Society", patterns: [
+        /\bpolitic/, /government/, /\bideolog/, /\bmarxis/, /\bcommunis/, /\bcapitalis/, /\bsocial/,
+        /\bsociolog/, /\bculture/, /\bdemocracy/, /\banarchis/, /\bradicalis/, /terroris/,
+        /\bpropaganda/, /\bpropoganda/, /public opinion/, /public relations/, /human rights/,
+        /\bfeminism/, /\brace\b/, /\bcaste\b/, /\blaw\b/, /\blegal\b/, /\bviolence/, /\bwar\b/,
+        /\bmilitary\b/, /\btanks?\b/, /\btank warfare/, /arms control/, /\bnuclear/, /\bbombers?\b/,
+        /international relations/, /globali[sz]ation/, /\bimmigration/, /\bpoverty/, /\bjustice\b/,
+        /\bpeace\b/, /nonviolence/, /political prisoners/, /\belections?\b/, /\bpolice\b/,
+        /forced labor/, /\bslavery/, /\bcolon/, /separatis/, /nationalis/, /\bimperiali/, /état\b/,
+        /\bfreedom\b/, /\bequality/, /\bcommunity\b/, /\bwomen\b/, /\bmen\b/, /\bamericans\b/,
+        /\bcelebrit/, /\bjournalists?\b/, /\bscientists?\b/, /\bintellectual/, /\bmulticulturalism/,
+        /foreign relations/, /\bluddism/,
+        /\bpatients?\b/, /\bwidowers?\b/, /\bpersons?\b/, /violência|geweld/, /\bpublicity/,
+        /\bstate\b/, /\bdružba|\bdruz ba/, /\bcommunication/,
+      ]},
+      { key: "business", label: "Business & Economics", patterns: [
+        /\bbusiness/, /\beconom/, /\bfinance/, /\bfinancial/, /\binvest/, /\bstocks?\b/, /\bmarkets?\b/,
+        /marketing/, /\baccounting/, /\bmanagement/, /\bentrepreneur/, /\bmoney\b/, /\bbanking/,
+        /\btrade\b/, /\bvaluation/, /corporations/, /\bprices\b/, /\bretirement/, /leadership/,
+        /\bcareer/, /\bsales\b/, /\bportfolio/, /derivative securities/, /interest rates/,
+        /\bcash flow/, /\bindustry/, /\bbusinesspeople/, /\bbillionaires/, /\bcommerce/,
+        /aktienanalyse/, /börsenhandel/, /finanzbuchhaltung/, /investitionstheorie/,
+        /gestion de portefeuille/, /business communication/, /\bbudget/, /\bnegotiat/,
+        /\bforecasting/, /\bspeculation/, /financial statements/, /long-term planning/,
+      ]},
+      { key: "science", label: "Science & Technology", patterns: [
+        /\bscience/, /\bscientific/, /\bphysics/, /\bchemistry/, /\bbiolog/, /\bmathematic/,
+        /\bstatistics/, /\bgeometry/, /\bmeetkunde/, /\btechnolog/, /\bcomput/, /\bsoftware/,
+        /\bprogramming/, /\bdata\b/, /machine learning/, /artificial intelligence/, /\bneural/,
+        /\bdeep learning/, /\balgorithm/, /\bnetworks?\b/, /\bsecurity/, /\bdatabase/, /\bjava\b/,
+        /\bpython\b/, /\bhtml\b/, /\bunix\b/, /\blinux\b/, /\bmysql/, /\bphp\b/, /operating systems/,
+        /\bservlets/, /virtual computer/, /vmware/, /\bcyber/, /rootkits?/, /\bhackers?\b/,
+        /\bengineer/, /\bmedicine\b/, /\bmedical\b/, /\bastronom/, /\bevolution\b/, /\becolog/,
+        /\benvironment/, /\bnature\b/, /\banimals?\b|\banimales\b/, /\bfoxes\b/, /\bzorros\b/,
+        /\bgenetic/, /\bquantum/, /\benergy\b/, /\bcausation/, /\bmatter\b/, /fourth dimension/,
+        /extraterrestrial/, /uranium/, /rocket engines/, /propellants/, /computer animation/,
+        /\bcs\.[a-z_]/, /\bcom\d{6}/, /\bweb\b/, /internet/, /\bcyberspace/, /\btechnical/, /\bbash\b/,
+      ]},
+      { key: "lifestyle", label: "Lifestyle, Health & Home", patterns: [
+        /\bcooking/, /\bcookery/, /\brecipes/, /\bfood\b/, /\bdiet/, /weight loss/, /\bnutrition/,
+        /\bfitness/, /\bexercise/, /physical fitness/, /\bhealth/, /\bhygiene/, /\bgardening/,
+        /home economics/, /\bfashion/, /\btravel/, /description and travel/, /\bsports?\b/,
+        /\btennis/, /bodybuilding/, /\bwellness/, /\bfamily\b/, /relationships?/, /\bmarriage/,
+        /\bparenting/, /man-woman relationships/, /\bhousehold/, /\bentertainment/, /\bhobbies/,
+        /\bcrafts/, /\bsurvival\b/, /wilderness/, /\bshoulder/, /wounds and injuries/,
+        /rehabilitation/, /occupational therapy/, /\bsleep\b/, /\betiquette/, /\blifestyle/,
+        /\btransportation/, /\bhome\b/, /kinesiolog/,
+      ]},
+      { key: "reference", label: "Reference & Education", patterns: [
+        /\bdictionary/, /\bencyclopedia/, /reference/, /\bexaminations/, /study guides/,
+        /handbooks/, /\bmanuals/, /\bteaching/, /\beducation/, /\bschools?\b/, /\bcurriculum/,
+        /\bstudents?\b/, /study and teaching/, /\blanguage/, /\blinguistic/, /\bwriting/,
+        /\bpublishing/, /\bbibliograph/, /\bperiodicals/, /\bsanskrit/, /\benglish\b/, /\bgrammar/,
+        /\bvocabulary/, /large type books/, /\bcatalogs?\b/, /\bdirectories/, /\bresearch\b/,
+        /\blibrary/, /\bbooksellers/, /collections & anthologies/, /questions, etc/,
+        /\bmethods\b/, /pictorial works/, /\bauthors\b/, /\beditors\b/,
+      ]},
+      { key: "people", label: "People & Characters", patterns: [] },
+    ];
+    const GENRE_UNSORTED = { key: "unsorted", label: "Unsorted", patterns: [] };
+    // Values whose obvious keyword points at the wrong super-category.
+    const GENRE_OVERRIDES = new Map([
+      ["computer crimes", "science"], ["computer crime", "science"],
+      ["true crime", "fiction"], ["war on terrorism, 2001-2009", "politics"],
+      ["the future", "politics"], ["the state", "politics"],
+      ["database management", "science"], ["catch-22 (heller, joseph)", "fiction"],
+    ]);
+
+    // A person's name: "surname, forename, dates" or two to four name-like
+    // words. The looser shape is judged only after every genre rule has passed
+    // and only when no subject word appears, so "judith butler" is a person but
+    // "intellectual life" is not.
+    const PERSON_DATED = /^\p{L}[^,]*,\s*\p{L}[^,]*,\s*\d{3,4}/u;
+    const PERSON_NAME = /^\p{L}[\p{L}.'-]*(?:\s+\p{L}[\p{L}.'-]*){1,4}$/u;
+    const NOT_A_PERSON = /\b(life|times?|reviewed|bestseller|criticism|interpretation|determinism|society|social|politic|philosoph|science|literature|theory|studies|study|analysis|relations|aspects|conditions|development|management|design|construction|planning|policy|change|control|behaviou?r|health|nutrition|education|schools?|staff|picks|library|data|computers?|finance|business|markets?|investment|law|ethic|state|states|future|people|persons?|women|men|children|workers|prisoners|editors|authors?|readers|immigrants|americans|journalists?|scientists?|patients?|celebrit|intellectuals?|motion|pictures?|war|history|culture|religion|art|music|econom|psychology|technolog|systems?|models?|methods?|research|media|press|books?|publishing|language|writing|practices?|services?|industry|government|power|gender|race|class|rights|movements?|groups?|natural|human|world|public|private|modern)\b/i;
+
+    // Which super-category a genre value belongs to.
+    function genreCategoryFor(label) {
+      const value = String(label).toLowerCase();
+      const override = GENRE_OVERRIDES.get(value);
+      if (override) return override;
+      if (/fictitious character/.test(value)) return "people";
+      for (const category of GENRE_CATEGORIES) {
+        if (category.key === "people") continue;   // judged last, on shape alone
+        if (category.patterns.some(re => re.test(value))) return category.key;
+      }
+      if (PERSON_DATED.test(value)) return "people";
+      if (PERSON_NAME.test(value) && !NOT_A_PERSON.test(value)) return "people";
+      return GENRE_UNSORTED.key;
+    }
+
+    // Titles per super-category, counting each item once however many of its
+    // sub-genres share the category.
+    function genreCategoryCounts() {
+      const counts = new Map();
+      for (const item of facetUniverse()) {
+        const seen = new Set();
+        for (const raw of facetValues(item, "genres")) {
+          const label = String(raw).trim();
+          if (label) seen.add(genreCategoryFor(label));
+        }
+        for (const key of seen) counts.set(key, (counts.get(key) || 0) + 1);
+      }
+      return counts;
+    }
+
+    // Values shown before the list is collapsed behind a "+N more" toggle.
+    // Book subjects alone can reach several hundred entries, so the chip row
+    // wraps onto multiple lines but still needs a lid on it.
+    const CHIP_LIMIT = 18;
+
+    let activeFacet = "genres";
+    let selectedFacetValues = new Set();
+    let facetQuery = "";
+    let facetModesSignature = "";
+    let chipsExpanded = false;
+    // Open super-category in the Genres facet, or null for the category list.
+    let genreCategory = null;
+
+    function facetValues(item, key) {
+      switch (key) {
+        case "genres": {
+          const genres = Array.isArray(item.genres) ? item.genres.filter(Boolean) : [];
+          if (genres.length) return genres;
+          // Legacy rows kept genres inside tags, mixed with provider markers
+          // and people names; strip those rather than label them as genres.
+          const people = new Set([item.author, item.narrator]
+            .filter(Boolean).map(v => String(v).toLowerCase()));
+          return (Array.isArray(item.tags) ? item.tags : []).filter(tag => {
+            const label = String(tag || "").trim();
+            if (!label) return false;
+            const lower = label.toLowerCase();
+            return !PROVIDER_MARKERS.has(lower) && !people.has(lower);
+          });
+        }
+        case "authors":   return item.author ? [item.author] : [];
+        case "narrators": return item.narrator ? [item.narrator] : [];
+        case "series":   return item.series ? [item.series] : [];
+        case "studios":   return item.studio ? [item.studio] : [];
+        default:          return [];
+      }
+    }
+
+    // Only the current tab's items contribute facet values and counts.
+    function facetUniverse() {
+      const kindSel = kindByTab[activeTab] ?? null;
+      return items.filter(i => !i.isPlaceholder && (!kindSel || i.kind === kindSel));
+    }
+
+    // facet key -> Map(valueLower -> { label, count })
+    function facetIndex() {
+      const index = new Map();
+      for (const facet of FACETS) {
+        const values = new Map();
+        for (const item of facetUniverse()) {
+          const seen = new Set();
+          for (const raw of facetValues(item, facet.key)) {
+            const label = String(raw).trim();
+            if (!label) continue;
+            const key = label.toLowerCase();
+            if (seen.has(key)) continue;   // count each item once per value
+            seen.add(key);
+            const entry = values.get(key) || { label, count: 0 };
+            entry.count++;
+            values.set(key, entry);
+          }
+        }
+        if (values.size) index.set(facet.key, values);
+      }
+      return index;
+    }
+
+    function renderFacets() {
+      const host = $("#metadataChips"), modesHost = $("#filterModes"), row = $("#filterRow");
+      if (!host || !modesHost || !row) return;
+
+      const index = facetIndex();
+      if (!index.has(activeFacet)) activeFacet = index.keys().next().value || "";
+
+      row.hidden = index.size === 0;
+      if (!index.size) {
+        host.innerHTML = "";
+        host.classList.remove("expanded");
+        modesHost.innerHTML = "";
+        if ($("#chipsFooter")) { $("#chipsFooter").innerHTML = ""; $("#chipsFooter").hidden = true; }
+        facetModesSignature = "";
+        return;
+      }
+
+      // Rebuild the mode buttons only when their set or active state changes,
+      // so chip clicks don't steal focus from the mode row.
+      const signature = [...index.keys()].join(",") + "|" + activeFacet;
+      if (signature !== facetModesSignature) {
+        modesHost.innerHTML = [...index.keys()].map(key =>
+          `<button type="button" data-filter-mode="${key}" class="${key === activeFacet ? "active" : ""}" aria-pressed="${key === activeFacet}">${FACET_LABEL[key] || key}</button>`
+        ).join("");
+        facetModesSignature = signature;
+      }
+
+      const values = index.get(activeFacet);
+      for (const key of [...selectedFacetValues]) {
+        if (!values.has(key)) selectedFacetValues.delete(key);
+      }
+      const label = (FACET_LABEL[activeFacet] || "values").toLowerCase();
+      const search = $("#facetSearch"), clear = $("#facetClear");
+      if (search) {
+        search.hidden = values.size <= 8;
+        search.placeholder = `Find ${label}…`;
+        if (!search.hidden && search.value !== facetQuery) search.value = facetQuery;
+      }
+      if (clear) {
+        const n = selectedFacetValues.size;
+        clear.hidden = n === 0;
+        clear.textContent = n > 1 ? `Clear ${n} filters` : "Clear filter";
+      }
+
+      let entries = [...values.entries()];
+      if (facetQuery) entries = entries.filter(([, entry]) => entry.label.toLowerCase().includes(facetQuery));
+      // Most-used values first: with hundreds of book subjects, the useful
+      // ones should not be hidden at the end of a long scroll.
+      entries.sort((a, b) => b[1].count - a[1].count || a[1].label.localeCompare(b[1].label));
+
+      // The Genres facet is grouped: level 1 offers the super-categories and
+      // level 2 the sub-genres of the one that was opened. A search always
+      // spans every category, so a match cannot hide behind a closed one.
+      const grouped = activeFacet === "genres" && !facetQuery;
+      let listed = entries;
+      // Selections the current view would not otherwise list, so an active
+      // filter is always visible from wherever it was set.
+      let pinned = [];
+      let lead = "";
+
+      if (grouped && !genreCategory) {
+        const counts = genreCategoryCounts();
+        // Only categories this tab actually has values for become buttons.
+        const present = new Set(entries.map(([, entry]) => genreCategoryFor(entry.label)));
+        const categories = [...GENRE_CATEGORIES, GENRE_UNSORTED].filter(c => present.has(c.key));
+        pinned = entries.filter(([key]) => selectedFacetValues.has(key));
+        const chips = [
+          allChipHTML(),
+          ...pinned.map(([key, entry]) => valueChipHTML(key, entry)),
+          ...categories.map(category => {
+            const count = counts.get(category.key) || 0;
+            const active = [...selectedFacetValues].some(key =>
+              (values.get(key) && genreCategoryFor(values.get(key).label)) === category.key);
+            return `<button type="button" class="chip category${active ? " has-selection" : ""}" data-genre-category="${category.key}" title="Show ${escapeHTML(category.label)} sub-genres">${escapeHTML(category.label)}<span class="chip-count">${count}</span></button>`;
+          }),
+        ];
+        host.classList.remove("expanded");
+        host.innerHTML = chips.join("");
+        setChipsFooter("");
+        return;
+      }
+      if (grouped) {
+        listed = entries.filter(([, entry]) => genreCategoryFor(entry.label) === genreCategory);
+        pinned = entries.filter(([key, entry]) =>
+          selectedFacetValues.has(key) && genreCategoryFor(entry.label) !== genreCategory);
+        const category = [...GENRE_CATEGORIES, GENRE_UNSORTED].find(c => c.key === genreCategory);
+        lead = `<button type="button" class="chip back" data-genre-back>‹ ${escapeHTML(category ? category.label : "All genres")}</button>`;
+      }
+
+      // Collapse the tail behind a toggle, but never hide a value the user
+      // has already selected: a filter you cannot see is a filter you cannot
+      // switch off.
+      const overflowing = !chipsExpanded && !facetQuery && listed.length > CHIP_LIMIT;
+      const shown = overflowing
+        ? listed.filter(([key], i) => i < CHIP_LIMIT || selectedFacetValues.has(key))
+        : listed;
+      const hidden = listed.length - shown.length;
+
+      const chips = [lead, allChipHTML()];
+      for (const [key, entry] of [...pinned, ...shown]) chips.push(valueChipHTML(key, entry));
+      if (listed.length === 0 && pinned.length === 0) {
+        chips.push(`<span class="chips-empty" role="status">No ${label} match “${escapeHTML(facetQuery)}”</span>`);
+      }
+      const bounded = chipsExpanded && !facetQuery && listed.length > CHIP_LIMIT;
+      host.classList.toggle("expanded", bounded);
+      host.innerHTML = chips.join("");
+
+      setChipsFooter(hidden > 0
+        ? `<button type="button" class="chips-more" data-chips-toggle="more" aria-expanded="false">+${hidden} more</button>`
+        : bounded
+          ? `<button type="button" class="chips-more" data-chips-toggle="less" aria-expanded="true">Show fewer</button>`
+          : "");
+    }
+
+    function allChipHTML() {
+      const all = selectedFacetValues.size === 0;
+      return `<button type="button" class="chip ${all ? "selected" : ""}" data-facet-value="" aria-pressed="${all}">All</button>`;
+    }
+
+    function valueChipHTML(key, entry) {
+      const selected = selectedFacetValues.has(key);
+      return `<button type="button" class="chip ${selected ? "selected" : ""}" data-facet-value="${escapeHTML(entry.label)}" aria-pressed="${selected}" title="${escapeHTML(entry.label)} — ${entry.count} title${entry.count === 1 ? "" : "s"}">${escapeHTML(entry.label)}<span class="chip-count">${entry.count}</span></button>`;
+    }
+
+    function setChipsFooter(html) {
+      const footer = $("#chipsFooter");
+      if (!footer) return;
+      footer.innerHTML = html;
+      footer.hidden = !html;
+    }
+
+    // Delegated handlers: the chip/mode containers persist across re-renders.
+    on("#filterModes", "click", event => {
+      const button = event.target.closest("[data-filter-mode]");
+      if (!button) return;
+      activeFacet = button.dataset.filterMode;
+      selectedFacetValues.clear();
+      facetQuery = "";
+      chipsExpanded = false;
+      genreCategory = null;
+      const search = $("#facetSearch");
+      if (search) search.value = "";
+      renderFacets();
+      render();
+      // Focus follows the active mode button after the row is rebuilt.
+      $("#filterModes").querySelector("[aria-pressed='true']")?.focus();
+    });
+    on("#metadataChips", "click", event => {
+      const category = event.target.closest("[data-genre-category]");
+      if (category) {
+        genreCategory = category.dataset.genreCategory;
+        chipsExpanded = false;
+        renderFacets();
+        // The row is rebuilt; land on the back chip that now leads it.
+        $("#metadataChips").querySelector("[data-genre-back]")?.focus();
+        return;
+      }
+      if (event.target.closest("[data-genre-back]")) {
+        const previous = genreCategory;
+        genreCategory = null;
+        chipsExpanded = false;
+        renderFacets();
+        $("#metadataChips").querySelector(`[data-genre-category="${CSS.escape(previous)}"]`)?.focus();
+        return;
+      }
+      const button = event.target.closest("[data-facet-value]");
+      if (!button) return;
+      const value = button.dataset.facetValue.toLowerCase();
+      if (!value) selectedFacetValues.clear();
+      else if (selectedFacetValues.has(value)) selectedFacetValues.delete(value);
+      else selectedFacetValues.add(value);
+      renderFacets();
+      render();
+      // The chip DOM is rebuilt, so move focus back onto the same value.
+      const target = host.querySelector(`[data-facet-value="${CSS.escape(value)}"]`)
+                  || host.querySelector('[data-facet-value=""]');
+      target?.focus();
+    });
+    on("#chipsFooter", "click", event => {
+      const toggle = event.target.closest("[data-chips-toggle]");
+      if (!toggle) return;
+      chipsExpanded = toggle.dataset.chipsToggle === "more";
+      renderFacets();
+      // The footer is rebuilt, so focus the replacement toggle.
+      $("#chipsFooter").querySelector("[data-chips-toggle]")?.focus();
+    });
+    on("#facetSearch", "input", event => {
+      facetQuery = event.target.value.trim().toLowerCase();
+      renderFacets();
+    });
+    on("#facetClear", "click", () => {
+      selectedFacetValues.clear();
+      renderFacets();
+      render();
+    });
+
+    on("#coverFilter", "change", () => {
+      currentPage = 1;
+      render();
+    });
+
+    function kindLabel(v) {
+      return ({ movie:"Movie", tvShow:"TV Show", documentary:"Documentary",
+                audiobook:"Audiobook", ebook:"Book", all:"All" })[v] || v;
+    }
+    function progressFor(id) { return progressByID.get(id) ?? null; }
+    function isWatched(p, item) {
+      if (!p || p.seconds <= 0) return false;
+      const dur = p.duration || item.durationSeconds || 0;
+      return dur > 0 && p.seconds / dur >= 0.96;
+    }
+    function inProgress(p, item) {
+      if (!p || p.seconds <= 5) return false;
+      return !isWatched(p, item);
+    }
+    function runtimeLabel(item) {
+      const d = item.durationSeconds;
+      if (!d || d <= 0) return "";
+      return formatTime(d);
+    }
+
+    // Collapse same-title copies into one card per title, best copy first.
+    // Ranking prefers probed runtime > resolution > format browser-playability.
+    const FORMAT_RANK = { mp4:3, m4v:3, mov:3, webm:3, mkv:2, avi:1 };
+    function titleHeight(i) {
+      // Fall back to a resolution hint embedded in the title ("720p", "1080P").
+      const m = (i.title || "").match(/(\d{3,4})\s*p\b/i);
+      return m ? parseInt(m[1], 10) : 0;
+    }
+    function copyHeight(i) {
+      return i.probedHeight || titleHeight(i);
+    }
+    function rankCopy(i) {
+      // Resolution dominates: a higher-definition copy is the default even
+      // if the low-res one has probe data and the HD one doesn't.
+      return copyHeight(i) * 1e8
+           + ((i.durationSeconds || 0) > 0 ? 1e6 : 0)
+           + (FORMAT_RANK[(i.format||"").toLowerCase()] || 0) * 1e2;
+    }
+    let dedupEnabled = true;
+    function visibleItems() {
+      const term = $("#q").value.trim().toLowerCase();
+      const watchSel = $("#watched").value;
+      let list = items.filter(i => !i.isPlaceholder);
+      // Tabs are the kind filter; documentaries ride with movies elsewhere.
+      const kindSel = kindByTab[activeTab] ?? null;
+      if (kindSel) list = list.filter(i => i.kind === kindSel);
+      const coverFilter = $("#coverFilter")?.value || "all";
+      if (coverFilter !== "all") {
+        list = list.filter(i => i.kind === "audiobook" && (
+          coverFilter === "has-cover" ? i.coverAvailable === true
+          : coverFilter === "missing-cover" ? i.coverAvailable !== true
+          : i.coverAvailable === true && i.coverEmbedded !== true
+        ));
+      }
+      if (selectedFacetValues.size) list = list.filter(i => facetValues(i, activeFacet).some(v => selectedFacetValues.has(String(v).toLowerCase())));
+      if (term) {
+        list = list.filter(i =>
+          [i.title, i.subtitle, i.showTitle, i.summary]
+            .some(f => f && String(f).toLowerCase().includes(term)));
+      }
+      switch ($("#sort").value) {
+        case "year":     list.sort((a,b)=>(b.year||0)-(a.year||0)||a.title.localeCompare(b.title)); break;
+        case "duration": list.sort((a,b)=>(b.durationSeconds||0)-(a.durationSeconds||0)); break;
+        case "series":   list.sort((a,b)=>(a.series || "").localeCompare(b.series || "") || ((a.seriesNumber || 1e9) - (b.seriesNumber || 1e9)) || a.title.localeCompare(b.title)); break;
+        case "recent":   list.sort((a,b)=>{
+                           const ua = progressByID.get(a.id)?.updatedAt || "";
+                           const ub = progressByID.get(b.id)?.updatedAt || "";
+                           return ub.localeCompare(ua) || a.title.localeCompare(b.title);
+                         }); break;
+        default:         list.sort((a,b)=>a.title.localeCompare(b.title));
+      }
+      if (dedupEnabled) {
+        // Keep the best copy of each (kind,title); default to the highest
+        // definition (rankCopy), but a copy with watch progress wins so the
+        // user resumes where they left off. Keys are the MERGED group keys
+        // (exact + fuzzy roots) so variants like "Good Will Hunting V2"
+        // fold into "Good Will Hunting" here too. Groups may have been
+        // rebuilt for a different render scope; membership maps always hold.
+        const byKey = new Map();
+        for (const i of list) {
+          const key = itemGroupKey.get(i.id) ?? copyKey(i);
+          const prev = byKey.get(key);
+          if (!prev) { byKey.set(key, i); continue; }
+          const prevP = progressFor(prev.id), curP = progressFor(i.id);
+          const prevActive = inProgress(prevP, prev) || isWatched(prevP, prev);
+          const curActive = inProgress(curP, i) || isWatched(curP, i);
+          const better = curActive !== prevActive ? curActive
+                       : rankCopy(i) > rankCopy(prev);
+          if (better) byKey.set(key, i);
+        }
+        list = Array.from(byKey.values());
+      }
+      if (watchSel !== "all") {
+        list = list.filter(i => watchSel === "watched" ? isWatched(progressFor(i.id), i)
+                                                       : !isWatched(progressFor(i.id), i));
+      }
+      return list;
+    }
+
+    // All copies of each collapsed title, for the edition picker and the
+    // per-card copy badge. Groups are rebuilt once per data/progress change
+    // (rebuildCopyGroups) instead of rescanning the full catalog per card.
+    // Keys normalize punctuation/case and strip embedded release tags so
+    // "Tucker: The Man..." / "Tucker The Man..." collapse, as do titles
+    // carrying " 1080p BluRay x265" style suffixes.
+    let copyGroups = new Map();
+    let itemGroupKey = new Map();   // item.id -> merged group key (incl. fuzzy roots)
+    function foldDiacritics(s) {
+      return s.normalize("NFD").replace(/[\u0300-\u036f]/g, "");
+    }
+    function copyKey(i) {
+      // Episode titles recur across shows and seasons (especially "Pilot").
+      if (i.kind === "tvShow" && i.showTitle && i.seasonNumber != null && i.episodeNumber != null) {
+        const parsedShow = foldDiacritics(i.showTitle).toLowerCase().replace(/\(\d{4}\)/g, "").replace(/[^a-z0-9]/g, "");
+        return [i.kind, i.showGroupID || "", parsedShow, i.seasonNumber, i.episodeNumber, i.splitPart || ""].join("\u0000");
+      }
+      let t = foldDiacritics(i.title || "").toLowerCase();
+      t = t.replace(/\b\d{3,4}\s*p\b/gi, "")           // resolution hints
+           .replace(/[\[\(\{][^\]\)\}]*[\]\)\}]/g, "")  // any (...) [...] {...} tag group
+           .replace(/(?:bluray|webrip|web[- ]?dl|hdtv|hdrip|dvdrip|bdrip|brrip|remux|x265|x264|hevc|h264|10bit|8bit|aac|ddp5|yify|rarbg|mkvcage|s4filmes|proper|repack|unrated)\b/gi, "")
+           .replace(/\b(dual|multi|subs?|ws)\b/gi, "")
+           .replace(/\bv\d+\b/gi, "")                   // V2 / v3 re-encode tags
+           .replace(/[^a-z0-9]+/g, "");
+      return [i.kind, t, i.year || 0, i.splitPart || "", i.kind === "tvShow" ? (i.showGroupID || i.showTitle || i.id) : "", i.kind === "tvShow" ? (i.seasonNumber ?? "unknown") : ""].join("\u0000");
+    }
+    // Near-duplicate folding: typos ("007 Jame" vs "007 James"), junk tails
+    // ("-1", " a", "-cd1", "800MB"), diacritics (Nausicaa/Nausicaä), and
+    // release-tag variants get merged into the same card. Guards keep real
+    // sequels/plurals separate: different trailing numbers ("Predator" vs
+    // "Predators", "Sherlock Holmes" vs "Holmes 2") or disjoint years never
+    // merge. Ratios calibrated on the live catalog (folds verified correct).
+    function diceRatio(a, b) {
+      if (a === b) return 1;
+      if (a.length < 4 || b.length < 4) return 0;
+      const A = new Set(), B = new Set();
+      for (let i = 0; i < a.length - 1; i++) A.add(a.slice(i, i + 2));
+      for (let i = 0; i < b.length - 1; i++) B.add(b.slice(i, i + 2));
+      let inter = 0;
+      for (const x of A) if (B.has(x)) inter++;
+      return 2 * inter / (A.size + B.size);
+    }
+    const FUZZ_MIN = 0.85;
+    function numTail(k) {
+      const m = k.match(/(\d+|[ivxl]{1,5})$/);
+      return m ? m[1] : null;
+    }
+    function isPluralPair(a, b) {
+      // Word-boundary plural: "predator"/"predators". Only when the shorter
+      // ends at a whole-token boundary of the longer and the extra letters
+      // are just an s/es tail.
+      const short = a.length <= b.length ? a : b;
+      const long = a.length <= b.length ? b : a;
+      return long.startsWith(short) && /^(?:es|s)$/.test(long.slice(short.length));
+    }
+    function yearSet(kind, key) {
+      const s = new Set();
+      for (const i of items) {
+        if (i.isPlaceholder || i.kind !== kind) continue;
+        if (copyKey(i) !== key) continue;
+        if (i.year) s.add(i.year);
+      }
+      return s;
+    }
+    // Generic bonus-feature titles: identical across films ("Trailer" under
+    // every Featurettes/ dir) but different content. Keys are post-copyKey
+    // normalized titles; matching items always get solo cards.
+    const GENERIC_EXTRAS = new Set([
+      "trailer", "theatricaltrailer", "teaser",
+      "deletedscenes", "behindthescenes", "makingof",
+      "featurette", "bloopers", "outtakes", "gagreeel",
+      "interview", "interviews", "commentary",
+    ]);
+    function rebuildCopyGroups() {
+      copyGroups = new Map();
+      const extrasGroups = new Map();  // generic bonus-feature titles: never merged
+      for (const i of items) {
+        if (i.isPlaceholder) continue;
+        const k = copyKey(i);
+        if (GENERIC_EXTRAS.has(k.split("\u0000")[1])) {
+          // "Trailer" / "Deleted Scenes" from different films share a key but
+          // are different content — one card per item.
+          const solo = k + "\u0000" + i.id;
+          if (!copyGroups.has(solo)) copyGroups.set(solo, []);
+          copyGroups.get(solo).push(i);
+          extrasGroups.set(solo, true);
+          continue;
+        }
+        if (!copyGroups.has(k)) copyGroups.set(k, []);
+        copyGroups.get(k).push(i);
+      }
+      // Union-find over near-identical keys (per kind), only for kinds with
+      // meaningful dupes (movies/documentaries). TV uses exact keys only —
+      // episode codes make fuzzy keys unreliable.
+      // A packed-number episode with an explicit duplicate filename suffix
+      // joins its unsuffixed sibling only when that sibling actually exists
+      // in the same show/season. All files remain in the version picker.
+      for (const [key, group] of [...copyGroups]) {
+        const sample = group[0];
+        if (sample.kind !== "tvShow" || sample.episodeNumber != null || !/^\d{3,4}\s*-/.test(sample.title || "")) continue;
+        const baseTitle = sample.title.replace(/-\d+$/, "");
+        if (baseTitle === sample.title) continue;
+        const baseKey = copyKey({...sample, title:baseTitle});
+        if (baseKey !== key && copyGroups.has(baseKey)) {
+          copyGroups.get(baseKey).push(...group);
+          copyGroups.delete(key);
+        }
+      }
+      const kinds = new Set();
+      for (const k of copyGroups.keys()) kinds.add(k.split("\u0000")[0]);
+      const parent = new Map();
+      const find = (k) => {
+        let r = k;
+        while (parent.get(r) !== r) r = parent.get(r);
+        parent.set(k, r);
+        return r;
+      };
+      const yearsOf = new Map();
+      const yearCache = (kind, key) => {
+        const ck = kind + "\u0000" + key;
+        if (!yearsOf.has(ck)) yearsOf.set(ck, yearSet(kind, key));
+        return yearsOf.get(ck);
+      };
+      for (const kind of kinds) {
+        if (kind !== "movie" && kind !== "documentary") continue;
+        const keys = [...copyGroups.keys()].filter(k => k.startsWith(kind + "\u0000"))
+          .map(k => k.slice(kind.length + 1))
+          .filter(t => !extrasGroups.has(kind + "\u0000" + t))
+          .sort();
+        for (const k of keys) parent.set(k, k);
+        for (let i = 0; i < keys.length; i++) {
+          for (let j = i + 1; j < Math.min(i + 6, keys.length); j++) {
+            const a = keys[i], b = keys[j];
+            if (Math.abs(a.length - b.length) > 3) continue;
+            if (diceRatio(a, b) < FUZZ_MIN) continue;
+            if (isPluralPair(a, b)) continue;              // Predator/Predators
+            const ta = numTail(a), tb = numTail(b);
+            if ((ta && !tb) || (tb && !ta)) continue;      // sequel guard
+            if (ta && tb && ta !== tb) continue;
+            const ya = yearCache(kind, a), yb = yearCache(kind, b);
+            if (ya.size && yb.size && ![...ya].some(y => yb.has(y))) continue;
+            // Identity suffixes (year/part) must agree even for fuzzy titles.
+            if (a.slice(a.indexOf("\u0000")) !== b.slice(b.indexOf("\u0000"))) continue;
+            const ra = find(a), rb = find(b);
+            if (ra === rb) continue;
+            const root = a.length <= b.length ? ra : rb;
+            parent.set(ra, root); parent.set(rb, root);
+          }
+        }
+        // Re-point every group key to its merged root bucket.
+        // Solo extras cards bypass the union entirely. Keys of other kinds
+        // are identity-mapped: find() only knows this kind's union, and
+        // letting other kinds fall through would collapse each of them into
+        // a single "<kind> undefined" bucket.
+        itemGroupKey = new Map();
+        for (const k of [...copyGroups.keys()]) {
+          if (extrasGroups.has(k)) {
+            for (const it of copyGroups.get(k)) itemGroupKey.set(it.id, k);
+            continue;
+          }
+          const kindx = k.split("\u0000")[0], t = k.slice(kindx.length + 1);
+          if (kindx !== kind) {
+            for (const it of copyGroups.get(k)) itemGroupKey.set(it.id, k);
+            continue;
+          }
+          const root = find(t);
+          const rk = kindx + "\u0000" + root;
+          if (root !== t) {
+            if (!copyGroups.has(rk)) copyGroups.set(rk, []);
+            copyGroups.get(rk).push(...copyGroups.get(k));
+            copyGroups.delete(k);
+          }
+          for (const it of copyGroups.get(rk) || []) itemGroupKey.set(it.id, rk);
+        }
+      }
+      for (const group of copyGroups.values()) {
+        group.sort((a,b) => {
+          const pa = progressFor(a.id), pb = progressFor(b.id);
+          const aa = inProgress(pa,a)||isWatched(pa,a), ab = inProgress(pb,b)||isWatched(pb,b);
+          if (aa !== ab) return aa ? -1 : 1;
+          return rankCopy(b) - rankCopy(a);
+        });
+      }
+      // Build membership once after every kind has been merged. Reinitializing
+      // it inside each kind's loop loses previous movie/documentary merges.
+      itemGroupKey = new Map();
+      for (const [key, group] of copyGroups) {
+        for (const item of group) itemGroupKey.set(item.id, key);
+      }
+    }
+    function copiesOf(item) {
+      const gk = itemGroupKey.get(item.id);
+      if (gk) {
+        const g = copyGroups.get(gk);
+        if (g && g.length) return g;
+      }
+      return copyGroups.get(copyKey(item)) ?? [item];
+    }
+
+    function mainPageEntries(list) {
+      const visibleIDs = new Set(list.map(i => i.id));
+      const shows = buildShowGroups().filter(show => [...show.seasons.values()].some(eps =>
+        eps.some(ep => copiesOf(ep).some(copy => visibleIDs.has(copy.id)))));
+      return [...list.filter(i => i.kind !== "tvShow"),
+        ...shows.map(show => ({ title: show.name, show }))]
+        .sort((a, b) => a.title.localeCompare(b.title));
+    }
+
+    function cardHTML(item, opts = {}) {
+      const p = progressFor(item.id);
+      const watched = isWatched(p, item);
+      const pct = (() => {
+        if (!p || p.seconds <= 0) return 0;
+        const dur = p.duration || item.durationSeconds || 0;
+        return dur > 0 ? Math.min(100, p.seconds / dur * 100) : 0;
+      })();
+      const poster = item.posterURL
+        ? `<img class="poster" src="${api(item.posterURL)}" alt="" loading="lazy">`
+        : "";
+      const copies = opts.copyCount != null ? opts.copyCount : (dedupEnabled ? copiesOf(item).length : 1);
+      const h = copies > 1 ? copyHeight(item) : 0;
+      const qualityBit = h ? (h >= 2160 ? "4K" : h + "p") : "";
+      const bookContext = item.kind === "audiobook" ? [item.author, item.series, item.seriesNumber ? `#${item.seriesNumber}` : ""].filter(Boolean).join(" · ") : "";
+      const metaBits = [bookContext, item.year || "", runtimeLabel(item), qualityBit].filter(Boolean).join(" • ");
+      const badge = watched
+        ? `<span class="badge watched">WATCHED</span>`
+        : (pct > 0 ? `<span class="badge unwatched">${Math.round(100-pct)}% LEFT</span>` : "");
+      const copiesBadge = copies > 1
+        ? `<span class="badge copies" title="Also available in other versions">${copies} VERSIONS</span>` : "";
+      return `
+      <button class="card" data-id="${item.id}" data-action="open-detail"
+              aria-label="${escapeHTML(item.title)}${metaBits ? ", " + metaBits : ""}">
+        <div class="frame">
+          ${poster}
+          <span class="play-glyph" aria-hidden="true">▶</span>
+          ${badge}
+          ${copiesBadge}
+          ${pct > 0 ? `<span class="bar"><i style="width:${pct}%"></i></span>` : ""}
+        </div>
+        <h3>${escapeHTML(opts.showTitle ? (item.showTitle || item.title) : item.title)}</h3>
+        <p class="meta">${escapeHTML(metaBits || kindLabel(item.kind))}</p>
+      </button>`;
+    }
+
+    const PAGE_SIZE = 200;
+    let currentPage = 1;
+    let activeTab = "all";
+    let openShow = null; // show name when drilled into a TV show
+    let openSeason = null;
+
+    function buildShowGroups() {
+      const map = new Map();
+      const seen = new Set();
+      for (const i of items) {
+        if (i.kind !== "tvShow" || i.isPlaceholder || !(i.showGroupTitle || i.showTitle)) continue;
+        const key = itemGroupKey.get(i.id) ?? copyKey(i);
+        if (seen.has(key)) continue;
+        seen.add(key);
+        const representative = copiesOf(i)[0];
+        const groupID = i.showGroupID || i.showTitle;
+        let show = map.get(groupID);
+        if (!show) {
+          show = { id:groupID, name:i.showGroupTitle || i.showTitle, seasons:new Map(), posterItem:null };
+          map.set(groupID, show);
+        }
+        const sn = i.seasonNumber ?? 0;
+        if (!show.seasons.has(sn)) show.seasons.set(sn, []);
+        show.seasons.get(sn).push(representative);
+        if (i.posterURL && (!show.posterItem || !show.posterItem.posterURL)) show.posterItem = i;
+      }
+      for (const show of map.values()) {
+        for (const eps of show.seasons.values())
+          eps.sort((a,b)=>(a.episodeNumber??0)-(b.episodeNumber??0)||a.title.localeCompare(b.title));
+      }
+      return Array.from(map.values()).sort((a,b)=>a.name.localeCompare(b.name));
+    }
+
+    function seasonLabel(n) {
+      return n > 0 ? `Season ${String(n).padStart(2,"0")}` : "Specials / Extras";
+    }
+
+    // A card for a TV show folder: clicking drills in instead of opening the detail modal.
+    function showCardHTML(show) {
+      const epCount = Array.from(show.seasons.values()).reduce((n,e)=>n+e.length,0);
+      let watchedCount = 0;
+      for (const eps of show.seasons.values())
+        for (const e of eps) if (isWatched(progressFor(e.id), e)) watchedCount++;
+      const pct = epCount ? Math.round(watchedCount/epCount*100) : 0;
+      const item = show.posterItem;
+      const poster = item?.posterURL
+        ? `<img class="poster" src="${api(item.posterURL)}" alt="" loading="lazy">`
+        : "";
+      const badge = pct >= 100
+        ? `<span class="badge watched">WATCHED</span>`
+        : (watchedCount > 0 ? `<span class="badge unwatched">${epCount-watchedCount} LEFT</span>` : "");
+      return `
+      <button class="card" data-show="${escapeHTML(show.id)}" data-action="open-show" aria-label="${escapeHTML(show.name)}">
+        <div class="frame">${poster}<span class="play-glyph" aria-hidden="true">▶</span>${badge}</div>
+        <h3>${escapeHTML(show.name)}</h3>
+        <p class="meta">${show.seasons.size} season${show.seasons.size===1?"":"s"} • ${epCount} episode${epCount===1?"":"s"}</p>
+      </button>`;
+    }
+
+    function episodeRowHTML(ep) {
+      const p = progressFor(ep.id);
+      const pct = (() => {
+        if (!p || p.seconds <= 0) return 0;
+        const dur = p.duration || ep.durationSeconds || 0;
+        return dur > 0 ? Math.min(100, p.seconds/dur*100) : 0;
+      })();
+      const code = ep.seasonNumber != null && ep.episodeNumber != null
+        ? `S${String(ep.seasonNumber).padStart(2,"0")}E${String(ep.episodeNumber).padStart(2,"0")}`
+        : "—";
+      return `
+      <button class="ep-row" data-id="${ep.id}" data-action="open-detail" aria-label="${escapeHTML(code + " " + ep.title)}">
+        <span class="code">${code}</span>
+        <span class="eptitle">${escapeHTML(ep.title)}</span>
+        <span class="runtime">${pct>0 ? (isWatched(p,ep) ? "Watched" : formatTime(p.seconds)+" / "+runtimeLabel(ep)) : runtimeLabel(ep)}</span>
+        <span class="epbar"><i style="width:${pct}%"></i></span>
+      </button>`;
+    }
+
+    function renderShowPage() {
+      const groups = buildShowGroups();
+      const show = groups.find(s => s.id === openShow) || groups.find(s => s.name === openShow);
+      const grid = $("#grid");
+      const pager = $("#pager");
+      const seasons = $("#seasonList");
+      $("#backRow").hidden = false;
+      grid.className = "";
+      pager.innerHTML = "";
+      if (!show) {
+        openShow = null;
+        $("#backRow").hidden = true;
+        seasons.innerHTML = "";
+        render();
+        return;
+      }
+      document.title = `${show.name} — TM Sonder`;
+      const numbers = Array.from(show.seasons.keys()).sort((a,b)=>{
+        if (a<=0 && b>0) return 1; if (b<=0 && a>0) return -1; return a-b;
+      });
+      grid.innerHTML = "";
+      $("#continueRow").hidden = true;
+      $("#backRow button").textContent = openSeason == null ? "‹ All Shows" : "‹ All Seasons";
+      if (openSeason == null) {
+        grid.className = "grid";
+        seasons.innerHTML = "";
+        grid.innerHTML = numbers.map(n => `<button class="card" data-action="open-season" data-season="${n}">
+          <h3>${seasonLabel(n)}</h3><p class="meta">${show.seasons.get(n).length} episodes</p></button>`).join("");
+        return;
+      }
+      seasons.innerHTML = numbers.filter(n => n === openSeason).map(n => `
+        <section class="season">
+          <h2>${seasonLabel(n)} — ${show.seasons.get(n).length} episode${show.seasons.get(n).length===1?"":"s"}</h2>
+          ${show.seasons.get(n).map(episodeRowHTML).join("")}
+        </section>`).join("")
+        || `<div class="empty-state">No episodes found.</div>`;
+    }
+
+    function openShowPage(name) {
+      openShow = name;
+      openSeason = null;
+      currentPage = 1;
+      setTab("tvshows", true);
+      render();
+      syncHash(true);
+      window.scrollTo({ top:0 });
+    }
+    function leaveShow() {
+      if (openSeason != null) {
+        openSeason = null;
+        render();
+        syncHash(true);
+        return;
+      }
+      openShow = null;
+      document.title = "TM Sonder";
+      $("#backRow").hidden = true;
+      $("#seasonList").innerHTML = "";
+      render();
+      syncHash(false);
+    }
+
+    // --- URL state (#tab[/show/<name>|/page/<n>]) so refresh and Back work ---
+    function syncHash(push) {
+      const parts = [activeTab];
+      if (openShow) {
+        parts.push("show", openShow);
+        if (openSeason != null) parts.push("season", String(openSeason));
+      }
+      else if (currentPage > 1) parts.push("page", String(currentPage));
+      const h = "#" + parts.map(encodeURIComponent).join("/");
+      if (location.hash === h) return;
+      if (push) history.pushState(null, "", h);
+      else history.replaceState(null, "", h);
+    }
+    function applyHash() {
+      const seg = location.hash.replace(/^#\/?/, "").split("/")
+        .filter(s => s !== "").map(decodeURIComponent);
+      if (seg.length === 0) return false;
+      const tabs = ["all", "movies", "tvshows", "documentaries", "audiobooks", "books", "lists", "storage", "optimize"];
+      const tab = tabs.includes(seg[0]) ? seg[0] : "all";
+      activeTab = tab;
+      for (const b of document.querySelectorAll("#tabs button"))
+        b.classList.toggle("active", b.dataset.tab === tab);
+      openShow = null;
+      openSeason = null;
+      currentPage = 1;
+      if (seg[1] === "show" && seg[2]) openShow = seg[2];
+      if (openShow && seg[3] === "season" && /^\d+$/.test(seg[4] || "")) openSeason = Number(seg[4]);
+      else if (seg[1] === "page") currentPage = Math.max(1, parseInt(seg[2], 10) || 1);
+      return true;
+    }
+    window.addEventListener("popstate", () => {
+      applyHash();
+      if (!openShow) {
+        $("#backRow").hidden = true;
+        $("#seasonList").innerHTML = "";
+        if (document.title !== "TM Sonder") document.title = "TM Sonder";
+      }
+      render();
+      if (activeTab === "optimize") {
+        refreshOptimizationQueue();
+        refreshAudiobookJobs();
+      } else if (optimizationPollTimer) {
+        clearTimeout(optimizationPollTimer);
+        optimizationPollTimer = null;
+      }
+    });
+
+    function setTab(tab, keepShow=false) {
+      activeTab = tab;
+      if (!keepShow) { openSeason = null; leaveShow(); }
+      for (const b of document.querySelectorAll("#tabs button")) {
+        b.classList.toggle("active", b.dataset.tab === tab);
+      }
+      if (tab !== "optimize" && optimizationPollTimer) {
+        clearTimeout(optimizationPollTimer);
+        optimizationPollTimer = null;
+      }
+    }
+
+    for (const b of document.querySelectorAll("#tabs button")) {
+      b.addEventListener("click", () => {
+        currentPage = 1;
+        setTab(b.dataset.tab);
+        // Facets are tab-scoped, so a selection from another tab is stale.
+        selectedFacetValues.clear();
+        facetQuery = "";
+        chipsExpanded = false;
+        genreCategory = null;
+        const search = $("#facetSearch");
+        if (search) search.value = "";
+        renderFacets();
+        render();
+        if (b.dataset.tab === "optimize") {
+          refreshOptimizationQueue();
+          refreshAudiobookJobs();
+        }
+        syncHash(true);
+        window.scrollTo({ top:0 });
+      });
+    }
+
+    async function refreshLists() {
+      const response = await fetch(api("/api/lists"));
+      if (!response.ok) throw new Error("Lists unavailable");
+      lists = (await response.json()).lists || [];
+      if (activeTab === "lists") renderLists();
+    }
+
+    async function listMutation(path, options) {
+      const response = await fetch(api(path), options);
+      if (!response.ok) throw new Error((await response.text()) || "List update failed");
+      await refreshLists();
+    }
+
+    function listCandidates() {
+      return items.filter(item => ["audiobook", "ebook"].includes(item.kind))
+        .sort((a, b) => String(a.title || "").localeCompare(String(b.title || "")));
+    }
+
+    function renderLists() {
+      const host = $("#listsView");
+      if (!host) return;
+      const candidates = listCandidates();
+      if (!lists.length) {
+        host.innerHTML = '<div class="empty-state">Create a list to start building a reading plan.</div>';
+        return;
+      }
+      host.innerHTML = lists.map(list => {
+        const entries = (list.items || []).map((entry, index) => {
+          const item = entry.item || {};
+          const tags = (entry.tags || []).map(tag => `<span class="tag">${escapeHTML(tag)}</span>`).join("");
+          return `<li><span class="list-position">${index + 1}.</span><button class="list-entry-title" data-action="open-detail" data-id="${escapeHTML(item.id || "")}">${escapeHTML(item.title || item.id || "Unknown book")}</button><span class="list-entry-tags">${tags}</span><span class="list-entry-actions"><button data-action="move-list-item" data-list-id="${escapeHTML(list.id)}" data-index="${index}" data-direction="up" ${index === 0 ? "disabled" : ""}>↑</button><button data-action="move-list-item" data-list-id="${escapeHTML(list.id)}" data-index="${index}" data-direction="down" ${index === list.items.length - 1 ? "disabled" : ""}>↓</button><button data-action="remove-list-item" data-list-id="${escapeHTML(list.id)}" data-item-id="${escapeHTML(item.id || "")}">Remove</button></span></li>`;
+        }).join("");
+        const options = candidates.map(item => `<option value="${escapeHTML(item.id)}">${escapeHTML(item.title || item.id)}</option>`).join("");
+        const listTags = (list.tags || []).map(tag => `<span class="tag">${escapeHTML(tag)}</span>`).join("");
+        return `<article class="reading-list" data-list-id="${escapeHTML(list.id)}"><div class="reading-list-head"><div><h3>${escapeHTML(list.name)}</h3>${list.description ? `<p>${escapeHTML(list.description)}</p>` : ""}<div>${listTags}</div></div><button data-action="delete-list" data-list-id="${escapeHTML(list.id)}">Delete</button></div><div class="list-add-row"><select data-list-select aria-label="Book to add"><option value="">Choose a book…</option>${options}</select><input data-list-tags placeholder="Entry tags, comma separated" aria-label="Entry tags"><button class="primary" data-action="add-list-item" data-list-id="${escapeHTML(list.id)}">Add</button></div><ol>${entries || '<li class="list-empty">No books yet.</li>'}</ol></article>`;
+      }).join("");
+    }
+
+    on("#listCreateForm", "submit", async e => {
+      e.preventDefault();
+      const tags = $("#newListTags").value.split(",").map(value => value.trim()).filter(Boolean);
+      try {
+        await listMutation("/api/lists", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ name: $("#newListName").value, description: $("#newListDescription").value, tags }) });
+        e.target.reset();
+      } catch (error) { alert(error.message || "Could not create list"); }
+    });
+
+    function render() {
+      const storage = activeTab === "storage";
+      const optimize = activeTab === "optimize";
+      const listMode = activeTab === "lists";
+      const coverFilter = $("#coverFilter");
+      if (coverFilter) coverFilter.hidden = activeTab !== "audiobooks";
+      document.body.classList.toggle("storage-mode", storage);
+      document.body.classList.toggle("optimize-mode", optimize);
+      $("#storagePanel").hidden = !storage;
+      $("#listsPanel").hidden = !listMode;
+      $("#optimizationPage").hidden = !optimize;
+      $("#grid").hidden = storage || optimize || listMode;
+      $("#pager").hidden = storage || optimize || listMode;
+      $("#seasonList").hidden = storage || optimize || listMode;
+      if (storage) { renderStorage(); return; }
+      if (optimize) {
+        $("#continueRow").hidden = true;
+        $("#backRow").hidden = true;
+        return;
+      }
+      if (listMode) { renderLists(); return; }
+      if (openShow) { renderShowPage(); return; }
+
+      const visible = visibleItems();
+      const list = activeTab === "all" ? mainPageEntries(visible) : visible;
+      const continuing = items.filter(i =>
+        ["movie","tvShow","documentary"].includes(i.kind) &&
+        inProgress(progressFor(i.id), i))
+        .sort((a,b)=>(progressByID.get(b.id)?.updatedAt || "").localeCompare(
+                      progressByID.get(a.id)?.updatedAt || ""));
+
+      $("#continueRow").hidden = continuing.length === 0 || activeTab !== "all";
+      if (!$("#continueRow").hidden) {
+        $("#continueGrid").innerHTML = continuing.map(i => cardHTML(i)).join("");
+      }
+
+      const grid = $("#grid");
+      const pager = $("#pager");
+      const seasons = $("#seasonList");
+      seasons.innerHTML = "";
+
+      // TV Shows tab: group episodes into clickable show folders.
+      if (activeTab === "tvshows") {
+        let shows = buildShowGroups();
+        const term = $("#q").value.trim().toLowerCase();
+        if (term) shows = shows.filter(s => s.name.toLowerCase().includes(term));
+        grid.className = "grid";
+        pager.innerHTML = `<span class="pageinfo">${shows.length} show${shows.length===1?"":"s"}</span>`;
+        if (shows.length === 0) {
+          grid.innerHTML = `<div class="empty-state">No shows yet. Add a TV Shows library with Show Name/Season XX/Episode files.</div>`;
+          return;
+        }
+        grid.innerHTML = shows.map(showCardHTML).join("");
+        return;
+      }
+
+      // Kind tabs with no content get a specific hint instead of a generic
+      // "no matches" (e.g. no Documentaries library configured).
+      const tabHints = {
+        documentaries: "No documentaries yet. Add a Documentaries library in Settings.",
+        audiobooks: "No audiobooks yet. Add an Audiobooks library in Settings, or open the Audiobook player from the app menu.",
+        books: "No books yet. Add a Books library in Settings.",
+      };
+      if (list.length === 0 && tabHints[activeTab]) {
+        grid.className = "";
+        grid.innerHTML = `<div class="empty-state">${tabHints[activeTab]}</div>`;
+        pager.innerHTML = "";
+        return;
+      }
+
+      if (list.length === 0) {
+        grid.className = "";
+        grid.innerHTML = `<div class="empty-state">No matches. Adjust filters or add media to your libraries.</div>`;
+        pager.innerHTML = "";
+        return;
+      }
+      grid.className = "grid";
+
+      const totalPages = Math.max(1, Math.ceil(list.length / PAGE_SIZE));
+      if (currentPage > totalPages) currentPage = totalPages;
+      if (currentPage < 1) currentPage = 1;
+      const pageItems = list.slice((currentPage-1)*PAGE_SIZE, currentPage*PAGE_SIZE);
+
+      grid.innerHTML = pageItems.map(i => i.show ? showCardHTML(i.show) : cardHTML(i, { showTitle:false })).join("");
+
+      if (totalPages > 1 || list.length > PAGE_SIZE) {
+        pager.innerHTML = `
+          <button ${currentPage<=1?"disabled":""} data-action="goto-page" data-page="${currentPage-1}" aria-label="Previous page">‹ Prev</button>
+          <span class="pageinfo">Page ${currentPage} of ${totalPages} — ${list.length.toLocaleString()} ${selectedFacetValues.size ? "filtered " : ""}titles</span>
+          <button ${currentPage>=totalPages?"disabled":""} data-action="goto-page" data-page="${currentPage+1}" aria-label="Next page">Next ›</button>`;
+      } else {
+        pager.innerHTML = `<span class="pageinfo">${list.length.toLocaleString()} ${selectedFacetValues.size ? "filtered " : ""}title${list.length===1?"":"s"}</span>`;
+      }
+    }
+
+    let storageData = null;
+    let storageLoading = false;
+    let storageScanStatus = "";
+    async function renderStorage() {
+      const panel = $("#storagePanel");
+      if (!storageData && !storageLoading) {
+        storageLoading = true;
+        panel.innerHTML = '<div class="empty-state">Reading indexed storage…</div>';
+        try {
+          const response = await fetch(api("/api/library/storage"));
+          if (!response.ok) throw new Error("Storage summary unavailable");
+          storageData = await response.json();
+        } catch {
+          panel.innerHTML = '<div class="empty-state">Could not load storage details.</div>';
+          storageLoading = false;
+          return;
+        }
+        storageLoading = false;
+      }
+      if (!storageData) return;
+      const data = storageData;
+      const fmt = n => {
+        n = Number(n) || 0;
+        if (n < 1024) return `${n} B`;
+        const units = ["KB","MB","GB","TB","PB"];
+        let i = -1; do { n /= 1024; i++; } while (n >= 1024 && i < units.length - 1);
+        return `${n.toFixed(n >= 100 ? 0 : n >= 10 ? 1 : 2)} ${units[i]}`;
+      };
+      const folderHTML = node => {
+        const summary = `<span class="storage-name">📁 ${escapeHTML(node.name || "Library root")}</span>
+          <span class="storage-meta">${Number(node.itemCount || 0).toLocaleString()} files · ${fmt(node.sizeBytes)}</span>`;
+        const contents = [
+          ...(node.children || []).map(folderHTML),
+          ...(node.files || []).map(file => `<div class="storage-file"><span>▤ ${escapeHTML(file.name)}</span><span>${fmt(file.sizeBytes)}</span></div>`)
+        ].join("");
+        return `<details class="storage-folder"><summary>${summary}</summary><div class="storage-children">${contents || '<p class="storage-empty">No indexed files here.</p>'}</div></details>`;
+      };
+      panel.innerHTML = `
+        <div class="storage-heading"><div><h2>Storage breakdown</h2><p>Indexed media only · Folder sizes come from the last scan</p><p id="storageScanStatus" role="status">${escapeHTML(storageScanStatus)}</p></div><button id="storageScanBtn" class="storage-scan" data-action="scan-storage">Scan now</button></div>
+        <div class="storage-metrics">
+          <div><strong>${fmt(data.totalBytes)}</strong><span>Indexed media</span></div>
+          <div><strong>${Number(data.itemCount || 0).toLocaleString()}</strong><span>Files</span></div>
+          <div><strong>${Number(data.folderCount || 0).toLocaleString()}</strong><span>Folders</span></div>
+          <div><strong>${Number(data.showCount || 0).toLocaleString()}</strong><span>TV shows</span></div>
+          <div><strong>${Number(data.artistCount || 0).toLocaleString()}</strong><span>Creators & studios</span></div>
+        </div>
+        <div class="storage-libraries">${(data.libraries || []).map(lib => `
+          <section class="storage-library"><div class="storage-library-head">
+            <strong>${escapeHTML(lib.name)}</strong><span>${escapeHTML(lib.kind)} · ${fmt(lib.root.sizeBytes)} · ${Number(lib.root.itemCount || 0).toLocaleString()} files</span>
+          </div>${folderHTML(lib.root)}</section>`).join("") || '<div class="empty-state">No libraries are configured.</div>'}
+        </div>`;
+    }
+
+    function gotoPage(n) { currentPage = n; render(); syncHash(true); window.scrollTo({ top:0 }); }
+
+    function setStorageScanStatus(message, scanning = false) {
+      storageScanStatus = message;
+      const status = $("#storageScanStatus");
+      if (status) status.textContent = message;
+      const button = $("#storageScanBtn");
+      if (button) {
+        button.disabled = scanning;
+        button.textContent = scanning ? "Scanning…" : "Scan now";
+      }
+    }
+
+    async function scanStorageNow() {
+      setStorageScanStatus("Starting scan…", true);
+      try {
+        const response = await fetch(api("/api/settings/rescan"), { method: "POST" });
+        if (response.status === 202 || response.status === 409) {
+          setStorageScanStatus(response.status === 409 ? "A scan is already running…" : "Scanning your libraries…", true);
+          pollStorageScan(0, false);
+          return;
+        }
+        const error = await response.json().catch(() => ({}));
+        setStorageScanStatus(error.error || "Could not start the scan.");
+      } catch {
+        setStorageScanStatus("Could not reach the server to start the scan.");
+      }
+    }
+
+    function pollStorageScan(attempt, sawScan) {
+      setTimeout(async () => {
+        try {
+          const response = await fetch(api("/api/status"));
+          if (!response.ok) throw new Error("Status unavailable");
+          const state = await response.json();
+          const active = !!state.scanning;
+          sawScan = sawScan || active;
+          if (active) {
+            setStorageScanStatus(`Scanning… ${Number(state.itemsSeen || 0).toLocaleString()} files checked`, true);
+            pollStorageScan(attempt + 1, sawScan);
+            return;
+          }
+          // Allow the background scan goroutine to start after the 202 response.
+          if (!sawScan && attempt < 3) {
+            pollStorageScan(attempt + 1, false);
+            return;
+          }
+          await refreshLibrary();
+          const result = state.lastResult || {};
+          setStorageScanStatus(`Scan complete · ${Number(state.itemCount || 0).toLocaleString()} items · ${Number(result.added || 0)} added · ${Number(result.updated || 0)} updated · ${Number(result.removed || 0)} removed`);
+        } catch {
+          if (attempt < 300) pollStorageScan(attempt + 1, sawScan);
+          else setStorageScanStatus("Scan status unavailable. Check the server dashboard.");
+        }
+      }, 1000);
+    }
+
+    // Delegated clicks for grid/episode/edition rows (no inline JS strings).
+    document.addEventListener("click", e => {
+      const btn = e.target.closest("[data-action]");
+      if (!btn) return;
+      const act = btn.dataset.action;
+      if (act === "scan-storage") scanStorageNow();
+      else if (act === "open-detail" && btn.dataset.id) openDetail(btn.dataset.id);
+      else if (act === "open-show" && btn.dataset.show) openShowPage(btn.dataset.show);
+      else if (act === "open-season") { openSeason = Number(btn.dataset.season); render(); syncHash(true); window.scrollTo({top:0}); }
+      else if (act === "switch-copy" && btn.dataset.id) switchCopy(btn.dataset.id);
+      else if (act === "goto-page") { gotoPage(parseInt(btn.dataset.page, 10)); }
+      else if (act === "browse" && btn.dataset.path !== undefined) browseTo(btn.dataset.path);
+      else if (act === "filter-facet" && btn.dataset.facetKey && btn.dataset.facetValue) {
+        applyFacetFilter(btn.dataset.facetKey, btn.dataset.facetValue);
+      }
+      else if (act === "add-list-item") {
+        const card = btn.closest("[data-list-id]");
+        const itemID = card?.querySelector("[data-list-select]")?.value;
+        const tags = (card?.querySelector("[data-list-tags]")?.value || "").split(",").map(value => value.trim()).filter(Boolean);
+        if (!itemID) return;
+        listMutation(`/api/lists/${encodeURIComponent(btn.dataset.listId)}/items`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ itemID, position: -1, tags }) }).catch(error => alert(error.message || "Could not add book"));
+      }
+      else if (act === "remove-list-item") {
+        listMutation(`/api/lists/${encodeURIComponent(btn.dataset.listId)}/items/${encodeURIComponent(btn.dataset.itemId)}`, { method: "DELETE" }).catch(error => alert(error.message || "Could not remove book"));
+      }
+      else if (act === "delete-list") {
+        if (confirm("Delete this reading list? The catalog books will remain.")) listMutation(`/api/lists/${encodeURIComponent(btn.dataset.listId)}`, { method: "DELETE" }).catch(error => alert(error.message || "Could not delete list"));
+      }
+      else if (act === "move-list-item") {
+        const list = lists.find(candidate => candidate.id === btn.dataset.listId);
+        if (!list) return;
+        const order = (list.itemIDs || []).slice();
+        const index = Number(btn.dataset.index);
+        const next = btn.dataset.direction === "up" ? index - 1 : index + 1;
+        if (index < 0 || next < 0 || next >= order.length) return;
+        [order[index], order[next]] = [order[next], order[index]];
+        listMutation(`/api/lists/${encodeURIComponent(list.id)}/reorder`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ itemIDs: order }) }).catch(error => alert(error.message || "Could not reorder list"));
+      }
+    });
+
+    function editionLabel(c) {
+      // Lead with quality: resolution (probed or from the filename), then
+      // container, runtime, and edition tag.
+      const h = copyHeight(c);
+      const quality = h ? (h >= 2160 ? "4K" : h >= 720 ? h + "p" : h + "p") : "";
+      const bits = [quality,
+        c.format ? "." + String(c.format).toUpperCase() : ""];
+      if (c.durationSeconds) bits.push(formatTime(c.durationSeconds));
+      if (c.edition) bits.push(String(c.edition));
+      return bits.filter(Boolean).join(" · ");
+    }
+    function editionsHTML(item) {
+      const copies = copiesOf(item);
+      if (copies.length <= 1) return "";
+      return `
+      <div class="editions">
+        <h4>${copies.length} versions — stream in</h4>
+        ${copies.map(c => {
+          const cp = progressFor(c.id);
+          const cw = isWatched(cp, c);
+          const current = c.id === item.id;
+          return `
+          <button class="ed-row ${current ? "current" : ""}" data-id="${c.id}" data-action="switch-copy"
+                  aria-label="Stream copy ${editionLabel(c)}">
+            <span class="edwatch">${cw ? "WATCHED" : (cp && cp.seconds > 5 ? "RESUME" : "")}</span>
+            <span class="edlabel">${current ? "▶ " : ""}${escapeHTML(editionLabel(c))}</span>
+            <span class="edmeta">${current ? "playing" : "switch"}</span>
+          </button>`;
+        }).join("")}
+      </div>`;
+    }
+
+    function switchCopy(id) {
+      const wasOpen = $("#detail").open;
+      openDetail(id, wasOpen);
+    }
+
+    function applyFacetFilter(key, value) {
+      activeFacet = key;
+      selectedFacetValues.clear();
+      selectedFacetValues.add(String(value).toLowerCase());
+      facetQuery = "";
+      chipsExpanded = false;
+      genreCategory = null;
+      const search = $("#facetSearch");
+      if (search) search.value = "";
+      closeDetail();
+      renderFacets();
+      render();
+      window.scrollTo({ top: 0, behavior: "smooth" });
+    }
+
+    function openDetail(id, keepVideo) {
+      const item = items.find(i => i.id === id);
+      if (!item) return;
+      const p = progressFor(id);
+      const plan = playbackPlan(item);
+      const resumeAt = p && p.seconds > 5 ? p.seconds : 0;
+      const isCurrent = nowPlayingItem && nowPlayingItem.id === item.id;
+      const media = npMedia();
+      const playingNow = isCurrent && media && !media.paused;
+
+      // Playback lives in the persistent controller so it survives closing
+      // this modal; here we only show metadata and a transport button.
+      const playerHTML = plan
+        ? `<div class="play-hint">${mediaLabel(plan.mode)} plays in the player at the bottom and keeps playing while you browse.</div>`
+        : `<div class="not-playable"><strong>.${escapeHTML((item.format || "?").toUpperCase())}</strong> can't play here.
+             <a href="${api("/stream/" + item.id)}" target="_blank" rel="noopener">Open in a native player</a>.</div>`;
+
+      $("#detailTitle").textContent =
+        item.showTitle && item.seasonNumber != null
+          ? `${item.showTitle} — S${String(item.seasonNumber).padStart(2,"0")}E${String(item.episodeNumber ?? 0).padStart(2,"0")} · ${item.title}`
+          : item.title;
+
+      const tags = (item.tags || []).slice(0, 10).map(tg => `<span class="tag">${escapeHTML(tg)}</span>`).join("");
+      const detailFacets = [];
+      if (item.author) detailFacets.push(`<button type="button" class="detail-link" data-action="filter-facet" data-facet-key="authors" data-facet-value="${escapeHTML(item.author)}">Author: ${escapeHTML(item.author)}</button>`);
+      if (item.narrator) detailFacets.push(`<button type="button" class="detail-link" data-action="filter-facet" data-facet-key="narrators" data-facet-value="${escapeHTML(item.narrator)}">Narrator: ${escapeHTML(item.narrator)}</button>`);
+      if (item.series) detailFacets.push(`<button type="button" class="detail-link" data-action="filter-facet" data-facet-key="series" data-facet-value="${escapeHTML(item.series)}">Series: ${escapeHTML(item.series)}</button>`);
+      for (const genre of (Array.isArray(item.genres) ? item.genres : []).slice(0, 8)) {
+        if (genre) detailFacets.push(`<button type="button" class="detail-link" data-action="filter-facet" data-facet-key="genres" data-facet-value="${escapeHTML(genre)}">Genre: ${escapeHTML(genre)}</button>`);
+      }
+      const detailFacetHTML = detailFacets.length ? `<div class="detail-facets" aria-label="Related audiobook filters">${detailFacets.join("")}</div>` : "";
+      const summaryBits = [item.summary, item.subtitle].filter(Boolean)
+        .map(s => `<p class="summary">${escapeHTML(s)}</p>`).join("");
+      const playLabel = playingNow ? "Pause" : resumeAt ? "Resume at " + formatTime(resumeAt) : "Play";
+
+      $("#detailBody").innerHTML = `
+        ${playerHTML}
+        <div class="meta-line">${[kindLabel(item.kind), item.year || "", runtimeLabel(item),
+          (item.probedHeight ? item.probedWidth + "×" + item.probedHeight : "")]
+          .filter(Boolean).join(" • ")}</div>
+        ${summaryBits}
+        ${detailFacetHTML}
+        ${tags ? `<div class="tagrow">${tags}</div>` : ""}
+        ${editionsHTML(item)}
+        <div class="actions">
+          ${plan ? `<button class="primary" onclick="startPlaybackById('${escapeHTML(item.id)}')">${playLabel}</button>` : ""}
+          <a href="${api("/stream/" + item.id)}" target="_blank" rel="noopener">Open stream URL</a>
+        </div>`;
+
+      const dlg = $("#detail");
+      if (!dlg.open) dlg.showModal();
+    }
+
+    function closeDetail() {
+      // Playback intentionally continues in the persistent controller.
+      $("#detail").close();
+      render(); // refresh progress badges/bars
+    }
+    $("#detail").addEventListener("click", e => { if (e.target === $("#detail")) closeDetail(); });
+    document.addEventListener("keydown", e => { if (e.key === "Escape") closeDetail(); });
+
+    // Search input is debounced; selects fire immediately.
+    let searchDebounce = null;
+    for (const [id, ev] of [["q","input"],["watched","change"],["sort","change"]]) {
+      $(`#${id}`).addEventListener(ev, () => {
+        if (ev === "input") {
+          clearTimeout(searchDebounce);
+          searchDebounce = setTimeout(() => { currentPage = 1; render(); }, 200);
+        } else {
+          currentPage = 1; render();
+        }
+      });
+    }
+
+    fetch(api("/api/library")).then(r => r.json()).then(data => {
+      items = data.items ?? [];
+      (data.progress ?? []).forEach(pr => progressByID.set(pr.itemID, pr));
+      rebuildCopyGroups();
+      renderFacets();
+      applyHash(); // restore tab/show/page from the URL on load
+      render();
+      refreshLists().catch(() => { lists = []; });
+      if (activeTab === "optimize") {
+        refreshOptimizationQueue();
+        refreshAudiobookJobs();
+      }
+    }).catch(() => {
+      $("#grid").innerHTML = `<div class="empty-state">Could not load the library. Is the token valid?</div>`;
+    });
+
+    // ---------- Settings ----------
+    let settingsData = null;
+    document.querySelector("#settingsBtn").addEventListener("click", openSettings);
+    on("#dataImportBtn", "click", () => $("#dataImportFile")?.click());
+    on("#dataImportFile", "change", async e => {
+      const file = e.target.files?.[0];
+      const status = $("#dataPortabilityStatus");
+      if (!file) return;
+      if (!confirm("Import this Sonder data bundle and replace the current catalog data? Media files will not be changed and no scan will start.")) {
+        e.target.value = "";
+        return;
+      }
+      status.textContent = "Importing…";
+      try {
+        const response = await fetch(api("/api/data/import"), {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: await file.text(),
+        });
+        const result = await response.json().catch(() => ({}));
+        if (!response.ok) throw new Error(result.error || "Import failed");
+        await refreshLibrary();
+        await refreshLists();
+        status.textContent = `Imported ${Number(result.imported?.items || 0).toLocaleString()} items · no scan started`;
+      } catch (error) {
+        status.textContent = error.message || "Import failed";
+      } finally {
+        e.target.value = "";
+      }
+    });
+    document.querySelector("#addLibDetails").addEventListener("toggle", e => {
+      if (e.target.open) browseTo("");
+    });
+
+    function openSettings() {
+      const dlg = document.querySelector("#settingsDlg");
+      dlg.showModal();
+      loadSettings();
+    }
+
+    async function loadSettings() {
+      const status = document.querySelector("#settingsStatus");
+      status.textContent = "Loading…";
+      try {
+        settingsData = await (await fetch(api("/api/settings"))).json();
+        pendingLibs = null; // fresh server state wins over stale edits
+      } catch { settingsData = null; }
+      renderSettings();
+      status.textContent = "";
+    }
+
+    function renderSettings() {
+      if (!settingsData) return;
+      const rows = document.querySelector("#libRows");
+      rows.innerHTML = (settingsData.libraries ?? []).map((l, idx) => `
+        <div style="display:grid;grid-template-columns:1fr auto;gap:8px;align-items:center;padding:8px 0;border-bottom:1px solid var(--line)">
+          <div>
+            <strong>${escapeHTML(l.name)}</strong>
+            <span style="color:var(--muted)">· ${l.itemCount} items · ${escapeHTML(l.kind)}</span>
+            <p style="margin:2px 0 0;font-size:12px">${escapeHTML(l.path)}</p>
+          </div>
+          <button onclick="removeLibraryRow(${idx})" aria-label="Remove ${escapeHTML(l.name)}">Remove</button>
+        </div>`).join("") || `<p style="color:var(--muted)">No libraries configured.</p>`;
+
+      document.querySelector("#allowLAN").checked = !!settingsData.allowLAN;
+      document.querySelector("#themeSel").value = settingsData.themePreset || "earthy";
+      document.querySelector("#mounts").innerHTML =
+        (settingsData.suggestedMounts ?? []).map(m => `<option value="${escapeHTML(m)}">`).join("");
+
+      const line = document.querySelector("#pairingLine");
+      if (settingsData.pairingToken) {
+        line.innerHTML = `Pairing token: <code id="tok" style="user-select:all">${settingsData.pairingToken}</code>`;
+      } else if (settingsData.tokenConfigured) {
+        line.innerHTML = `Pairing token is configured (visible only from this Mac).`;
+      } else {
+        line.textContent = "No pairing token (LAN access is open).";
+      }
+    }
+
+    let pendingLibs = null;
+    let browsedPath = "";
+    function currentLibraries() {
+      return pendingLibs ?? (settingsData?.libraries ?? []).map(l => ({
+        id: l.id, name: l.name, path: l.path, kind: l.kind,
+      }));
+    }
+    function addLibraryRow() {
+      const name = document.querySelector("#newName").value.trim();
+      const path = document.querySelector("#selectedPath").textContent.trim() ||
+                   browsedPath;
+      const kind = document.querySelector("#newKind").value;
+      if (!path) return flashStatus("Pick a folder first");
+      pendingLibs = currentLibraries().concat([{ id:"", name, path, kind }]);
+      document.querySelector("#newName").value = "";
+      document.querySelector("#selectedPath").textContent = "";
+      browsedPath = "";
+      applyPendingLibs();
+      flashStatus("Library added — Save changes to scan it");
+    }
+    function removeLibraryRow(idx) {
+      pendingLibs = currentLibraries().filter((_, i) => i !== idx);
+      applyPendingLibs();
+    }
+    function applyPendingLibs() {
+      const counts = new Map((settingsData?.libraries ?? []).map(l => [l.path, l.itemCount]));
+      settingsData.libraries = currentLibraries().map(l => ({ ...l, itemCount: counts.get(l.path) ?? 0 }));
+      renderSettings();
+      pendingLibs = currentLibraries();
+    }
+
+    async function saveSettings() {
+      const body = {};
+      if (pendingLibs) body.libraries = currentLibraries().map(({ id, name, path, kind }) => ({ id, name, path, kind }));
+      body.allowLAN = document.querySelector("#allowLAN").checked;
+      body.themePreset = document.querySelector("#themeSel").value;
+      await putSettings(body);
+      pendingLibs = null;
+      // library table may have changed -> refresh catalog behind the dialog
+      fetch(api("/api/library")).then(r => r.json()).then(data => {
+        items = data.items ?? [];
+        (data.progress ?? []).forEach(pr => progressByID.set(pr.itemID, pr));
+        storageData = null;
+        renderSettings();
+        render();
+      });
+    }
+
+    async function rescanNow() {
+      const r = await fetch(api("/api/settings/rescan"), { method:"POST" });
+      flashStatus(r.status === 202 ? "Rescan started…" : "Scan already running");
+      if (r.status === 202) pollUntilScanned();
+    }
+
+    // Poll /api/status until the background job (scan or enrichment) finishes.
+    function pollStatus(done, attempt = 0) {
+      if (attempt > 300) return flashStatus("Still working — check back later");
+      setTimeout(() => {
+        fetch(api("/api/status")).then(r => r.json()).then(st => {
+          if (st.scanning || st.enriching) return pollStatus(done, attempt + 1);
+          done();
+        }).catch(() => pollStatus(done, attempt + 1));
+      }, 2000);
+    }
+    async function refreshLibrary() {
+      const data = await (await fetch(api("/api/library"))).json();
+      items = data.items ?? [];
+      storageData = null;
+      progressByID.clear();
+      (data.progress ?? []).forEach(pr => progressByID.set(pr.itemID, pr));
+      rebuildCopyGroups();
+      render();
+      refreshLibraryHealth();
+    }
+
+    async function refreshLibraryHealth() {
+      const panel = document.querySelector("#libraryHealth");
+      try {
+        const response = await fetch(api("/api/library/health"));
+        if (!response.ok) throw new Error("Audit unavailable");
+        const report = await response.json();
+        document.querySelector("#libraryHealthSummary").textContent =
+          `Library consistency: ${report.issues.length} warnings · ${report.browsingGroupCount ?? report.showCount} show groups / ${report.representedFolders} represented folders (${report.showCount} parsed names)`;
+        document.querySelector("#libraryHealthIssues").innerHTML = report.issues.slice(0,100).map(issue =>
+          `<p><strong>${escapeHTML(issue.folder || "TV library")}</strong>: ${escapeHTML(issue.message)} ${escapeHTML(issue.shows.join(" · "))}</p>`).join("") +
+          `<p>${report.unmappedItems} items could not be mapped to a show folder.${report.issues.length > 100 ? " Showing the first 100 warnings." : ""}</p>`;
+        panel.hidden = false;
+      } catch {
+        panel.hidden = false;
+        document.querySelector("#libraryHealthSummary").textContent = "Library consistency check unavailable";
+      }
+    }
+    refreshLibraryHealth();
+
+    const optimizationPanel = document.querySelector("#optimizationPage");
+    let optimizationRefreshInFlight = false;
+    let optimizationJobsRefreshInFlight = false;
+    let optimizationQueuePostInFlight = false;
+    let optimizationPollTimer = null;
+    let optimizationCandidates = { audio: [], video: [], reviews: "" };
+    let optimizationVisibleLimit = 40;
+    let optimizationSearchTerm = "";
+    const selectedOptimizationItems = new Set();
+    const approvedOptimizationCovers = new Set();
+    const optimizationBitrates = new Map();
+    const queuedOptimizationIDs = new Set();
+    optimizationPanel.addEventListener("click", event => {
+      const button = event.target.closest("button");
+      if (!button) return;
+      if (button.id === "optimizationRefresh") {
+        refreshOptimizationQueue(); refreshAudiobookJobs();
+      } else if (button.id === "optimizationQueueSelected") {
+        queueSelectedAudiobooks();
+      } else if (button.id === "optimizationPause") {
+        controlAudiobookQueue();
+      } else if (button.matches("[data-optimization-show-more]")) {
+        optimizationVisibleLimit += 40;
+        renderOptimizationCards();
+      } else if (button.matches("[data-optimization-prioritize]")) {
+        prioritizeAudiobookJob(button.dataset.optimizationPrioritize);
+      } else if (button.matches("[data-optimization-promote]")) {
+        promoteAudiobookJob(button.dataset.optimizationPromote);
+      } else if (button.matches("[data-optimization-cancel]")) {
+        cancelAudiobookJob(button.dataset.optimizationCancel);
+      } else if (button.matches("[data-optimization-retry]")) {
+        retryAudiobookJob(button.dataset.optimizationRetry);
+      } else if (button.matches("[data-optimization-review]")) {
+        reviewAudiobookJob(button.dataset.optimizationReview, button.dataset.optimizationDecision);
+      }
+    });
+    optimizationPanel.addEventListener("change", event => {
+      const select = event.target.closest("[data-optimization-bitrate]");
+      if (select) {
+        optimizationBitrates.set(select.dataset.optimizationBitrate, Number(select.value));
+        updateOptimizationEstimate(select);
+      }
+      if (event.target.matches("[data-optimization-select]")) {
+        if (event.target.checked) selectedOptimizationItems.add(event.target.dataset.optimizationSelect);
+        else selectedOptimizationItems.delete(event.target.dataset.optimizationSelect);
+        syncOptimizationSelectionState();
+      }
+      if (event.target.matches("[data-optimization-cover]")) {
+        if (event.target.checked) approvedOptimizationCovers.add(event.target.dataset.optimizationCover);
+        else approvedOptimizationCovers.delete(event.target.dataset.optimizationCover);
+      }
+    });
+    document.querySelector("#optimizationSearch").addEventListener("input", event => {
+      optimizationSearchTerm = event.target.value.trim().toLowerCase();
+      optimizationVisibleLimit = 40;
+      renderOptimizationCards();
+    });
+    document.querySelector("#optimizationClearSearch").addEventListener("click", () => {
+      const input = document.querySelector("#optimizationSearch");
+      input.value = "";
+      optimizationSearchTerm = "";
+      optimizationVisibleLimit = 40;
+      renderOptimizationCards();
+      input.focus();
+    });
+
+    function syncOptimizationSelectionState() {
+      const count = selectedOptimizationItems.size;
+      document.querySelector("#optimizationSelectedCount").textContent = `${count} selected`;
+      document.querySelector("#optimizationQueueSelected").disabled = selectedOptimizationItems.size === 0 || optimizationQueuePostInFlight;
+    }
+
+    function formatOptimizationBytes(value) {
+      let bytes = Number(value) || 0;
+      const units = ["B", "KiB", "MiB", "GiB", "TiB"];
+      let unit = 0;
+      while (bytes >= 1024 && unit < units.length - 1) {
+        bytes /= 1024;
+        unit++;
+      }
+      return `${bytes.toFixed(unit === 0 ? 0 : 1)} ${units[unit]}`;
+    }
+
+    function formatOptimizationDuration(seconds) {
+      seconds = Math.max(0, Math.round(Number(seconds) || 0));
+      const h = Math.floor(seconds / 3600);
+      const m = Math.floor((seconds % 3600) / 60);
+      return h ? `${h}h ${m}m` : `${m}m`;
+    }
+
+    function optimizationETA(job) {
+      const progress = Number(job.progress) || 0;
+      const started = Date.parse(job.startedAt || "");
+      if (!started || progress < 1 || progress >= 100 || !["copying-source", "encoding", "validating", "copying-result"].includes(job.status)) return "";
+      const elapsed = Math.max(1, (Date.now() - started) / 1000);
+      const remaining = elapsed * (100 - progress) / progress;
+      return ` · elapsed ${formatOptimizationDuration(elapsed)} · ETA ${formatOptimizationDuration(remaining)}`;
+    }
+
+    function renderOptimizationRunSummary(jobs) {
+      const activeStatuses = ["copying-source", "encoding", "validating", "copying-result"];
+      const completedStatuses = ["staged-for-review", "accepted", "needs-revision"];
+      const attentionStatuses = ["failed", "interrupted"];
+      const active = jobs.find(job => activeStatuses.includes(job.status));
+      const queued = jobs.filter(job => job.status === "queued");
+      const completed = jobs.filter(job => completedStatuses.includes(job.status));
+      const attention = jobs.filter(job => attentionStatuses.includes(job.status));
+      const title = document.querySelector("#optimizationRunTitle");
+      const detail = document.querySelector("#optimizationRunDetail");
+      const state = document.querySelector("#optimizationRunState");
+      const progressWrap = document.querySelector("#optimizationRunProgress");
+      const progressBar = document.querySelector("#optimizationRunProgressBar");
+      const progressText = document.querySelector("#optimizationRunProgressText");
+      const eta = document.querySelector("#optimizationRunETA");
+      document.querySelector("#optimizationCompletedCount").textContent = completed.length.toLocaleString();
+      document.querySelector("#optimizationActiveCount").textContent = active ? "1" : "0";
+      document.querySelector("#optimizationQueuedCount").textContent = queued.length.toLocaleString();
+      document.querySelector("#optimizationAttentionCount").textContent = attention.length.toLocaleString();
+      if (active) {
+        const progress = Math.max(0, Math.min(100, Number(active.progress) || 0));
+        title.textContent = active.title;
+        detail.textContent = `${active.phase || "Working"} · ${formatOptimizationBytes(active.currentBytes)} of ${formatOptimizationBytes(active.sourceBytes)} · book ${completed.length + 1} of ${jobs.length}`;
+        state.textContent = active.status.replaceAll("-", " ");
+        state.className = "optimization-state optimization-state-active";
+        progressWrap.hidden = false;
+        progressBar.value = progress;
+        progressText.textContent = `${progress.toFixed(1)}% on this book`;
+        const etaText = optimizationETA(active);
+        eta.textContent = etaText ? etaText.replace(/^ · /, "") : "Calculating ETA…";
+      } else if (queued.length) {
+        title.textContent = "Waiting to start the next book";
+        detail.textContent = `${queued.length.toLocaleString()} books are queued for sequential processing.`;
+        state.textContent = "queued";
+        state.className = "optimization-state";
+        progressWrap.hidden = true;
+        eta.textContent = "";
+      } else if (completed.length) {
+        title.textContent = "Run complete or paused";
+        detail.textContent = `${completed.length.toLocaleString()} books have reached staged review.`;
+        state.textContent = "idle";
+        state.className = "optimization-state";
+        progressWrap.hidden = true;
+        eta.textContent = "";
+      } else {
+        title.textContent = "No conversion running";
+        detail.textContent = "Queue a book to see its live progress here.";
+        state.textContent = "idle";
+        state.className = "optimization-state";
+        progressWrap.hidden = true;
+        eta.textContent = "";
+      }
+      const next = queued.slice(0, 5);
+      document.querySelector("#optimizationNextJobs").innerHTML = next.length
+        ? `<strong>Next in queue</strong><ol>${next.map(job => `<li>${escapeHTML(job.title)}</li>`).join("")}</ol>`
+        : attention.length ? `<strong>Needs attention</strong><span>${attention.slice(0, 3).map(job => escapeHTML(job.title)).join(" · ")}</span>` : "";
+    }
+
+    function updateOptimizationEstimate(select) {
+      const estimate = select.closest("article")?.querySelector("[data-optimization-estimate]");
+      if (!estimate) return;
+      const current = Number(estimate.dataset.currentBytes) || 0;
+      const baseOutput = Number(estimate.dataset.baseOutputBytes) || 0;
+      const baseRate = Number(estimate.dataset.baseRate) || 0;
+      const rate = Number(select.value) || 0;
+      const output = baseRate > 0 ? baseOutput * rate / baseRate : 0;
+      const saved = Math.max(0, current - output);
+      const percent = current > 0 ? saved * 100 / current : 0;
+      estimate.textContent = `Rough bitrate-based estimate at ${rate} kb/s: save ${formatOptimizationBytes(saved)} (${percent.toFixed(1)}%) · full output will be staged for listening review`;
+    }
+
+    function renderOptimizationCards() {
+      document.querySelector("#optimizationAudioCount").textContent = optimizationCandidates.audio.filter(card => !queuedOptimizationIDs.has(card.id)).length.toLocaleString();
+      const matches = cards => cards.filter(card => !queuedOptimizationIDs.has(card.id) && (!optimizationSearchTerm || card.title.toLowerCase().includes(optimizationSearchTerm)));
+      const renderList = (cards, kind) => {
+        const filtered = matches(cards);
+        const shown = filtered.slice(0, optimizationVisibleLimit);
+        const more = filtered.length > shown.length
+          ? `<button type="button" class="optimization-more" data-optimization-show-more="${kind}">Show 40 more · ${filtered.length - shown.length} remaining</button>` : "";
+        const count = `<p class="optimization-result-count">Showing ${shown.length} of ${filtered.length.toLocaleString()}</p>`;
+        return count + (shown.map(card => card.html).join("") || `<p class="optimization-empty">${optimizationSearchTerm ? "No recommendations match that title." : "No current recommendations."}</p>`) + more;
+      };
+      document.querySelector("#optimizationAudiobooks").innerHTML =
+        `<p class="optimization-quality">${escapeHTML(optimizationCandidates.qualityNotice || "")}</p>` + renderList(optimizationCandidates.audio, "audio");
+      document.querySelector("#optimizationVideoSamples").innerHTML = renderList(optimizationCandidates.video, "video");
+      document.querySelector("#optimizationReviews").innerHTML = optimizationCandidates.reviews || `<p class="optimization-empty">No previous recommendations need review.</p>`;
+      syncOptimizationSelectionState();
+    }
+
+    async function refreshOptimizationQueue() {
+      const audioBody = document.querySelector("#optimizationAudiobooks");
+      const videoBody = document.querySelector("#optimizationVideoSamples");
+      const reviewBody = document.querySelector("#optimizationReviews");
+      if (optimizationRefreshInFlight) return;
+      optimizationRefreshInFlight = true;
+      audioBody.setAttribute("aria-busy", "true");
+      document.querySelector("#optimizationStatus").textContent = "Screening current catalog probes…";
+      try {
+        const response = await fetch(api("/api/optimization/queue"));
+        if (!response.ok) throw new Error("Queue unavailable");
+        const queue = await response.json();
+        const jobs = (queue.jobs ?? []).map(job => {
+          const estimate = job.estimatedSavingsBytes == null
+            ? "Sample required; savings not estimated"
+            : `<span data-optimization-estimate data-current-bytes="${Number(job.currentBytes)}" data-base-output-bytes="${Number(job.estimatedOutputBytes)}" data-base-rate="${Number(job.targetBitrateKbps)}">Rough bitrate-based estimate at ${Number(job.targetBitrateKbps)} kb/s: save ${formatOptimizationBytes(job.estimatedSavingsBytes)} (${Number(job.estimatedSavingsPct).toFixed(1)}%) · full output will be staged for listening review</span>`;
+          const chosenRate = optimizationBitrates.get(job.id) || Number(job.targetBitrateKbps);
+          const selection = job.family === "audiobook-opus"
+            ? `<label class="optimization-select-label"><input type="checkbox" data-optimization-select="${escapeHTML(job.id)}"${selectedOptimizationItems.has(job.id) ? " checked" : ""}> Select</label>` +
+              `<label>Opus trial bitrate <select data-optimization-bitrate="${escapeHTML(job.id)}">${(job.channels === 1 ? [24, 32, 40] : [48, 64]).map(rate => `<option value="${rate}"${rate === chosenRate ? " selected" : ""}>${rate} kb/s</option>`).join("")}</select></label>` +
+              (!job.embeddedCoverPresent && job.catalogCoverAvailable
+                ? `<label class="optimization-cover-approval"><input type="checkbox" data-optimization-cover="${escapeHTML(job.id)}"${approvedOptimizationCovers.has(job.id) ? " checked" : ""}> Use available catalog art as this output's cover</label>`
+                : "")
+            : "";
+          const cover = job.family === "audiobook-opus"
+            ? `<small>Embedded cover: ${job.embeddedCoverPresent ? "yes" : "no"} · catalog artwork: ${job.catalogCoverAvailable ? "available" : "not available"}</small><br>` : "";
+          const html = `<article class="optimization-recommendation"><div class="optimization-rec-title"><strong>${escapeHTML(job.title)}</strong><span>${escapeHTML(job.sourceCodec)} → ${escapeHTML(job.targetCodec)}</span></div>` +
+            `${formatOptimizationBytes(job.currentBytes)} · ${estimate}<br>` +
+            `<p>${escapeHTML(job.reason)}</p>${cover}<small>${escapeHTML(job.playbackNote)}</small><div class="optimization-rec-controls">${selection}</div></article>`;
+          return { id: job.id, family: job.family, title: job.title, html };
+        });
+        const reviews = (queue.reviews ?? []).map(review =>
+          `<article class="optimization-recommendation"><strong>${escapeHTML(review.title)}</strong> · ${formatOptimizationBytes(review.currentBytes)}<p>${escapeHTML(review.reason)}</p></article>`
+        ).join("");
+        document.querySelector("#optimizationAudioCount").textContent = Number(queue.audioCandidates || 0).toLocaleString();
+        document.querySelector("#optimizationVideoCount").textContent = Number(queue.videoSampleCandidates || 0).toLocaleString();
+        document.querySelector("#optimizationReviewCount").textContent = Number(queue.reviewCount || 0).toLocaleString();
+        document.querySelector("#optimizationSavings").textContent = formatOptimizationBytes(queue.estimatedAudioSavingsBytes);
+        optimizationCandidates = {
+          audio: jobs.filter(job => job.family === "audiobook-opus"),
+          video: jobs.filter(job => job.family === "video-av1"),
+          reviews,
+          qualityNotice: queue.qualityNotice,
+        };
+        renderOptimizationCards();
+        if (!optimizationPanel.hidden) document.querySelector("#optimizationStatus").textContent = "Analysis ready. Select audiobook trials, then start the queue.";
+      } catch {
+        for (const id of ["optimizationAudioCount", "optimizationVideoCount", "optimizationReviewCount", "optimizationSavings"])
+          document.querySelector(`#${id}`).textContent = "—";
+        audioBody.innerHTML = "<p role=\"alert\">Could not analyze the current catalog.</p>";
+        videoBody.innerHTML = "<p>Video sample analysis unavailable.</p>";
+        document.querySelector("#optimizationStatus").textContent = "Could not refresh recommendations.";
+      } finally {
+        audioBody.setAttribute("aria-busy", "false");
+        optimizationRefreshInFlight = false;
+      }
+    }
+
+    async function refreshAudiobookJobs() {
+      if (optimizationPanel.hidden) return;
+      if (optimizationJobsRefreshInFlight) return;
+      optimizationJobsRefreshInFlight = true;
+      const container = document.querySelector("#optimizationJobs");
+      try {
+        const response = await fetch(api("/api/optimization/audiobooks/jobs"));
+        if (!response.ok) throw new Error("Job queue unavailable");
+        const queue = await response.json();
+        renderOptimizationRunSummary(queue.jobs ?? []);
+        queuedOptimizationIDs.clear();
+        for (const job of queue.jobs ?? []) {
+          if (["queued", "copying-source", "encoding", "validating", "copying-result", "staged-for-review", "accepted", "needs-revision"].includes(job.status)) {
+            queuedOptimizationIDs.add(job.itemID);
+            selectedOptimizationItems.delete(job.itemID);
+            approvedOptimizationCovers.delete(job.itemID);
+          }
+        }
+        renderOptimizationCards();
+        const pause = document.querySelector("#optimizationPause");
+        const hasPendingJobs = (queue.jobs ?? []).some(job => ["queued", "copying-source", "encoding", "validating", "copying-result"].includes(job.status));
+        pause.dataset.queueAction = queue.paused ? "resume" : "pause";
+        pause.textContent = queue.paused ? "▶ Resume queue" : "Ⅱ Pause after this book";
+        pause.disabled = !queue.paused && !hasPendingJobs;
+        const jobs = queue.jobs ?? [];
+        if (!jobs.length) {
+          container.innerHTML = `<p class="optimization-empty">No audiobook jobs yet. Select trials above, then start the queue.</p>`;
+        } else {
+          container.innerHTML = jobs.map(job => {
+            const cancellable = ["queued", "copying-source", "encoding", "validating", "copying-result"].includes(job.status);
+            const retryable = ["failed", "interrupted", "canceled"].includes(job.status);
+            const progress = Math.max(0, Math.min(100, Number(job.progress) || 0));
+            const receipt = job.receipt ? `<p><strong>Verified reduction:</strong> ${formatOptimizationBytes(job.receipt.sourceBytes)} → ${formatOptimizationBytes(job.receipt.outputBytes)} · saved ${formatOptimizationBytes(job.receipt.savedBytes)} (${Number(job.receipt.savedPercent).toFixed(1)}%).<br>` +
+              `SHA-256 checked on return · ${escapeHTML(job.receipt.validation.audioCodec)} in ${escapeHTML(job.receipt.validation.container)} · ${job.receipt.validation.chapterCount} chapters · cover, metadata and full decode verified.<br>` +
+              `Cover: ${escapeHTML(job.receipt.coverSource)} · staged at <code>${escapeHTML(job.receipt.stagedRelativePath)}</code>.<br>` +
+              `Listening/device review: ${escapeHTML(job.receipt.playbackReview)}.</p>` +
+              `<audio controls preload="none" aria-label="Listen to staged Opus audiobook" src="${escapeHTML(api(`/api/optimization/audiobooks/jobs/${encodeURIComponent(job.id)}/stream`))}"></audio>` +
+              (job.receipt.playbackReview === "pending human listening and target-device playback"
+                ? `<div><button type="button" data-optimization-review="${escapeHTML(job.id)}" data-optimization-decision="accepted">Mark listening and playback passed</button>` +
+                  `<button type="button" data-optimization-review="${escapeHTML(job.id)}" data-optimization-decision="needs-revision">Flag for revision</button></div>`
+                : job.receipt.playbackReview?.startsWith("accepted")
+                  ? `<div><button type="button" data-optimization-promote="${escapeHTML(job.id)}">Install Opus and remove original</button></div>` : "") : "";
+            const poster = job.posterURL ? `<img class="optimization-job-poster" src="${escapeHTML(api(job.posterURL))}" alt="" loading="lazy">` : `<div class="optimization-job-poster optimization-job-poster-empty" aria-hidden="true">A</div>`;
+            return `<article class="optimization-job"><div class="optimization-job-heading">${poster}<div><strong>${escapeHTML(job.title)}</strong><span class="optimization-state">${escapeHTML(job.status)}</span></div></div>` +
+              `Opus ${Number(job.bitrateKbps)} kb/s · attempt ${Number(job.attempt)} · ${escapeHTML(job.phase)} · ${progress.toFixed(0)}%${optimizationETA(job)}<progress max="100" value="${progress}"></progress>` +
+              (job.error ? `<p role="alert">${escapeHTML(job.error)}</p>` : "") + receipt +
+              (job.status === "queued" ? `<button type="button" data-optimization-prioritize="${escapeHTML(job.id)}">Run this next</button>` : "") +
+              (cancellable ? `<button type="button" data-optimization-cancel="${escapeHTML(job.id)}">Cancel job</button>` : "") +
+              (retryable ? `<button type="button" data-optimization-retry="${escapeHTML(job.id)}">Retry</button>` : "") +
+              `</article>`;
+          }).join("");
+        }
+        if (jobs.some(job => ["queued", "copying-source", "encoding", "validating", "copying-result"].includes(job.status))) {
+          optimizationPollTimer = setTimeout(refreshAudiobookJobs, 2000);
+        } else if (optimizationPollTimer) {
+          clearTimeout(optimizationPollTimer); optimizationPollTimer = null;
+        }
+      } catch {
+        container.innerHTML = `<p role="alert">The audiobook job queue is unavailable. Check that FFmpeg and FFprobe are installed.</p>`;
+      } finally {
+        optimizationJobsRefreshInFlight = false;
+      }
+    }
+
+    async function queueSelectedAudiobooks() {
+      const itemIDs = [...selectedOptimizationItems];
+      const approvedCatalogCoverIDs = [...approvedOptimizationCovers].filter(id => selectedOptimizationItems.has(id));
+      const bitrateKbps = Object.fromEntries(itemIDs.map(id => [id,
+        optimizationBitrates.get(id) || Number(optimizationPanel.querySelector(`[data-optimization-bitrate="${CSS.escape(id)}"]`)?.value || 0),
+      ]));
+      if (!itemIDs.length) {
+        document.querySelector("#optimizationStatus").textContent = "Select at least one audiobook recommendation first.";
+        return;
+      }
+      if (optimizationQueuePostInFlight) return;
+      optimizationQueuePostInFlight = true;
+      const queueButton = document.querySelector("#optimizationQueueSelected");
+      queueButton.disabled = true;
+      document.querySelector("#optimizationStatus").textContent = "Adding selected audiobooks to the staged conversion queue…";
+      try {
+        const response = await fetch(api("/api/optimization/audiobooks/jobs"), {
+          method: "POST", headers: {"Content-Type":"application/json"},
+          body: JSON.stringify({ itemIDs, approvedCatalogCoverIDs, bitrateKbps }),
+    });
+        const result = await response.json();
+        if (!response.ok) throw new Error(result.error || "Could not queue selected audiobooks");
+        for (const id of itemIDs) selectedOptimizationItems.delete(id);
+        for (const id of approvedCatalogCoverIDs) approvedOptimizationCovers.delete(id);
+        syncOptimizationSelectionState();
+        document.querySelector("#optimizationStatus").textContent = `${result.jobs.length} audiobook job(s) started in sequence. Original files remain untouched.`;
+        await refreshAudiobookJobs();
+      } catch (err) {
+        document.querySelector("#optimizationStatus").textContent = err.message;
+      } finally {
+        optimizationQueuePostInFlight = false;
+        syncOptimizationSelectionState();
+      }
+    }
+
+    async function controlAudiobookQueue() {
+      const button = document.querySelector("#optimizationPause");
+      const resume = button.dataset.queueAction === "resume";
+      const endpoint = resume ? "resume" : "pause";
+      try {
+        const response = await fetch(api(`/api/optimization/audiobooks/queue/${endpoint}`), { method: "POST" });
+        if (!response.ok) throw new Error("Queue control failed");
+        document.querySelector("#optimizationStatus").textContent = resume ? "Queue resumed." : "Queue will pause after the active book finishes.";
+        await refreshAudiobookJobs();
+      } catch (err) { document.querySelector("#optimizationStatus").textContent = err.message; }
+    }
+
+    async function cancelAudiobookJob(id) {
+      try {
+        const response = await fetch(api(`/api/optimization/audiobooks/jobs/${encodeURIComponent(id)}`), { method: "DELETE" });
+        if (!response.ok) throw new Error("Could not cancel job");
+        document.querySelector("#optimizationStatus").textContent = "Job canceled; partial local output was discarded.";
+        refreshAudiobookJobs();
+      } catch (err) { document.querySelector("#optimizationStatus").textContent = err.message; }
+    }
+
+    async function prioritizeAudiobookJob(id) {
+      try {
+        const response = await fetch(api(`/api/optimization/audiobooks/jobs/${encodeURIComponent(id)}/prioritize`), { method: "POST" });
+        if (!response.ok) throw new Error("Could not prioritize job");
+        document.querySelector("#optimizationStatus").textContent = "Job moved to the front of the queue.";
+        refreshAudiobookJobs();
+      } catch (err) { document.querySelector("#optimizationStatus").textContent = err.message; }
+    }
+
+    async function promoteAudiobookJob(id) {
+      try {
+        const response = await fetch(api(`/api/optimization/audiobooks/jobs/${encodeURIComponent(id)}/promote`), { method: "POST" });
+        if (!response.ok) { const body = await response.json().catch(() => ({})); throw new Error(body.error || "Could not install optimized file"); }
+        document.querySelector("#optimizationStatus").textContent = "Optimized Opus file installed; original removed.";
+        refreshAudiobookJobs();
+      } catch (err) { document.querySelector("#optimizationStatus").textContent = err.message; }
+    }
+
+    async function retryAudiobookJob(id) {
+      try {
+        const response = await fetch(api(`/api/optimization/audiobooks/jobs/${encodeURIComponent(id)}/retry`), { method: "POST" });
+        if (!response.ok) throw new Error("Could not retry job");
+        document.querySelector("#optimizationStatus").textContent = "Job queued for a clean retry.";
+        refreshAudiobookJobs();
+      } catch (err) { document.querySelector("#optimizationStatus").textContent = err.message; }
+    }
+
+    async function reviewAudiobookJob(id, decision) {
+      const note = decision === "accepted" ? "Listened to staged output and checked playback on a target device." : "Listening or playback needs a different encoding decision.";
+      try {
+        const response = await fetch(api(`/api/optimization/audiobooks/jobs/${encodeURIComponent(id)}/review`), {
+          method: "POST", headers: {"Content-Type":"application/json"},
+          body: JSON.stringify({ decision, note }),
+        });
+        if (!response.ok) throw new Error("Could not record playback review");
+        document.querySelector("#optimizationStatus").textContent = decision === "accepted" ? "Playback review recorded." : "Output flagged for revision; original remains unchanged.";
+        refreshAudiobookJobs();
+      } catch (err) { document.querySelector("#optimizationStatus").textContent = err.message; }
+    }
+
+    async function enrichNow() {
+      const r = await fetch(api("/api/settings/enrich"), { method:"POST" });
+      if (r.status !== 202) return flashStatus("Enrichment already running");
+      flashStatus("Fetching posters & summaries…");
+      pollStatus(() => {
+        refreshLibrary().then(() => {
+          renderSettings();
+          flashStatus("Enrichment done ✓");
+        });
+      });
+    }
+
+    function pollUntilScanned() {
+      pollStatus(() => {
+        refreshLibrary().then(() => flashStatus("Scan complete ✓"));
+      });
+    }
+
+    async function putSettings(body) {
+      const status = document.querySelector("#settingsStatus");
+      status.textContent = "Saving…";
+      body.version = settingsData?.version;
+      try {
+        const r = await fetch(api("/api/settings"), {
+          method:"PUT", headers:{"Content-Type":"application/json"},
+          body: JSON.stringify(body),
+        });
+        if (r.status === 409) {
+          status.textContent = "Settings changed elsewhere — reloading latest";
+          await loadSettings();
+          setTimeout(() => status.textContent = "", 3500);
+          return false;
+        }
+        settingsData = await r.json();
+        renderSettings();
+        status.textContent = "Saved ✓";
+        setTimeout(() => status.textContent = "", 2500);
+        return true;
+      } catch (e) {
+        status.textContent = "Save failed";
+        return false;
+      }
+    }
+
+    function flashStatus(msg) {
+      const el = document.querySelector("#settingsStatus");
+      el.textContent = msg;
+      setTimeout(() => el.textContent = "", 3000);
+    }
+
+    // ---------- Folder browser ----------
+    async function browseTo(path) {
+      const crumbs = document.querySelector("#browseCrumbs");
+      const list = document.querySelector("#browserList");
+      list.innerHTML = `<div style="padding:10px;color:var(--muted)">Loading…</div>`;
+      try {
+        const u = api("/api/settings/browse" + (path ? "?path=" + encodeURIComponent(path) : ""));
+        const data = await (await fetch(u)).json();
+        if (data.error) { list.innerHTML = `<div style="padding:10px">${escapeHTML(data.error)}</div>`; return; }
+        browsedPath = data.path || "";
+        renderCrumbs(data);
+        document.querySelector("#selectedPath").textContent = browsedPath;
+        if ((data.entries ?? []).length === 0) {
+          list.innerHTML = `<div style="padding:10px;color:var(--muted)">No subfolders</div>`;
+          return;
+        }
+        list.innerHTML = data.entries.map(e => `
+          <button class="browse-row" data-path="${escapeHTML(e.path)}" data-action="browse">
+            <span style="color:var(--accent);margin-right:8px">▸</span>${escapeHTML(e.name)}
+          </button>`).join("");
+      } catch (err) {
+        list.innerHTML = `<div style="padding:10px">Browse failed</div>`;
+      }
+    }
+
+    function renderCrumbs(data) {
+      const el = document.querySelector("#browseCrumbs");
+      if (!data.path) {
+        el.innerHTML = `<span style="color:var(--muted)">Choose a starting point:</span>`;
+        return;
+      }
+      const parts = data.path.split("/").filter(Boolean);
+      let acc = "";
+      let html = `<button class="crumb" data-path="/" data-action="browse">/</button> `;
+      for (const seg of parts) {
+        acc += "/" + seg;
+        html += `<button class="crumb" data-path="${escapeHTML(acc)}" data-action="browse">${escapeHTML(seg)}</button> <span style="color:var(--muted)">/</span> `;
+      }
+      el.innerHTML = html;
+    }
+
+    function chooseBrowsed() {
+      if (!browsedPath) return flashStatus("Navigate into a folder first");
+      addLibraryRow();
+    }

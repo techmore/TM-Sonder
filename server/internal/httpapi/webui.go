@@ -3,10 +3,11 @@ package httpapi
 import (
 	"bytes"
 	"compress/gzip"
+	"crypto/sha256"
 	"embed"
+	"encoding/hex"
 	"fmt"
 	"net/http"
-	"strings"
 	"sync"
 )
 
@@ -15,7 +16,7 @@ import (
 // JSON routes the iOS client uses. When opened with ?token= (LAN pairing),
 // the embedded JS propagates the token to every same-origin request.
 
-//go:embed web/library.html web/audiobooks.html web/ebooks.html web/shared.js
+//go:embed web/library.html web/library.css web/library.js web/audiobooks.html web/ebooks.html web/shared.js
 var webFS embed.FS
 
 func mustReadWeb(name string) []byte {
@@ -28,18 +29,28 @@ func mustReadWeb(name string) []byte {
 
 var (
 	libraryPage    = newGzippedPage(func() []byte { return mustReadWeb("web/library.html") })
+	libraryCSS     = newGzippedPage(func() []byte { return mustReadWeb("web/library.css") })
+	libraryJS      = newGzippedPage(func() []byte { return mustReadWeb("web/library.js") })
 	audiobooksPage = newGzippedPage(func() []byte { return mustReadWeb("web/audiobooks.html") })
 	ebooksPage     = newGzippedPage(func() []byte { return mustReadWeb("web/ebooks.html") })
 	sharedJS       = newGzippedPage(func() []byte { return mustReadWeb("web/shared.js") })
 )
 
-// serveSharedJS writes the embedded shared.js asset, pre-gzipped when accepted.
-func (s *Server) handleSharedJS(w http.ResponseWriter, r *http.Request) {
-	raw, gz := sharedJS.bytes()
-	w.Header().Set("Content-Type", "text/javascript; charset=utf-8")
-	w.Header().Set("Cache-Control", "public, max-age=300")
+// serveAsset writes an embedded, pre-gzipped asset with ETag/304 support.
+func serveAsset(w http.ResponseWriter, r *http.Request, page *gzippedPage, contentType string) {
+	raw, gz, etag := page.bytes()
+	w.Header().Set("Content-Type", contentType)
+	// Assets have stable URLs, not content-hashed filenames. Revalidate on
+	// reload so a restart cannot pair new catalog data with stale UI code.
+	w.Header().Set("Cache-Control", "public, max-age=0, must-revalidate")
+	w.Header().Set("Vary", "Accept-Encoding")
+	w.Header().Set("ETag", etag)
+	if etagMatches(r.Header.Get("If-None-Match"), etag) {
+		w.WriteHeader(http.StatusNotModified)
+		return
+	}
 	body := raw
-	if strings.Contains(r.Header.Get("Accept-Encoding"), "gzip") {
+	if acceptsGzip(r) {
 		w.Header().Set("Content-Encoding", "gzip")
 		w.Header().Set("Content-Length", fmt.Sprint(len(gz)))
 		body = gz
@@ -48,6 +59,22 @@ func (s *Server) handleSharedJS(w http.ResponseWriter, r *http.Request) {
 	}
 	w.WriteHeader(http.StatusOK)
 	_, _ = w.Write(body)
+}
+
+// handleSharedJS serves the shared front-end helpers used by every page.
+func (s *Server) handleSharedJS(w http.ResponseWriter, r *http.Request) {
+	serveAsset(w, r, sharedJS, "text/javascript; charset=utf-8")
+}
+
+// handleLibraryCSS and handleLibraryJS serve the library browser's own assets,
+// extracted from library.html so the page, styles, and behaviour evolve
+// independently.
+func (s *Server) handleLibraryCSS(w http.ResponseWriter, r *http.Request) {
+	serveAsset(w, r, libraryCSS, "text/css; charset=utf-8")
+}
+
+func (s *Server) handleLibraryJS(w http.ResponseWriter, r *http.Request) {
+	serveAsset(w, r, libraryJS, "text/javascript; charset=utf-8")
 }
 
 // gzippedPage caches an embedded page's raw and gzip-encoded bytes so each
@@ -57,13 +84,14 @@ type gzippedPage struct {
 	rawFn func() []byte
 	raw   []byte
 	gz    []byte
+	etag  string
 }
 
 func newGzippedPage(raw func() []byte) *gzippedPage {
 	return &gzippedPage{rawFn: raw}
 }
 
-func (p *gzippedPage) bytes() (raw, gz []byte) {
+func (p *gzippedPage) bytes() (raw, gz []byte, etag string) {
 	p.once.Do(func() {
 		p.raw = p.rawFn()
 		var buf bytes.Buffer
@@ -71,29 +99,32 @@ func (p *gzippedPage) bytes() (raw, gz []byte) {
 		_, _ = zw.Write(p.raw)
 		_ = zw.Close()
 		p.gz = buf.Bytes()
+		sum := sha256.Sum256(p.raw)
+		p.etag = `"` + hex.EncodeToString(sum[:8]) + `"`
 	})
-	return p.raw, p.gz
+	return p.raw, p.gz, p.etag
 }
 
 // serveHTML writes a cached page, pre-gzipping when the client accepts it.
 // It bypasses the withGzip middleware (those routes skip compression).
 func serveGzippableHTML(w http.ResponseWriter, r *http.Request, page *gzippedPage) {
-	raw, gz := page.bytes()
+	raw, gz, etag := page.bytes()
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	w.Header().Set("Vary", "Accept-Encoding")
+	w.Header().Set("ETag", etag)
+	w.Header().Set("Cache-Control", "private, max-age=0, must-revalidate")
+	if etagMatches(r.Header.Get("If-None-Match"), etag) {
+		w.WriteHeader(http.StatusNotModified)
+		return
+	}
 	body := raw
-	if strings.Contains(r.Header.Get("Accept-Encoding"), "gzip") {
+	if acceptsGzip(r) {
 		w.Header().Set("Content-Encoding", "gzip")
 		w.Header().Set("Content-Length", fmt.Sprint(len(gz)))
 		body = gz
 	} else {
 		w.Header().Set("Content-Length", fmt.Sprint(len(raw)))
 	}
-	w.WriteHeader(http.StatusOK)
-	_, _ = w.Write(body)
-}
-
-func serveHTML(w http.ResponseWriter, body []byte) {
-	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	w.WriteHeader(http.StatusOK)
 	_, _ = w.Write(body)
 }

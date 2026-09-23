@@ -9,15 +9,27 @@ struct ContentView: View {
     @State private var searchText = ""
     @State private var selectedKind: SonderMediaKind?
     @State private var selectedTag: String?
+    @State private var selectedGenres: Set<String> = []
     @State private var showingImporter = false
     @State private var showingStoragePicker = false
+    @State private var columnVisibility: NavigationSplitViewVisibility = .all
 
-    private var filteredItems: [SonderMediaItem] {
+    /// Base filters (query/kind/tag) without genres, so genre chips can be
+    /// scoped to what is actually reachable right now.
+    private var baseItems: [SonderMediaItem] {
         library.search(searchText, kind: selectedKind, tag: selectedTag)
     }
 
+    private var filteredItems: [SonderMediaItem] {
+        SonderLibraryQueries.applyGenres(baseItems, genres: selectedGenres)
+    }
+
+    private var genreFacets: [SonderGenreFacet] {
+        SonderLibraryQueries.genreFacets(in: baseItems)
+    }
+
     var body: some View {
-        NavigationSplitView {
+        NavigationSplitView(columnVisibility: $columnVisibility) {
             Sidebar(selection: $selection, selectedCustomLibraryID: $selectedCustomLibraryID, library: library)
                 .navigationSplitViewColumnWidth(min: 220, ideal: 240, max: 280)
         } detail: {
@@ -46,8 +58,19 @@ struct ContentView: View {
                 selectedCustomLibraryID = nil
             }
         }
+        .onChange(of: genreFacetKeys) { _, keys in
+            // Drop selections that the other filters have made unreachable,
+            // so a hidden chip can never keep filtering the grid.
+            if !selectedGenres.isSubset(of: keys) {
+                selectedGenres.formIntersection(keys)
+            }
+        }
         .toolbar {
             ToolbarItemGroup(placement: .primaryAction) {
+                Button {
+                    columnVisibility = columnVisibility == .all ? .detailOnly : .all
+                } label: { Label("Menu", systemImage: "sidebar.left") }
+                    .help("Show or hide the library menu.")
                 Button {
                     SonderSystemServices.shared.openLocalWebInterface(port: UInt16(clamping: library.serverSettings.port))
                 } label: {
@@ -72,6 +95,10 @@ struct ContentView: View {
         }
     }
 
+    private var genreFacetKeys: Set<String> {
+        Set(genreFacets.map(\.key))
+    }
+
     @ViewBuilder
     private var contentView: some View {
         if let nowPlayingItem = library.nowPlayingItem {
@@ -87,9 +114,11 @@ struct ContentView: View {
             LibraryView(
                 items: filteredItems,
                 allTags: library.allTags,
+                genreFacets: genreFacets,
                 searchText: $searchText,
                 selectedKind: $selectedKind,
                 selectedTag: $selectedTag,
+                selectedGenres: $selectedGenres,
                 selectedItemID: $selectedItemID,
                 library: library
             )

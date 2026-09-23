@@ -39,6 +39,8 @@ type swiftItem struct {
 	MetadataID             *string             `json:"metadataID"`
 	Edition                *string             `json:"edition"`
 	SplitPart              *string             `json:"splitPart"`
+	Author                 *string             `json:"author"`
+	Narrator               *string             `json:"narrator"`
 	IsPlaceholder          bool                `json:"isPlaceholder"`
 	LocalPosterPath        *string             `json:"localPosterPath"`
 	LocalBackdropPath      *string             `json:"localBackdropPath"`
@@ -49,6 +51,7 @@ type swiftItem struct {
 	ProbedWidth            *int                `json:"probedWidth"`
 	ProbedHeight           *int                `json:"probedHeight"`
 	ProbedCodec            *string             `json:"probedCodec"`
+	ProbedAudioCodecs      []string            `json:"probedAudioCodecs"`
 	ProbedBitrate          *int                `json:"probedBitrate"`
 	BookValidation         *string             `json:"bookValidation"`
 	CoverSource            *string             `json:"coverSource"`
@@ -127,6 +130,8 @@ func itemFromSwift(si swiftItem, sourcePath string, size int64, mod time.Time) *
 			MetadataID:             si.MetadataID,
 			Edition:                si.Edition,
 			SplitPart:              si.SplitPart,
+			Author:                 si.Author,
+			Narrator:               si.Narrator,
 			IsPlaceholder:          si.IsPlaceholder,
 			EmbeddedAudioTracks:    si.EmbeddedAudioTracks,
 			EmbeddedSubtitleTracks: si.EmbeddedSubtitleTracks,
@@ -134,6 +139,7 @@ func itemFromSwift(si swiftItem, sourcePath string, size int64, mod time.Time) *
 			ProbedWidth:            si.ProbedWidth,
 			ProbedHeight:           si.ProbedHeight,
 			ProbedCodec:            si.ProbedCodec,
+			ProbedAudioCodecs:      si.ProbedAudioCodecs,
 			ProbedBitrate:          si.ProbedBitrate,
 			BookValidation:         si.BookValidation,
 			CoverSource:            si.CoverSource,
@@ -145,10 +151,14 @@ func itemFromSwift(si swiftItem, sourcePath string, size int64, mod time.Time) *
 	}
 	if si.LocalPosterPath != nil {
 		it.PosterPath = *si.LocalPosterPath
+		u := "/artwork/poster/" + si.ID
+		it.PosterURL = &u
 		it.PosterSource = "local"
 	}
 	if si.LocalBackdropPath != nil {
 		it.BackdropPath = *si.LocalBackdropPath
+		u := "/artwork/backdrop/" + si.ID
+		it.BackdropURL = &u
 	}
 	return it
 }

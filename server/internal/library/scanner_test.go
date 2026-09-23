@@ -174,17 +174,94 @@ func TestRemovalDetection(t *testing.T) {
 	root := fixtureTree(t)
 	store := New()
 	sc := NewScanner(store)
+	books := filepath.Join(root, "Books")
+	// Two books so the library still yields a file after one is deleted:
+	// genuine removal must be detected without tripping the empty-scan guard.
+	if err := os.WriteFile(filepath.Join(books, "Neuromancer.epub"), []byte("b2"), 0o600); err != nil {
+		t.Fatal(err)
+	}
 	lib := []config.Library{
-		{ID: "books", Name: "Books", Path: filepath.Join(root, "Books"), Kind: "ebook"},
+		{ID: "books", Name: "Books", Path: books, Kind: "ebook"},
 	}
 	if _, err := sc.ScanAll(lib); err != nil {
 		t.Fatal(err)
 	}
-	before := store.Count()
-	if before != 1 {
-		t.Fatalf("count = %d", before)
+	if store.Count() != 2 {
+		t.Fatalf("count = %d", store.Count())
 	}
-	if err := os.Remove(filepath.Join(root, "Books", "Dune.epub")); err != nil {
+	if err := os.Remove(filepath.Join(books, "Dune.epub")); err != nil {
+		t.Fatal(err)
+	}
+	res, err := sc.ScanAll(lib)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.Removed != 1 || store.Count() != 1 {
+		t.Errorf("removal not detected: %+v count=%d", res, store.Count())
+	}
+}
+
+// An unreadable/vanished library root (unmounted NAS share) must not prune the
+// items already cataloged for that library.
+func TestScanPreservesCatalogWhenLibraryUnreadable(t *testing.T) {
+	root := fixtureTree(t)
+	store := New()
+	sc := NewScanner(store)
+	books := filepath.Join(root, "Books")
+	lib := []config.Library{{ID: "books", Name: "Books", Path: books, Kind: "ebook"}}
+	if _, err := sc.ScanAll(lib); err != nil {
+		t.Fatal(err)
+	}
+	if store.Count() != 1 {
+		t.Fatalf("count = %d", store.Count())
+	}
+	// Point the same library ID at a path that does not exist, mirroring an
+	// unmounted share.
+	gone := []config.Library{{ID: "books", Name: "Books", Path: filepath.Join(root, "gone"), Kind: "ebook"}}
+	res, err := sc.ScanAll(gone)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.Removed != 0 || store.Count() != 1 {
+		t.Errorf("unreadable library pruned its catalog: %+v count=%d", res, store.Count())
+	}
+}
+
+// With safeScan on (the default), a library that resolves but contains no
+// media files while the catalog still holds items for it keeps those items.
+func TestSafeScanPreservesEmptiedLibrary(t *testing.T) {
+	root := fixtureTree(t)
+	store := New()
+	sc := NewScanner(store)
+	books := filepath.Join(root, "Books")
+	lib := []config.Library{{ID: "books", Name: "Books", Path: books, Kind: "ebook"}}
+	if _, err := sc.ScanAll(lib); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Remove(filepath.Join(books, "Dune.epub")); err != nil {
+		t.Fatal(err)
+	}
+	res, err := sc.ScanAll(lib)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.Removed != 0 || store.Count() != 1 {
+		t.Errorf("safe scan pruned an emptied library: %+v count=%d", res, store.Count())
+	}
+}
+
+// With safeScan disabled, an emptied library prunes normally.
+func TestSafeScanOffPrunesEmptiedLibrary(t *testing.T) {
+	root := fixtureTree(t)
+	store := New()
+	sc := NewScanner(store)
+	sc.SetSafeScan(false)
+	books := filepath.Join(root, "Books")
+	lib := []config.Library{{ID: "books", Name: "Books", Path: books, Kind: "ebook"}}
+	if _, err := sc.ScanAll(lib); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Remove(filepath.Join(books, "Dune.epub")); err != nil {
 		t.Fatal(err)
 	}
 	res, err := sc.ScanAll(lib)
@@ -192,7 +269,7 @@ func TestRemovalDetection(t *testing.T) {
 		t.Fatal(err)
 	}
 	if res.Removed != 1 || store.Count() != 0 {
-		t.Errorf("removal not detected: %+v count=%d", res, store.Count())
+		t.Errorf("removal not detected with safe scan off: %+v count=%d", res, store.Count())
 	}
 }
 
@@ -297,7 +374,7 @@ func (f *fakeProber) ProbeResult(ctx context.Context, path string, size int64, m
 	if f.onProbe != nil {
 		f.onProbe()
 	}
-	return &probe.Result{DurationSeconds: 42}, nil
+	return &probe.Result{DurationSeconds: 42, StreamCount: 1}, nil
 }
 
 func TestScanProbesNewAndChangedWithBoundedWorkers(t *testing.T) {
@@ -359,5 +436,54 @@ func TestScanProbesNewAndChangedWithBoundedWorkers(t *testing.T) {
 	}
 	if after := fp.calls.Load(); after-before != 1 {
 		t.Errorf("changed file probed %d times, want 1", after-before)
+	}
+}
+
+// blockingProber blocks until its context is cancelled, so a scan can be held
+// mid-probe to exercise shutdown cancellation.
+type blockingProber struct{ started chan struct{} }
+
+func (b *blockingProber) ProbeResult(ctx context.Context, path string, size int64, mod time.Time) (*probe.Result, error) {
+	select {
+	case b.started <- struct{}{}:
+	default:
+	}
+	<-ctx.Done()
+	return nil, ctx.Err()
+}
+
+// TestShutdownCancelsInFlightScan verifies scanner.Shutdown stops a running
+// scan instead of letting ffprobe children run on after SIGTERM.
+func TestShutdownCancelsInFlightScan(t *testing.T) {
+	root := fixtureTree(t)
+	store := New()
+	sc := NewScanner(store)
+	started := make(chan struct{}, 1)
+	sc.SetProber(&blockingProber{started: started}, 1)
+
+	lib := []config.Library{
+		{ID: "tv", Name: "TV", Path: filepath.Join(root, "Shows"), Kind: "tvShow"},
+		{ID: "movies", Name: "Movies", Path: filepath.Join(root, "Movies"), Kind: "movie"},
+	}
+	returned := make(chan error, 1)
+	go func() {
+		_, err := sc.ScanAll(lib)
+		returned <- err
+	}()
+
+	select {
+	case <-started:
+	case <-time.After(2 * time.Second):
+		t.Fatal("scan never reached the prober")
+	}
+	sc.Shutdown()
+
+	select {
+	case <-returned:
+	case <-time.After(2 * time.Second):
+		t.Fatal("scan did not stop after Shutdown")
+	}
+	if state := sc.State(); state.Scanning {
+		t.Error("scanner still reports scanning after cancellation")
 	}
 }

@@ -14,7 +14,7 @@ extension SonderPublicMediaItem {
             year: item.year,
             durationSeconds: item.durationSeconds,
             format: SonderAPI.SonderMediaFormat(rawValue: item.format.rawValue) ?? .unknown,
-            libraryID: item.libraryID,
+            libraryID: item.libraryID?.uuidString,
             tags: item.tags,
             summary: item.summary,
             progressSeconds: item.progressSeconds,
@@ -56,10 +56,10 @@ extension SonderPublicServerSettings {
 extension SonderPublicMediaDirectory {
     nonisolated init(_ directory: SonderMediaDirectory) {
         self.init(
-            id: directory.id,
+            id: directory.id.uuidString,
             name: directory.name,
             kind: directory.kind.rawValue,
-            libraryID: directory.libraryID,
+            libraryID: directory.libraryID.uuidString,
             lastIndexedCount: directory.lastIndexedCount,
             lastScannedFileCount: directory.lastScannedFileCount,
             lastScannedAt: directory.lastScannedAt

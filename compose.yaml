@@ -1,0 +1,18 @@
+services:
+  sonder:
+    build:
+      context: .
+      dockerfile: deploy/Containerfile
+    image: tm-sonder:local
+    container_name: sonder
+    ports:
+      - "8797:8797"
+    environment:
+      SONDER_DATA_DIR: /data
+    volumes:
+      - ${SONDER_MEDIA_DIR:-./media}:/media:ro
+      - ${SONDER_DATA_VOLUME:-sonder-data}:/data
+    restart: unless-stopped
+
+volumes:
+  sonder-data:

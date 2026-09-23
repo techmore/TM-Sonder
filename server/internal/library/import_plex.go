@@ -1,6 +1,7 @@
 package library
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -8,9 +9,18 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"time"
 
 	"tm-sonder/server/internal/api"
 )
+
+// plexImportTimeout bounds the whole migration so a locked or corrupt Plex
+// database cannot hang server startup forever.
+const plexImportTimeout = 3 * time.Minute
+
+// plexFileSep separates the file paths squeezed into one group_concat column.
+// ASCII unit separator cannot appear in a filesystem path, unlike ",".
+const plexFileSep = "\x1f"
 
 func apiKindMovie() api.MediaKind  { return api.KindMovie }
 func apiKindTVShow() api.MediaKind { return api.KindTVShow }
@@ -55,8 +65,8 @@ func findSQLite3() (string, error) {
 
 // runSQLRows executes one query returning JSON rows (sqlite3 -json). JSON is
 // immune to delimiter collisions in titles/paths that break -list mode.
-func runSQLRows(sqlitePath, dbPath, sql string) ([]map[string]any, error) {
-	cmd := exec.Command(sqlitePath, "-json", dbPath, sql)
+func runSQLRows(ctx context.Context, sqlitePath, dbPath, sql string) ([]map[string]any, error) {
+	cmd := exec.CommandContext(ctx, sqlitePath, "-json", dbPath, sql)
 	out, err := cmd.Output()
 	if err != nil {
 		return nil, fmt.Errorf("library: plex query failed: %w", err)
@@ -102,7 +112,7 @@ const plexMoviesSQL = `select
   coalesce(m.year, 0) as year,
   coalesce(m.tags_genre, '') as genres,
   coalesce(m.guid, '') as guid,
-  coalesce(group_concat(distinct p.file), '') as files
+  coalesce(group_concat(p.file, char(31)), '') as files
 from metadata_items m
 left join media_items mi on mi.metadata_item_id = m.id
 left join media_parts p on p.media_item_id = mi.id and p.deleted_at is null
@@ -118,7 +128,7 @@ const plexEpisodesSQL = `select
   coalesce(e.title, '') as title,
   coalesce(e.summary, '') as summary,
   coalesce(e.guid, '') as guid,
-  coalesce(group_concat(distinct p.file), '') as files
+  coalesce(group_concat(p.file, char(31)), '') as files
 from metadata_items e
 join metadata_items s on s.id = e.parent_id and s.deleted_at is null
 join metadata_items show on show.id = s.parent_id and show.deleted_at is null
@@ -145,7 +155,7 @@ func plexGUID(guid string) (source, id string) {
 		id = id[:q]
 	}
 	switch source {
-	case "imdb", "tmdb", "themoviedb":
+	case "imdb", "tmdb", "themoviedb", "tvdb":
 		if source == "themoviedb" {
 			source = "tmdb"
 		}
@@ -155,8 +165,16 @@ func plexGUID(guid string) (source, id string) {
 	}
 }
 
+// plexFirstFile returns the first existing media file from the unit-separator
+// joined list produced by the import queries. Splitting on a byte that cannot
+// appear in a path keeps filenames containing commas intact.
 func plexFirstFile(joined string) string {
-	for _, f := range strings.Split(joined, ",") {
+	parts := strings.Split(joined, plexFileSep)
+	if len(parts) == 1 {
+		// Defensive: an older query or a single path with no separator.
+		parts = []string{joined}
+	}
+	for _, f := range parts {
 		f = strings.TrimSpace(f)
 		f = strings.TrimPrefix(f, "file://")
 		if f == "" {
@@ -167,6 +185,20 @@ func plexFirstFile(joined string) string {
 		}
 	}
 	return ""
+}
+
+// CanonicalMediaPath normalizes a media file path the same way for imported and
+// discovered items, so StableID reconciles instead of duplicating. Symlinks are
+// resolved because Plex often records /Volumes-style paths while the scanner
+// walks the resolved mount.
+func CanonicalMediaPath(path string) string {
+	if resolved, err := filepath.EvalSymlinks(path); err == nil {
+		path = resolved
+	}
+	if abs, err := filepath.Abs(path); err == nil {
+		return abs
+	}
+	return filepath.Clean(path)
 }
 
 // ImportPlexLibrary reads a Plex sqlite database and upserts movies and TV
@@ -184,10 +216,13 @@ func ImportPlexLibrary(s *Store, dbPath string, limit int) (*PlexImportResult, e
 		return nil, fmt.Errorf("library: plex db: %w", err)
 	}
 
+	ctx, cancel := context.WithTimeout(context.Background(), plexImportTimeout)
+	defer cancel()
+
 	res := &PlexImportResult{}
 	var items []*Item
 
-	movieRows, err := runSQLRows(sqlitePath, dbPath, fmt.Sprintf(plexMoviesSQL, limit))
+	movieRows, err := runSQLRows(ctx, sqlitePath, dbPath, fmt.Sprintf(plexMoviesSQL, limit))
 	if err != nil {
 		return nil, err
 	}
@@ -205,7 +240,7 @@ func ImportPlexLibrary(s *Store, dbPath string, limit int) (*PlexImportResult, e
 		res.Movies++
 	}
 
-	epRows, err := runSQLRows(sqlitePath, dbPath, fmt.Sprintf(plexEpisodesSQL, limit))
+	epRows, err := runSQLRows(ctx, sqlitePath, dbPath, fmt.Sprintf(plexEpisodesSQL, limit))
 	if err != nil {
 		return nil, err
 	}
@@ -242,6 +277,7 @@ func ImportPlexLibrary(s *Store, dbPath string, limit int) (*PlexImportResult, e
 
 func plexItem(path string, kind api.MediaKind, title, subtitle string, year int,
 	summary, studio, genres, metaSource, metaID string) *Item {
+	path = CanonicalMediaPath(path)
 	format := formatForPath(path)
 	it := &Item{
 		MediaItem: apiMediaItem(
@@ -255,6 +291,7 @@ func plexItem(path string, kind api.MediaKind, title, subtitle string, year int,
 	for _, g := range strings.Split(genres, "|") {
 		if g = strings.TrimSpace(g); g != "" {
 			it.Tags = append(it.Tags, g)
+			it.Genres = append(it.Genres, g)
 		}
 	}
 	if metaSource != "" && metaID != "" {

@@ -10,6 +10,11 @@ LDFLAGS := -s -w -X main.version=$(VERSION)
 
 build: mac
 
+status-app: ## Build the lightweight macOS menu-bar service indicator
+	mkdir -p "bin/Sonder Status.app/Contents/MacOS"
+	xcrun swiftc -swift-version 6 -O -framework AppKit tools/SonderStatus/main.swift -o "bin/Sonder Status.app/Contents/MacOS/SonderStatus"
+	cp tools/SonderStatus/Info.plist "bin/Sonder Status.app/Contents/Info.plist"
+
 mac: ## darwin/arm64 optimized binary in bin/
 	cd server && CGO_ENABLED=0 GOOS=darwin GOARCH=arm64 $(GO) build -trimpath -ldflags "$(LDFLAGS)" -o ../bin/$(BINARY)-darwin-arm64 ./cmd/sonder
 
@@ -17,6 +22,7 @@ linux: ## linux/arm64 static binary for containers
 	cd server && CGO_ENABLED=0 GOOS=linux GOARCH=arm64 $(GO) build -trimpath -ldflags "$(LDFLAGS)" -o ../bin/$(BINARY)-linux-arm64 ./cmd/sonder
 
 test:
+	node --test server/internal/httpapi/web/library.test.cjs
 	cd server && $(GO) test -race -count=1 ./...
 
 vet:

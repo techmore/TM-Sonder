@@ -106,6 +106,7 @@ public enum SonderMediaFormat: String, Codable, Sendable, Hashable {
         case .ts, .m2ts: "video/mp2t"
         case .epub: "application/epub+zip"
         case .pdf: "application/pdf"
+        // M4B is an MP4-family container; the audio codec may be AAC or Opus.
         case .m4b: "audio/mp4"
         case .mp3: "audio/mpeg"
         case .m4a: "audio/mp4"
@@ -127,7 +128,9 @@ public enum SonderMediaFormat: String, Codable, Sendable, Hashable {
 
     public var isBrowserPlayable: Bool {
         switch self {
-        case .mp4, .m4v, .mov, .webm: return true
+        // Container-level capability only; Opus-in-MP4 is checked against the
+        // browser's actual codec support using probedAudioCodecs.
+        case .mp4, .m4v, .mov, .webm, .m4b: return true
         default: return false
         }
     }

@@ -52,6 +52,12 @@ type Scanner struct {
 	thumbDir     string // artwork output dir (<id>.jpg); enables orphan reattach
 	workers      int
 	thumbWorkers int
+	safeScan     bool
+
+	// ctx bounds in-flight scan/probe work so shutdown can cancel ffprobe and
+	// ffmpeg children instead of orphaning them.
+	ctx    context.Context
+	cancel context.CancelFunc
 
 	mu    sync.Mutex
 	state ScanState
@@ -78,8 +84,65 @@ type Prober interface {
 type ThumbFunc func(ctx context.Context, itemID, videoPath string, durationSeconds float64) (string, error)
 
 func NewScanner(store *Store) *Scanner {
-	return &Scanner{store: store, workers: 2}
+	ctx, cancel := context.WithCancel(context.Background())
+	return &Scanner{store: store, workers: 2, safeScan: true, ctx: ctx, cancel: cancel}
 }
+
+// BackfillStableKeys upgrades older path-only snapshots without touching the
+// media roots. It is safe to run at startup and only changes catalog metadata.
+func (sc *Scanner) BackfillStableKeys(libs []config.Library) int {
+	byID := make(map[string]config.Library, len(libs))
+	for _, lib := range libs {
+		byID[lib.ID] = lib
+	}
+	changed := 0
+	for _, item := range sc.store.InternalItems() {
+		if item.FilePath == "" || item.LibraryID == nil {
+			continue
+		}
+		lib, ok := byID[*item.LibraryID]
+		if !ok {
+			continue
+		}
+		root := filepath.Clean(lib.Path)
+		// Do not resolve every media file through the NAS during startup. The
+		// scanner resolves roots when it actually walks them; backfilling only
+		// needs lexical path identity and must remain fast while the server
+		// opens its port.
+		path, err := filepath.Abs(filepath.Clean(item.FilePath))
+		if err != nil {
+			path = filepath.Clean(item.FilePath)
+		}
+		rel, ok := RelativeMediaPath(root, path)
+		if !ok {
+			continue
+		}
+		key := StableMediaKey(lib.ID, rel)
+		if key == "" || (item.StableKey == key && item.SourceRelativePath == rel) {
+			continue
+		}
+		if sc.store.Update(item.ID, func(cur *Item) bool {
+			cur.StableKey = key
+			cur.SourceRelativePath = rel
+			return true
+		}) {
+			changed++
+		}
+	}
+	return changed
+}
+
+// Shutdown cancels any in-flight scan/probe work. After it returns, running
+// ffprobe/ffmpeg children are killed rather than reparented. Safe to call more
+// than once, and safe when no scan is running.
+func (sc *Scanner) Shutdown() { sc.cancel() }
+
+// SetSafeScan toggles the empty-scan safety net. When enabled (the default),
+// a library that resolves but yields zero media files while the catalog still
+// holds items for it is treated as unavailable and its items are preserved —
+// this prevents an unmounted share or empty mount stub from wiping the
+// catalog. Disable it to let a deliberately emptied library prune normally.
+func (sc *Scanner) SetSafeScan(enabled bool) { sc.safeScan = enabled }
 
 // SetProber enables post-scan probing with a worker pool (default 2).
 func (sc *Scanner) SetProber(p Prober, workers int) {
@@ -90,9 +153,18 @@ func (sc *Scanner) SetProber(p Prober, workers int) {
 }
 
 // SetThumbnailGen enables poster generation for videos without artwork.
-// It runs on the probe worker pool after each successful probe.
+// It runs on the dedicated thumbnail pool after each successful probe.
 func (sc *Scanner) SetThumbnailGen(fn ThumbFunc) {
 	sc.thumbFn = fn
+}
+
+// SetThumbWorkers overrides the thumbnail pool size. Zero keeps the default
+// (NumCPU/4, clamped to 1..4). Poster generation is CPU-bound ffmpeg work, so
+// raising this on a fast box trades cores for scan throughput.
+func (sc *Scanner) SetThumbWorkers(n int) {
+	if n > 0 {
+		sc.thumbWorkers = n
+	}
 }
 
 // SetThumbnailDir tells the scanner where generated posters live
@@ -152,6 +224,11 @@ func (sc *Scanner) ScanAll(libs []config.Library) (ScanResult, error) {
 
 	var res ScanResult
 	keep := make(map[string]bool)
+	// Libraries whose walk failed or came back empty despite holding items
+	// are never pruned: an unmounted NAS share or an empty mount stub must
+	// not wipe a healthy catalog. RetainOnly exempts their items.
+	preserve := make(map[string]bool)
+	itemsBefore := sc.store.CountByLibrary()
 	var pending []probeJob
 	for _, lib := range libs {
 		r, err := sc.scanLibraryInto(lib, keep, &pending)
@@ -160,19 +237,33 @@ func (sc *Scanner) ScanAll(libs []config.Library) (ScanResult, error) {
 			// not abort the whole pass: later libraries still scan and,
 			// critically, RetainOnly still runs so items whose files were
 			// renamed/deleted in OTHER libraries get pruned.
+			preserve[lib.ID] = true
+			sc.store.RecordActivity("Library scan skipped",
+				lib.Name+" unavailable: "+err.Error(), "alert")
+			continue
+		}
+		discovered := r.Added + r.Updated + r.Skipped
+		if sc.safeScan && discovered == 0 && itemsBefore[lib.ID] > 0 {
+			// The path resolved but yielded nothing while the catalog still
+			// holds items for it — almost always an unmounted share or an
+			// empty autofs stub. Keep the catalog and surface it instead of
+			// deleting every item.
+			preserve[lib.ID] = true
+			sc.store.RecordActivity("Library scan empty",
+				lib.Name+" yielded 0 files; keeping "+strconv.Itoa(itemsBefore[lib.ID])+" cataloged item(s)", "alert")
 			continue
 		}
 		res.Added += r.Added
 		res.Updated += r.Updated
 		res.Skipped += r.Skipped
 	}
-	if removed := sc.store.RetainOnly(keep); removed > 0 {
+	if removed := sc.store.RetainOnly(keep, preserve); removed > 0 {
 		res.Removed = removed
 		sc.store.RecordActivity("Library pruned",
 			strconv.Itoa(removed)+" missing item(s) removed", "trash")
 	}
 
-	sc.probePending(pending)
+	sc.probePending(sc.ctx, pending)
 
 	sc.mu.Lock()
 	sc.state.ItemsSeen = sc.store.Count()
@@ -187,8 +278,9 @@ func (sc *Scanner) ScanAll(libs []config.Library) (ScanResult, error) {
 }
 
 // RefreshTracks re-probes one item's embedded tracks using the configured
-// prober and persists the result. Implements httpapi.TrackRefresher.
-func (sc *Scanner) RefreshTracks(itemID string) error {
+// prober and persists the result. Implements httpapi.TrackRefresher. The
+// request context cancels the probe if the client disconnects.
+func (sc *Scanner) RefreshTracks(ctx context.Context, itemID string) error {
 	if sc.prober == nil {
 		return errProbingDisabled
 	}
@@ -196,12 +288,17 @@ func (sc *Scanner) RefreshTracks(itemID string) error {
 	if !ok {
 		return os.ErrNotExist
 	}
-	res, err := sc.prober.ProbeResult(context.Background(), it.FilePath, it.SizeBytes, it.ModTime)
+	res, err := sc.prober.ProbeResult(ctx, it.FilePath, it.SizeBytes, it.ModTime)
 	if err != nil {
 		return err
 	}
-	applyProbe(it, res)
-	sc.store.Upsert(it)
+	if res == nil || res.StreamCount == 0 {
+		return nil
+	}
+	sc.store.Update(itemID, func(cur *Item) bool {
+		applyProbe(cur, res)
+		return true
+	})
 	return nil
 }
 
@@ -230,7 +327,7 @@ type probeJob struct {
 // probePending runs new/updated files through the prober with a small worker
 // pool and merges results back into the catalog, generating posters for
 // videos that have none. No-op when probing is disabled.
-func (sc *Scanner) probePending(jobs []probeJob) {
+func (sc *Scanner) probePending(ctx context.Context, jobs []probeJob) {
 	if sc.prober == nil || len(jobs) == 0 {
 		return
 	}
@@ -238,7 +335,6 @@ func (sc *Scanner) probePending(jobs []probeJob) {
 	if workers < 1 {
 		workers = 2
 	}
-	ctx := context.Background()
 	in := make(chan probeJob)
 
 	// Thumbnails run in their own small pool: probing is I/O-bound on the
@@ -271,15 +367,13 @@ func (sc *Scanner) probePending(jobs []probeJob) {
 					if err != nil || p == "" {
 						continue
 					}
-					it, ok := sc.store.Get(tj.itemID)
-					if !ok {
-						continue
-					}
-					it.PosterPath = p
-					u := "/artwork/poster/" + it.ID
-					it.PosterURL = &u
-					it.PosterSource = "thumbnail"
-					sc.store.Upsert(it)
+					sc.store.Update(tj.itemID, func(cur *Item) bool {
+						cur.PosterPath = p
+						u := "/artwork/poster/" + cur.ID
+						cur.PosterURL = &u
+						cur.PosterSource = "thumbnail"
+						return true
+					})
 				}
 			}()
 		}
@@ -292,24 +386,40 @@ func (sc *Scanner) probePending(jobs []probeJob) {
 			defer wg.Done()
 			for j := range in {
 				res, err := sc.prober.ProbeResult(ctx, j.Path, j.Size, j.Mod)
-				if err != nil || res == nil {
+				if err != nil || res == nil || res.StreamCount == 0 {
+					// A zero-stream result (ffprobe exits 0 with
+					// {"streams":[]}) must not be stamped as probed, otherwise
+					// the item is never retried and never gets a thumbnail.
 					continue
 				}
-				it, ok := sc.store.Get(j.ItemID)
-				if !ok {
-					continue
-				}
-				applyProbe(it, res)
-				sc.store.Upsert(it)
-				// Upsert first so the thumbnail pool observes probed state.
-				if sc.thumbFn != nil && it.ProbedWidth != nil && it.PosterPath == "" {
-					thumbs <- thumbJob{itemID: it.ID, path: it.FilePath, duration: res.DurationSeconds}
+				// Update (not Get→Upsert) so a concurrent progress or
+				// thumbnail write is not clobbered by this probe result.
+				var wantThumb bool
+				var thumbPath string
+				changed := sc.store.Update(j.ItemID, func(cur *Item) bool {
+					applyProbe(cur, res)
+					wantThumb = sc.thumbFn != nil && cur.ProbedWidth != nil && cur.PosterPath == ""
+					thumbPath = cur.FilePath
+					return true
+				})
+				if changed && wantThumb {
+					thumbs <- thumbJob{itemID: j.ItemID, path: thumbPath, duration: res.DurationSeconds}
 				}
 			}
 		}()
 	}
 	for _, j := range jobs {
-		in <- j
+		select {
+		case in <- j:
+		case <-ctx.Done():
+			close(in)
+			wg.Wait()
+			if sc.thumbFn != nil {
+				close(thumbs)
+				twg.Wait()
+			}
+			return
+		}
 	}
 	close(in)
 	wg.Wait()
@@ -334,6 +444,13 @@ func applyProbe(it *Item, res *probe.Result) {
 	it.TrackProbeUpdatedAt = &now
 	it.EmbeddedAudioTracks = append([]api.PlaybackTrack(nil), res.AudioTracks...)
 	it.EmbeddedSubtitleTracks = append([]api.PlaybackTrack(nil), res.SubtitleTracks...)
+	it.ProbedAudioCodecs = append([]string(nil), res.AudioCodecs...)
+	it.ProbedAudioChannels = append([]int(nil), res.AudioChannels...)
+	it.ProbedAudioBitrates = append([]int(nil), res.AudioBitrates...)
+	it.ProbedVideoStreams = res.VideoStreamCount
+	it.ProbedHasCover = res.HasAttachedPicture
+	it.ProbedCoverKnown = true
+	it.ProbedUnsupportedStreams = res.UnsupportedStreams
 }
 
 // scanLibraryInto walks one library root. Items whose stable ID lands in keep
@@ -358,6 +475,9 @@ func (sc *Scanner) scanLibraryInto(lib config.Library, keep map[string]bool, pen
 
 	libID := lib.ID
 	err = filepath.WalkDir(root, func(path string, d fs.DirEntry, err error) error {
+		if cerr := sc.ctx.Err(); cerr != nil {
+			return cerr
+		}
 		if err != nil {
 			// NAS roots routinely contain permission-restricted directories
 			// (#recycle, backups, root-only shares). Skip them rather than
@@ -383,12 +503,10 @@ func (sc *Scanner) scanLibraryInto(lib config.Library, keep map[string]bool, pen
 			return nil
 		}
 
-		canonical, cerr := filepath.Abs(path)
-		if cerr != nil {
-			canonical = filepath.Clean(path)
-		}
+		canonical := CanonicalMediaPath(path)
+		relativePath, _ := RelativeMediaPath(root, canonical)
+		stableKey := StableMediaKey(libID, relativePath)
 		id := StableID(canonical)
-		keep[id] = true
 
 		st, serr := d.Info()
 		if serr != nil {
@@ -396,6 +514,14 @@ func (sc *Scanner) scanLibraryInto(lib config.Library, keep map[string]bool, pen
 		}
 
 		existing, found := sc.store.Get(id)
+		// Preserve the old public item ID when the same library-relative file
+		// appears under a different absolute mount path.
+		if !found && stableKey != "" {
+			if portable, ok := sc.store.FindByStableKey(stableKey); ok {
+				id, existing, found = portable.ID, portable, true
+			}
+		}
+		keep[id] = true
 		// Self-healing artwork: an unchanged file still gets a probe job when
 		// it has never been probed and thumbnail generation could give it a
 		// poster, or when Plex-style local artwork appeared since last scan.
@@ -403,12 +529,15 @@ func (sc *Scanner) scanLibraryInto(lib config.Library, keep map[string]bool, pen
 		// the library table was edited between scans). Everything else
 		// unchanged is skipped entirely.
 		libStale := found && (existing.LibraryID == nil || *existing.LibraryID != lib.ID)
-		unchanged := found && !libStale &&
+		pathChanged := found && existing.FilePath != canonical
+		unchanged := found && !libStale && !pathChanged &&
 			existing.SizeBytes == st.Size() && existing.ModTime.Equal(st.ModTime()) &&
 			existing.ParseVersion == ParserVersion &&
 			len(existing.SidecarPaths) == sc.sidecarCount(path)
 		wantsFirstProbe := unchanged && sc.thumbFn != nil &&
 			existing.PosterPath == "" && existing.TrackProbeUpdatedAt == nil
+		wantsOptimizationProbe := unchanged && existing.Kind == api.KindAudiobook && format == api.FormatM4B &&
+			((len(existing.ProbedAudioCodecs) > 0 && len(existing.ProbedAudioChannels) == 0) || !existing.ProbedCoverKnown)
 		newLocalArt := false
 		if unchanged && !wantsFirstProbe && existing.PosterPath == "" {
 			b := strings.TrimSuffix(filepath.Base(path), filepath.Ext(path))
@@ -422,12 +551,14 @@ func (sc *Scanner) scanLibraryInto(lib config.Library, keep map[string]bool, pen
 				newLocalArt = true
 			}
 		}
-		if unchanged && !wantsFirstProbe && !newLocalArt {
+		if unchanged && !wantsFirstProbe && !wantsOptimizationProbe && !newLocalArt {
 			res.Skipped++
 			return nil
 		}
 
 		item := sc.buildItem(canonical, id, st, format, libID, lib.Kind)
+		item.StableKey = stableKey
+		item.SourceRelativePath = relativePath
 		sc.store.Upsert(item)
 		// Skip ffprobe for formats it can't meaningfully report on (ebooks,
 		// text). Video/audio still probe for tracks + thumbnails.
@@ -466,7 +597,8 @@ func inferKind(path string, format api.MediaFormat, libKind string) api.MediaKin
 		return api.KindAudiobook
 	case api.FormatEPUB, api.FormatPDF:
 		return api.KindEbook
-	case api.FormatMP4, api.FormatMOV, api.FormatMKV, api.FormatAVI:
+	case api.FormatMP4, api.FormatMOV, api.FormatMKV, api.FormatAVI, api.FormatWEBM,
+		api.FormatM4V, api.FormatTS, api.FormatMPG, api.FormatMPEG, api.FormatM2TS:
 		// Stray video inside an ebook library must not masquerade as a
 		// book; everywhere else normal kind resolution applies.
 		if libKind == string(api.KindEbook) {
@@ -559,6 +691,7 @@ func (sc *Scanner) buildItem(path, id string, st os.FileInfo, format api.MediaFo
 	}
 	if parsed.Series != "" {
 		item.Studio = parsed.Series
+		item.Series = parsed.Series
 		// For books the parser's "series" slot carries the filename-extracted
 		// author; mirror it so the API layer doesn't guess from Tags.
 		if kind == api.KindEbook || kind == api.KindAudiobook {
@@ -566,6 +699,7 @@ func (sc *Scanner) buildItem(path, id string, st os.FileInfo, format api.MediaFo
 			item.Author = &a
 		}
 	}
+	item.SeriesNumber = parsed.SeriesNumber
 
 	item.SidecarPaths = findSidecars(path)
 	item.ParseVersion = ParserVersion
@@ -608,6 +742,27 @@ func (sc *Scanner) buildItem(path, id string, st os.FileInfo, format api.MediaFo
 		item.ProbedWidth = prev.ProbedWidth
 		item.ProbedHeight = prev.ProbedHeight
 		item.ProbedCodec = prev.ProbedCodec
+		if len(item.ProbedAudioCodecs) == 0 {
+			item.ProbedAudioCodecs = append([]string(nil), prev.ProbedAudioCodecs...)
+		}
+		if len(item.ProbedAudioChannels) == 0 {
+			item.ProbedAudioChannels = append([]int(nil), prev.ProbedAudioChannels...)
+		}
+		if len(item.ProbedAudioBitrates) == 0 {
+			item.ProbedAudioBitrates = append([]int(nil), prev.ProbedAudioBitrates...)
+		}
+		if item.ProbedVideoStreams == 0 {
+			item.ProbedVideoStreams = prev.ProbedVideoStreams
+		}
+		if !item.ProbedHasCover {
+			item.ProbedHasCover = prev.ProbedHasCover
+		}
+		if !item.ProbedCoverKnown {
+			item.ProbedCoverKnown = prev.ProbedCoverKnown
+		}
+		if item.TrackProbeUpdatedAt == nil {
+			item.ProbedUnsupportedStreams = prev.ProbedUnsupportedStreams
+		}
 		item.ProbedBitrate = prev.ProbedBitrate
 		item.TrackProbeUpdatedAt = prev.TrackProbeUpdatedAt
 		if item.DurationSeconds == 0 {
@@ -616,7 +771,8 @@ func (sc *Scanner) buildItem(path, id string, st os.FileInfo, format api.MediaFo
 		// Keep provider artwork when local discovery came up empty. Thumbnails
 		// included: the generated file survives rebuilds even when the reference
 		// was dropped (see orphan reattach below).
-		if item.PosterPath == "" && prev.PosterPath != "" {
+		if prev.PosterPath != "" && (item.PosterPath == "" ||
+			(item.PosterSource == "thumbnail" && prev.PosterSource != "thumbnail")) {
 			item.PosterPath = prev.PosterPath
 			item.PosterURL = prev.PosterURL
 			item.PosterSource = prev.PosterSource
@@ -731,8 +887,8 @@ func firstExisting(folder, parent string, names []string, base string) string {
 				return p
 			}
 		}
-	}
-	for _, dir := range []string{folder, parent} {
+		// Exhaust the title's own folder (including case variants on NFS)
+		// before falling back to shared parent artwork.
 		if p := caseInsensitiveMatch(dir, candidates); p != "" {
 			return p
 		}

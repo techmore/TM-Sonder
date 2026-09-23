@@ -3,9 +3,11 @@ import SwiftUI
 struct LibraryView: View {
     let items: [SonderMediaItem]
     let allTags: [String]
+    let genreFacets: [SonderGenreFacet]
     @Binding var searchText: String
     @Binding var selectedKind: SonderMediaKind?
     @Binding var selectedTag: String?
+    @Binding var selectedGenres: Set<String>
     @Binding var selectedItemID: UUID?
     @ObservedObject var library: SonderLibrary
     @State private var cardMinimumWidth = 230.0
@@ -129,7 +131,101 @@ struct LibraryView: View {
                     Label(selectedTag ?? "All Tags", systemImage: "tag")
                 }
             }
+
+            if genreFacets.isEmpty == false {
+                HStack(spacing: 8) {
+                    ScrollView(.horizontal, showsIndicators: false) {
+                        HStack(spacing: 8) {
+                            genreChip("All", count: nil, selected: selectedGenres.isEmpty) {
+                                selectedGenres.removeAll()
+                            }
+                            ForEach(genreFacets) { facet in
+                                genreChip(facet.label, count: facet.count, selected: selectedGenres.contains(facet.key)) {
+                                    toggleGenre(facet.key)
+                                }
+                            }
+                        }
+                        .padding(.vertical, 2)
+                    }
+                    // Long genre lists are hard to scan by scrolling alone;
+                    // offer a complete, counted menu as a second path.
+                    if genreFacets.count > 10 {
+                        genreMenu
+                    }
+                }
+            }
         }
+    }
+
+    private func toggleGenre(_ key: String) {
+        if selectedGenres.contains(key) {
+            selectedGenres.remove(key)
+        } else {
+            selectedGenres.insert(key)
+        }
+    }
+
+    /// A genre filter chip. Selected reads as filled accent with a checkmark;
+    /// unselected stays quiet so the selected chips stand out.
+    private func genreChip(_ title: String, count: Int?, selected: Bool, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            HStack(spacing: 5) {
+                if selected {
+                    Image(systemName: "checkmark")
+                        .font(.system(size: 9, weight: .bold))
+                }
+                Text(title).font(.caption.weight(.semibold)).lineLimit(1)
+                if let count {
+                    Text("\(count)")
+                        .font(.caption2.monospacedDigit())
+                        .opacity(selected ? 0.85 : 0.5)
+                }
+            }
+            .padding(.horizontal, 10)
+            .padding(.vertical, 5)
+            .background(selected ? SonderTheme.accent : SonderTheme.surface)
+            .foregroundStyle(selected ? SonderTheme.darkText : SonderTheme.text)
+            .overlay(
+                Capsule().strokeBorder(selected ? SonderTheme.accentStrong : SonderTheme.border, lineWidth: 1)
+            )
+            .clipShape(Capsule())
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel(accessibilityLabel(title, count))
+        .accessibilityAddTraits(selected ? .isSelected : [])
+        .help(accessibilityLabel(title, count))
+    }
+
+    private func accessibilityLabel(_ title: String, _ count: Int?) -> String {
+        guard let count else { return title }
+        return "\(title), \(count) title\(count == 1 ? "" : "s")"
+    }
+
+    /// Every genre with its count, so a long list stays searchable by typing.
+    private var genreMenu: some View {
+        Menu {
+            ForEach(genreFacets) { facet in
+                Button {
+                    toggleGenre(facet.key)
+                } label: {
+                    if selectedGenres.contains(facet.key) {
+                        Label("\(facet.label) (\(facet.count))", systemImage: "checkmark")
+                    } else {
+                        Text("\(facet.label) (\(facet.count))")
+                    }
+                }
+            }
+            if selectedGenres.isEmpty == false {
+                Divider()
+                Button("Clear genres", role: .destructive) { selectedGenres.removeAll() }
+            }
+        } label: {
+            Label("All genres", systemImage: "line.3.horizontal.decrease.circle")
+                .font(.caption.weight(.semibold))
+        }
+        .menuStyle(.borderlessButton)
+        .fixedSize()
+        .help("Browse every genre with its title count.")
     }
 
     private var densityControl: some View {

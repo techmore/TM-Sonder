@@ -340,6 +340,7 @@ func TestAuthMatrix(t *testing.T) {
 	do := func(f *fixture, remote, hdr, query string) int {
 		req := httptest.NewRequest("GET", "/api/health", nil)
 		req.RemoteAddr = remote
+		req.Host = "127.0.0.1:8797"
 		if query != "" {
 			req.URL.RawQuery = "token=" + query
 		}
@@ -384,15 +385,32 @@ func TestAuthMatrix(t *testing.T) {
 		}
 	})
 
-	t.Run("peer addr not host header", func(t *testing.T) {
-		f := newSrv(false)
+	// DNS-rebinding guard: a loopback peer is only trusted when the Host
+	// header also names loopback. An attacker-controlled Host must not inherit
+	// the localhost bypass.
+	t.Run("loopback peer with foreign host is not trusted", func(t *testing.T) {
+		f := newSrv(true)
 		req := httptest.NewRequest("GET", "/api/health", nil)
 		req.RemoteAddr = "127.0.0.1:9999"
 		req.Host = "evil.example.com"
 		rec := httptest.NewRecorder()
 		f.s.Handler().ServeHTTP(rec, req)
-		if rec.Code != 200 {
-			t.Errorf("host header spoof changed nothing? status=%d", rec.Code)
+		if rec.Code != http.StatusUnauthorized {
+			t.Errorf("rebound host status=%d, want 401", rec.Code)
+		}
+	})
+
+	t.Run("loopback peer with loopback host bypasses", func(t *testing.T) {
+		f := newSrv(false)
+		for _, host := range []string{"127.0.0.1:8797", "localhost:8797", "[::1]:8797"} {
+			req := httptest.NewRequest("GET", "/api/health", nil)
+			req.RemoteAddr = "127.0.0.1:9999"
+			req.Host = host
+			rec := httptest.NewRecorder()
+			f.s.Handler().ServeHTTP(rec, req)
+			if rec.Code != http.StatusOK {
+				t.Errorf("host %s status=%d, want 200", host, rec.Code)
+			}
 		}
 	})
 }
@@ -402,8 +420,18 @@ func TestIndexPage(t *testing.T) {
 	f.addItem(t, "z1", "Zed")
 	resp, body := get(t, f.ts.URL+"/")
 	if resp.StatusCode != 200 || !strings.Contains(body, "TM Sonder") ||
-		!strings.Contains(body, `id="grid"`) || !strings.Contains(body, "/api/library") {
+		!strings.Contains(body, `id="grid"`) ||
+		!strings.Contains(body, "/library.js") || !strings.Contains(body, "/library.css") {
 		t.Errorf("library web UI not served: %d %.120s", resp.StatusCode, body)
+	}
+	// The extracted assets are served and the script still talks to the API.
+	respJS, bodyJS := get(t, f.ts.URL+"/library.js")
+	if respJS.StatusCode != 200 || !strings.Contains(bodyJS, "/api/library") {
+		t.Errorf("library.js not served: %d %.120s", respJS.StatusCode, bodyJS)
+	}
+	respCSS, bodyCSS := get(t, f.ts.URL+"/library.css")
+	if respCSS.StatusCode != 200 || !strings.Contains(bodyCSS, "grid") {
+		t.Errorf("library.css not served: %d %.120s", respCSS.StatusCode, bodyCSS)
 	}
 	// Audiobook browser page.
 	resp2, body2 := get(t, f.ts.URL+"/audiobooks")

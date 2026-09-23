@@ -46,6 +46,38 @@ struct SonderAPITests {
         #expect(decoded.coverSource == "embedded")
     }
 
+    @Test func mediaItemDecodesGenresAndPeopleAndToleratesOldServers() throws {
+        // Current server shape: genres are a distinct field from tags.
+        let json = """
+        {
+          "id": "4D4C8B3A-1C2E-4A6F-9B1D-2E3F4A5B6C7D",
+          "title": "The Fifth Season", "subtitle": "", "kind": "audiobook",
+          "studio": "", "year": 2015, "durationSeconds": 40000, "format": "m4b",
+          "tags": ["audnexus"], "genres": ["Fantasy"], "summary": "",
+          "progressSeconds": 0, "isPlaceholder": false,
+          "author": "N. K. Jemisin", "narrator": "Robin Miles"
+        }
+        """.data(using: .utf8)!
+        let decoded = try JSONDecoder().decode(SonderPublicMediaItem.self, from: json)
+        #expect(decoded.genres == ["Fantasy"])
+        #expect(decoded.author == "N. K. Jemisin")
+        #expect(decoded.narrator == "Robin Miles")
+
+        // Older servers omit the new keys entirely; decoding must still succeed.
+        let legacy = """
+        {
+          "id": "4D4C8B3A-1C2E-4A6F-9B1D-2E3F4A5B6C7E",
+          "title": "Old", "subtitle": "", "kind": "movie", "studio": "",
+          "year": 1999, "durationSeconds": 0, "format": "mkv", "tags": ["wikipedia"],
+          "summary": "", "progressSeconds": 0, "isPlaceholder": false
+        }
+        """.data(using: .utf8)!
+        let old = try JSONDecoder().decode(SonderPublicMediaItem.self, from: legacy)
+        #expect(old.genres.isEmpty)
+        #expect(old.author == nil)
+        #expect(old.narrator == nil)
+    }
+
     @Test func routeHelpersBuildStablePaths() {
         let id = UUID(uuidString: "11111111-1111-4111-8111-111111111111")!
         #expect(SonderAPIRoutes.stream(itemID: id) == "/stream/11111111-1111-4111-8111-111111111111")

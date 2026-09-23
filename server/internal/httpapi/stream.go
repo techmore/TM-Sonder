@@ -62,8 +62,14 @@ func (s *Server) streamTranscode(w http.ResponseWriter, r *http.Request, item *l
 			burnSub = n
 		}
 	}
+	audioTrack := -1
+	if a := q.Get("audio"); a != "" {
+		if n, err := strconv.Atoi(a); err == nil && n >= 0 {
+			audioTrack = n
+		}
+	}
 
-	reader, cleanup, err := s.tm.Attach(r.Context(), item, mode, start, burnSub)
+	reader, cleanup, err := s.tm.Attach(r.Context(), item, mode, start, burnSub, audioTrack)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "Transcode failed to start")
 		return
@@ -124,6 +130,14 @@ func (s *Server) serveArtwork(w http.ResponseWriter, r *http.Request, path strin
 	switch ext {
 	case "png":
 		w.Header().Set("Content-Type", "image/png")
+	case "webp":
+		w.Header().Set("Content-Type", "image/webp")
+	case "gif":
+		w.Header().Set("Content-Type", "image/gif")
+	case "avif":
+		w.Header().Set("Content-Type", "image/avif")
+	case "heic", "heif":
+		w.Header().Set("Content-Type", "image/heic")
 	default:
 		w.Header().Set("Content-Type", "image/jpeg")
 	}

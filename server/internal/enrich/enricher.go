@@ -44,6 +44,7 @@ type Enrichment struct {
 	PosterPath   string   `json:"posterPath,omitempty"`
 	BackdropPath string   `json:"backdropPath,omitempty"`
 	Tags         []string `json:"tags"`
+	Genres       []string `json:"genres,omitempty"`
 	Provider     string   `json:"provider,omitempty"` // wikipedia|audnexus|open-library
 }
 
@@ -93,7 +94,11 @@ func (e *Enricher) Enrich(ctx context.Context, in Input) (*Enrichment, error) {
 	case "ebook":
 		result, err = e.openLibraryLookup(ctx, in, cacheJSON, cachePoster)
 	default:
-		result, err = e.wikipediaSearch(ctx, query, in.Title, cacheJSON, cachePoster, cacheBackdrop)
+		title := in.Title
+		if in.Kind == "tvShow" && in.ShowTitle != "" {
+			title = in.ShowTitle
+		}
+		result, err = e.wikipediaSearch(ctx, query, title, cacheJSON, cachePoster, cacheBackdrop)
 	}
 	if err != nil || result == nil {
 		return result, err

@@ -801,8 +801,8 @@ final class SonderLibrary: ObservableObject {
         commitLibraryMutation()
     }
 
-    func search(_ query: String, kind: SonderMediaKind?, tag: String?) -> [SonderMediaItem] {
-        SonderLibraryQueries.search(items: items, query: query, kind: kind, tag: tag)
+    func search(_ query: String, kind: SonderMediaKind?, tag: String?, genres: Set<String> = []) -> [SonderMediaItem] {
+        SonderLibraryQueries.search(items: items, query: query, kind: kind, tag: tag, genres: genres)
     }
 
     func item(id: UUID) -> SonderMediaItem? {

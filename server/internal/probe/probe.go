@@ -22,27 +22,48 @@ type Result struct {
 	Bitrate         *int
 	AudioTracks     []api.PlaybackTrack
 	SubtitleTracks  []api.PlaybackTrack
+	// AudioCodecs holds each audio stream's codec name in the same order as
+	// AudioTracks, so the transcoder can decide whether audio can be copied
+	// into an MP4 container or must be re-encoded.
+	AudioCodecs        []string
+	AudioChannels      []int
+	AudioBitrates      []int
+	VideoStreamCount   int
+	HasAttachedPicture bool
+	UnsupportedStreams int
+	// StreamCount is the number of streams ffprobe reported. Zero means the
+	// file had no readable streams (broken/unsupported), which callers use to
+	// distinguish "probed successfully" from "probe returned nothing".
+	StreamCount int
+}
+
+// ffprobeStream is the subset of one ffprobe stream the catalog consumes.
+// Named so the parser and track() cannot drift apart.
+type ffprobeStream struct {
+	Index       int    `json:"index"`
+	CodecType   string `json:"codec_type"`
+	CodecName   string `json:"codec_name"`
+	CodecTag    string `json:"codec_tag_string"`
+	Width       int    `json:"width"`
+	Height      int    `json:"height"`
+	BitRate     string `json:"bit_rate"`
+	Channels    int    `json:"channels"`
+	Duration    string `json:"duration"`
+	Disposition struct {
+		Default     int `json:"default"`
+		AttachedPic int `json:"attached_pic"`
+	} `json:"disposition"`
+	Tags struct {
+		Language string `json:"language"`
+		Title    string `json:"title"`
+	} `json:"tags"`
 }
 
 // ffprobeOutput models the relevant subset of -print_format json output.
 type ffprobeOutput struct {
-	Streams []struct {
-		Index       int    `json:"index"`
-		CodecType   string `json:"codec_type"`
-		CodecName   string `json:"codec_name"`
-		Width       int    `json:"width"`
-		Height      int    `json:"height"`
-		BitRate     string `json:"bit_rate"`
-		Duration    string `json:"duration"`
-		Disposition struct {
-			Default int `json:"default"`
-		} `json:"disposition"`
-		Tags struct {
-			Language string `json:"language"`
-			Title    string `json:"title"`
-		} `json:"tags"`
-	} `json:"streams"`
-	Format struct {
+	Streams  []ffprobeStream   `json:"streams"`
+	Chapters []json.RawMessage `json:"chapters"`
+	Format   struct {
 		Duration string `json:"duration"`
 		BitRate  string `json:"bit_rate"`
 	} `json:"format"`
@@ -53,7 +74,7 @@ type ffprobeOutput struct {
 // embedded-subtitle:N where N counts streams of that type in file order.
 func Probe(ctx context.Context, ffprobePath, mediaPath string) (*Result, error) {
 	cmd := exec.CommandContext(ctx, ffprobePath,
-		"-v", "quiet", "-print_format", "json", "-show_format", "-show_streams", mediaPath)
+		"-v", "quiet", "-print_format", "json", "-show_format", "-show_streams", "-show_chapters", mediaPath)
 	out, err := cmd.Output()
 	if err != nil {
 		return nil, fmt.Errorf("probe: ffprobe %s: %w", mediaPath, err)
@@ -68,7 +89,7 @@ func Parse(data []byte) (*Result, error) {
 		return nil, fmt.Errorf("probe: parse ffprobe output: %w", err)
 	}
 
-	res := &Result{}
+	res := &Result{StreamCount: len(raw.Streams)}
 	audioN, subN := 0, 0
 	for i := range raw.Streams {
 		s := &raw.Streams[i]
@@ -76,12 +97,24 @@ func Parse(data []byte) (*Result, error) {
 		case "audio":
 			res.AudioTracks = append(res.AudioTracks, track(
 				"embedded-audio", audioN, s))
+			res.AudioCodecs = append(res.AudioCodecs, strings.ToLower(s.CodecName))
+			res.AudioChannels = append(res.AudioChannels, s.Channels)
+			if bitrate, ok := atoi64(s.BitRate); ok {
+				res.AudioBitrates = append(res.AudioBitrates, int(bitrate))
+			} else {
+				res.AudioBitrates = append(res.AudioBitrates, 0)
+			}
 			audioN++
 		case "subtitle":
 			res.SubtitleTracks = append(res.SubtitleTracks, track(
 				"embedded-subtitle", subN, s))
 			subN++
 		case "video":
+			if s.Disposition.AttachedPic == 0 {
+				res.VideoStreamCount++
+			} else {
+				res.HasAttachedPicture = true
+			}
 			if res.Width == nil && s.Width > 0 {
 				w, h := s.Width, s.Height
 				res.Width, res.Height = &w, &h
@@ -94,30 +127,26 @@ func Parse(data []byte) (*Result, error) {
 					res.Bitrate = &b
 				}
 			}
+		default:
+			if !(s.CodecType == "data" && s.CodecTag == "text" && len(raw.Chapters) > 0) {
+				res.UnsupportedStreams++
+			}
 		}
 	}
 	if d, ok := atof(raw.Format.Duration); ok {
 		res.DurationSeconds = d
 	}
+	// Fall back to the container bitrate when the video stream omits bit_rate.
+	if res.Bitrate == nil {
+		if br, ok := atoi64(raw.Format.BitRate); ok {
+			b := int(br)
+			res.Bitrate = &b
+		}
+	}
 	return res, nil
 }
 
-func track(prefix string, n int, s *struct {
-	Index       int    `json:"index"`
-	CodecType   string `json:"codec_type"`
-	CodecName   string `json:"codec_name"`
-	Width       int    `json:"width"`
-	Height      int    `json:"height"`
-	BitRate     string `json:"bit_rate"`
-	Duration    string `json:"duration"`
-	Disposition struct {
-		Default int `json:"default"`
-	} `json:"disposition"`
-	Tags struct {
-		Language string `json:"language"`
-		Title    string `json:"title"`
-	} `json:"tags"`
-}) api.PlaybackTrack {
+func track(prefix string, n int, s *ffprobeStream) api.PlaybackTrack {
 	id := fmt.Sprintf("%s:%d", prefix, n)
 	code := languageCode(s.Tags.Language)
 	label := strings.TrimSpace(s.Tags.Title)

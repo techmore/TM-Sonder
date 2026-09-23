@@ -6,6 +6,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"tm-sonder/server/internal/config"
 )
 
 func buildPlexFixture(t *testing.T) string {
@@ -123,5 +125,69 @@ func TestPlexGUIDParsing(t *testing.T) {
 		if src != c.src || id != c.id {
 			t.Errorf("plexGUID(%q) = %q/%q, want %q/%q", c.in, src, id, c.src, c.id)
 		}
+	}
+}
+
+func TestPlexFirstFileHandlesCommasInPaths(t *testing.T) {
+	dir := t.TempDir()
+	withComma := filepath.Join(dir, "Movie, The (1999).mkv")
+	if err := os.WriteFile(withComma, []byte("x"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	joined := filepath.Join(dir, "missing.mkv") + plexFileSep + withComma
+	if got := plexFirstFile(joined); got != withComma {
+		t.Errorf("plexFirstFile = %q, want %q", got, withComma)
+	}
+	// A single path with no separator must still work.
+	if got := plexFirstFile(withComma); got != withComma {
+		t.Errorf("single path = %q, want %q", got, withComma)
+	}
+}
+
+func TestCanonicalMediaPathResolvesSymlinks(t *testing.T) {
+	dir := t.TempDir()
+	real := filepath.Join(dir, "real.mkv")
+	if err := os.WriteFile(real, []byte("x"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	link := filepath.Join(dir, "link.mkv")
+	if err := os.Symlink(real, link); err != nil {
+		t.Skipf("symlink unsupported: %v", err)
+	}
+	want := CanonicalMediaPath(real) // idempotent: also resolves /var -> /private/var
+	if got := CanonicalMediaPath(link); got != want {
+		t.Errorf("CanonicalMediaPath(link) = %q, want %q", got, want)
+	}
+}
+
+// TestPlexImportIDMatchesScannerID guards the pruning bug: an imported item's
+// StableID must equal the ID the filesystem scanner assigns to the same file,
+// otherwise the next scan removes every imported item.
+func TestPlexImportIDMatchesScannerID(t *testing.T) {
+	root := fixtureTree(t)
+	// The scanner resolves symlinks in the library root, so compare on the
+	// canonical form (macOS /var is a symlink to /private/var).
+	moviePath := CanonicalMediaPath(filepath.Join(root, "Movies", "Inception (2010)", "Inception.2010.mp4"))
+
+	store := New()
+	sc := NewScanner(store)
+	if _, err := sc.ScanAll([]config.Library{
+		{ID: "movies", Name: "Movies", Path: filepath.Join(root, "Movies"), Kind: "movie"},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	var scannerID string
+	for _, it := range store.InternalItems() {
+		if it.FilePath == moviePath {
+			scannerID = it.ID
+		}
+	}
+	if scannerID == "" {
+		t.Fatalf("scanner did not catalog %s", moviePath)
+	}
+
+	imported := plexItem(moviePath, apiKindMovie(), "Inception", "", 2010, "", "", "", "", "")
+	if imported.ID != scannerID {
+		t.Errorf("imported ID %s != scanner ID %s (item would be pruned)", imported.ID, scannerID)
 	}
 }

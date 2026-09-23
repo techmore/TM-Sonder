@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"html"
 	"net/url"
 	"os"
 	"strings"
@@ -37,39 +38,159 @@ func firstNamed(xs []struct {
 	return xs[0].Name
 }
 
-// wikiInfoboxImage fetches the rendered article page and extracts the first
-// image inside the infobox table — for films that is the release poster at
-// native resolution. Returns "" when the page has no usable image.
-func (e *Enricher) wikiInfoboxImage(ctx context.Context, pageTitle string) string {
-	pageURL := wikiBaseURL + "/wiki/" + url.PathEscape(strings.ReplaceAll(pageTitle, " ", "_"))
+// wikiInfobox fetches the rendered article page and extracts the infobox
+// poster (native resolution) plus the Genre/Genres row. Genres make the web
+// UI's genre facets meaningful for films and series, which have no other
+// genre source. Returns empty values when the page has no usable infobox.
+func (e *Enricher) wikiInfobox(ctx context.Context, pageTitle string) (string, []string) {
+	base, err := url.Parse(wikiBaseURL)
+	if err != nil {
+		return "", nil
+	}
+	base.Path, base.RawPath, base.RawQuery = "", "", ""
+	pageURL := strings.TrimRight(base.String(), "/") + "/wiki/" + url.PathEscape(strings.ReplaceAll(pageTitle, " ", "_"))
 	data, err := e.fetch(ctx, pageURL)
 	if err != nil {
-		return ""
+		return "", nil
 	}
-	html := string(data)
+	doc := string(data)
 
-	infobox := strings.Index(html, `<table class="infobox`)
+	infobox := strings.Index(doc, `<table class="infobox`)
 	if infobox < 0 {
-		infobox = strings.Index(html, `class="infobox`) // mobile/alternate markup
+		infobox = strings.Index(doc, `class="infobox`) // mobile/alternate markup
 	}
 	if infobox < 0 {
-		return ""
+		return "", nil
 	}
-	window := html[infobox:]
+	window := doc[infobox:]
+	if end := strings.Index(window, "</table>"); end >= 0 {
+		window = window[:end]
+	}
 	if len(window) > 24<<10 {
-		window = window[:24<<10] // infobox images appear well within this
+		window = window[:24<<10] // infobox content appears well within this
+	}
+	genres := infoboxGenres(window)
+
+	// Scan a copy for the image so the genre row's position is unaffected.
+	imgWindow := window
+	imgIdx := strings.Index(imgWindow, "<img ")
+	for imgIdx >= 0 {
+		src := extractHTMLAttr(imgWindow[imgIdx:], "src")
+		if u := normalizeWikiImageURL(src); u != "" {
+			return u, genres
+		}
+		imgWindow = imgWindow[imgIdx+5:]
+		imgIdx = strings.Index(imgWindow, "<img ")
+	}
+	return "", genres
+}
+
+// infoboxGenres extracts the Genre/Genres row from an infobox table window.
+func infoboxGenres(window string) []string {
+	for _, label := range []string{">Genre<", ">Genres<", ">Genre ", ">Genres "} {
+		idx := strings.Index(window, label)
+		if idx < 0 {
+			continue
+		}
+		rest := window[idx:]
+		td := strings.Index(rest, "<td")
+		if td < 0 {
+			continue
+		}
+		cell := rest[td:]
+		if end := strings.Index(cell, "</td>"); end >= 0 {
+			cell = cell[:end]
+		}
+		if genres := parseGenreCell(cell); len(genres) > 0 {
+			return genres
+		}
+	}
+	return nil
+}
+
+// parseGenreCell pulls genre names from an infobox cell: anchor text first,
+// then comma/semicolon separated plain text for unlinked values. Caps the list
+// and drops footnote markers and over-long fragments.
+func parseGenreCell(cell string) []string {
+	var out []string
+	seen := map[string]bool{}
+	add := func(v string) {
+		v = stripFootnotes(html.UnescapeString(strings.TrimSpace(v)))
+		v = strings.Trim(v, " \t\n\r,;·")
+		if v == "" || len(v) > 40 {
+			return
+		}
+		key := strings.ToLower(v)
+		if seen[key] {
+			return
+		}
+		seen[key] = true
+		out = append(out, v)
 	}
 
-	imgIdx := strings.Index(window, "<img ")
-	for imgIdx >= 0 {
-		src := extractHTMLAttr(window[imgIdx:], "src")
-		if u := normalizeWikiImageURL(src); u != "" {
-			return u
+	rest := cell
+	for {
+		i := strings.Index(rest, "<a ")
+		if i < 0 {
+			break
 		}
-		window = window[imgIdx+5:]
-		imgIdx = strings.Index(window, "<img ")
+		gt := strings.Index(rest[i:], ">")
+		if gt < 0 {
+			break
+		}
+		closing := strings.Index(rest[i+gt:], "</a>")
+		if closing < 0 {
+			break
+		}
+		add(rest[i+gt+1 : i+gt+closing])
+		rest = rest[i+gt+closing+4:]
 	}
-	return ""
+	// Unescape before splitting: HTML entities such as "&amp;" contain a
+	// semicolon that would otherwise be read as a separator.
+	plain := html.UnescapeString(stripTags(cell))
+	for _, part := range strings.FieldsFunc(plain, func(r rune) bool {
+		return r == ',' || r == ';' || r == '·'
+	}) {
+		add(part)
+	}
+	if len(out) > 6 {
+		out = out[:6]
+	}
+	return out
+}
+
+// stripTags removes markup, keeping text outside angle brackets.
+func stripTags(s string) string {
+	var b strings.Builder
+	depth := 0
+	for _, r := range s {
+		switch {
+		case r == '<':
+			depth++
+		case r == '>':
+			if depth > 0 {
+				depth--
+			}
+		case depth == 0:
+			b.WriteRune(r)
+		}
+	}
+	return b.String()
+}
+
+// stripFootnotes removes bracketed footnote markers such as "[1]".
+func stripFootnotes(s string) string {
+	for {
+		i := strings.Index(s, "[")
+		if i < 0 {
+			return s
+		}
+		j := strings.Index(s[i:], "]")
+		if j < 0 {
+			return s[:i]
+		}
+		s = s[:i] + s[i+j+1:]
+	}
 }
 
 func extractHTMLAttr(fragment, attr string) string {
@@ -100,6 +221,8 @@ func normalizeWikiImageURL(src string) string {
 		src = wikiUploadBaseURL + src[i:]
 	case strings.HasPrefix(src, "http://upload.wikimedia.org/"):
 		src = wikiUploadBaseURL + strings.TrimPrefix(src, "http://upload.wikimedia.org")
+	case strings.HasPrefix(src, "https://upload.wikimedia.org/"):
+		src = wikiUploadBaseURL + strings.TrimPrefix(src, "https://upload.wikimedia.org")
 	default:
 		return "" // only accept Wikimedia-hosted images
 	}
@@ -146,8 +269,10 @@ func (e *Enricher) audnexusLookup(ctx context.Context, in Input, cacheJSON, cach
 		e.downloadTo(ctx, book.Image, cachePoster)
 	}
 	tags := make([]string, 0, len(book.Genres))
+	genres := make([]string, 0, len(book.Genres))
 	for _, g := range book.Genres {
 		tags = append(tags, g.Name)
+		genres = append(genres, g.Name)
 	}
 	payload := &Enrichment{
 		Summary:   book.Description,
@@ -155,6 +280,7 @@ func (e *Enricher) audnexusLookup(ctx context.Context, in Input, cacheJSON, cach
 		Author:    firstNamed(book.Authors),
 		Narrator:  firstNamed(book.Narrators),
 		Tags:      tags,
+		Genres:    genres,
 		Provider:  "audnexus",
 	}
 	writeCache(cacheJSON, payload)
@@ -208,11 +334,13 @@ func (e *Enricher) openLibraryLookup(ctx context.Context, in Input, cacheJSON, c
 			cachePoster)
 	}
 	var tags []string
+	var genres []string
 	for _, s := range match.Subjects {
 		if len(tags) >= 8 {
 			break
 		}
 		tags = append(tags, strings.ToLower(s))
+		genres = append(genres, strings.ToLower(s))
 	}
 	for _, a := range match.AuthorNames {
 		tags = append(tags, strings.ToLower(a))
@@ -223,6 +351,7 @@ func (e *Enricher) openLibraryLookup(ctx context.Context, in Input, cacheJSON, c
 		Summary:  "",
 		Author:   firstString(match.AuthorNames),
 		Tags:     tags,
+		Genres:   genres,
 		Provider: "open-library",
 	}
 	writeCache(cacheJSON, payload)
@@ -343,7 +472,8 @@ func (e *Enricher) wikipediaSearch(ctx context.Context, query, itemTitle, cacheJ
 	// Poster preference: the article's infobox image scraped from the
 	// rendered page (native resolution, exactly what Plex-style UIs want),
 	// falling back to the REST summary's images.
-	if infobox := e.wikiInfoboxImage(ctx, pageTitle); infobox != "" {
+	infobox, genres := e.wikiInfobox(ctx, pageTitle)
+	if infobox != "" {
 		summary.Thumbnail.Source = infobox
 	}
 	if summary.Thumbnail.Source != "" {
@@ -356,6 +486,7 @@ func (e *Enricher) wikipediaSearch(ctx context.Context, query, itemTitle, cacheJ
 		Summary:   summary.Extract,
 		Publisher: summary.Description,
 		Tags:      []string{"wikipedia"},
+		Genres:    genres,
 		Provider:  "wikipedia",
 	}
 	writeCache(cacheJSON, payload)

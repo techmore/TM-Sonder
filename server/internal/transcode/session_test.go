@@ -49,7 +49,7 @@ func TestAttachEncodeProducesFMP4(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 
-	r, cleanup, err := m.Attach(ctx, item, ModeEncode, 0, -1)
+	r, cleanup, err := m.Attach(ctx, item, ModeEncode, 0, -1, -1)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -88,7 +88,7 @@ func TestClientDisconnectKillsFfmpegFast(t *testing.T) {
 	defer m.StopAll()
 
 	ctx := context.Background()
-	r, cleanup, err := m.Attach(ctx, item, ModeEncode, 0, -1)
+	r, cleanup, err := m.Attach(ctx, item, ModeEncode, 0, -1, -1)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -121,7 +121,7 @@ func TestSeekOutsideWindowRespawns(t *testing.T) {
 	defer m.StopAll()
 
 	ctx := context.Background()
-	_, c1, err := m.Attach(ctx, item, ModeEncode, 0, -1)
+	_, c1, err := m.Attach(ctx, item, ModeEncode, 0, -1, -1)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -132,7 +132,7 @@ func TestSeekOutsideWindowRespawns(t *testing.T) {
 	}
 
 	// Far seek -> old session replaced.
-	r2, c2, err := m.Attach(ctx, item, ModeEncode, 5.0, -1)
+	r2, c2, err := m.Attach(ctx, item, ModeEncode, 5.0, -1, -1)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -151,33 +151,46 @@ func TestSemaphoreBoundsConcurrency(t *testing.T) {
 	b := makeFixture(t)
 	m := NewManager(Config{FFmpegPath: ffmpegPath(t), HWAccel: "none", MaxConcurrent: 1})
 
-	var running atomic.Int32
+	// Sample live sessions (one session == one ffmpeg process). Readers on the
+	// same warm session are expected and must not be mistaken for extra
+	// processes, so count sessions rather than readers.
+	stop := make(chan struct{})
+	samplerDone := make(chan struct{})
 	var peak atomic.Int32
-	done := make(chan struct{}, 3)
+	go func() {
+		defer close(samplerDone)
+		for {
+			select {
+			case <-stop:
+				return
+			default:
+			}
+			n := int32(m.sessionCount())
+			for {
+				old := peak.Load()
+				if n <= old || peak.CompareAndSwap(old, n) {
+					break
+				}
+			}
+			time.Sleep(2 * time.Millisecond)
+		}
+	}()
 
+	done := make(chan struct{}, 3)
 	run := func(it *library.Item) {
-		r, cleanup, err := m.Attach(context.Background(), it, ModeEncode, 0, -1)
+		defer func() { done <- struct{}{} }()
+		r, cleanup, err := m.Attach(context.Background(), it, ModeEncode, 0, -1, -1)
 		if err != nil {
 			t.Error(err)
-			done <- struct{}{}
 			return
 		}
-		cur := running.Add(1)
-		for {
-			if old := peak.Load(); cur > old && !peak.CompareAndSwap(old, cur) {
-				continue
-			}
-			break
-		}
+		defer cleanup()
 		buf := make([]byte, 4096)
 		for {
 			if _, err := r.Read(buf); err != nil {
-				break
+				return
 			}
 		}
-		running.Add(-1)
-		cleanup()
-		done <- struct{}{}
 	}
 	for _, it := range []*library.Item{a, b, a} {
 		go run(it)
@@ -186,8 +199,11 @@ func TestSemaphoreBoundsConcurrency(t *testing.T) {
 	<-done
 	<-done
 	m.StopAll()
+	close(stop)
+	<-samplerDone
+
 	if p := peak.Load(); p > 1 {
-		t.Errorf("peak concurrent ffmpeg = %d, want <= MaxConcurrent(1)", p)
+		t.Errorf("peak concurrent ffmpeg sessions = %d, want <= MaxConcurrent(1)", p)
 	}
 }
 
@@ -227,8 +243,154 @@ func containsArg(args []string, s string) bool {
 	return false
 }
 
+// newTestSession builds a Session that needs no ffmpeg process: stop() only
+// requires a working cancel/done pair.
+func newTestSession() (*Session, chan struct{}) {
+	stopped := make(chan struct{})
+	s := &Session{
+		readers: make(map[*reader]struct{}),
+		done:    make(chan struct{}),
+	}
+	s.cancel = func() {
+		close(stopped)
+		close(s.done)
+	}
+	return s, stopped
+}
+
+// TestIdleSessionReapedAfterLastReaderDetaches covers the orphan-ffmpeg fix:
+// once the last reader detaches the session must stop after SessionIdleTTL.
+func TestIdleSessionReapedAfterLastReaderDetaches(t *testing.T) {
+	old := SessionIdleTTL
+	SessionIdleTTL = 50 * time.Millisecond
+	defer func() { SessionIdleTTL = old }()
+
+	s, stopped := newTestSession()
+	r := s.attach()
+	s.closeReader(r)
+
+	select {
+	case <-stopped:
+	case <-time.After(2 * time.Second):
+		t.Fatal("idle session was not stopped")
+	}
+}
+
+// TestReattachCancelsIdleReap verifies warm-session reuse: attaching a new
+// reader before the TTL expires cancels the pending reap.
+func TestReattachCancelsIdleReap(t *testing.T) {
+	old := SessionIdleTTL
+	SessionIdleTTL = 150 * time.Millisecond
+	defer func() { SessionIdleTTL = old }()
+
+	s, stopped := newTestSession()
+	r1 := s.attach()
+	s.closeReader(r1)
+
+	// Reattach within the grace window.
+	time.Sleep(20 * time.Millisecond)
+	r2 := s.attach()
+
+	select {
+	case <-stopped:
+		t.Fatal("session was reaped despite a live reader")
+	case <-time.After(300 * time.Millisecond):
+	}
+
+	// Detaching the last reader arms the reap again.
+	s.closeReader(r2)
+	select {
+	case <-stopped:
+	case <-time.After(2 * time.Second):
+		t.Fatal("idle session was not stopped after final detach")
+	}
+}
+
 func last(args []string) string { return args[len(args)-1] }
 
 func TestMain(m *testing.M) {
 	os.Exit(m.Run())
+}
+
+func TestBuildArgsSelectsAudioTrack(t *testing.T) {
+	cfg := Config{FFmpegPath: "ffmpeg", HWAccel: "none", Preset: "veryfast"}
+
+	first := buildArgs(Request{Path: "/m.mkv", Mode: ModeEncode, AudioTrackN: 0}, cfg)
+	if !containsArg(first, "0:a:0?") {
+		t.Errorf("default audio map wrong: %v", first)
+	}
+
+	third := buildArgs(Request{Path: "/m.mkv", Mode: ModeEncode, AudioTrackN: 2}, cfg)
+	if !containsArg(third, "0:a:2?") {
+		t.Errorf("audio map did not honor track 2: %v", third)
+	}
+	if containsArg(third, "0:a:0?") {
+		t.Errorf("stale default audio map present: %v", third)
+	}
+
+	// Sessions with different audio selections must not share a key.
+	a := Request{Path: "/m.mkv", Mode: ModeRemux, AudioTrackN: 0}
+	b := Request{Path: "/m.mkv", Mode: ModeRemux, AudioTrackN: 1}
+	if a.key() == b.key() {
+		t.Error("session key ignores audio track selection")
+	}
+}
+
+func hasPair(args []string, a, b string) bool {
+	for i := 0; i+1 < len(args); i++ {
+		if args[i] == a && args[i+1] == b {
+			return true
+		}
+	}
+	return false
+}
+
+func TestAudioCopyableDecisions(t *testing.T) {
+	cases := []struct {
+		codecs []string
+		track  int
+		want   bool
+	}{
+		{nil, 0, false},                    // unknown: stay safe
+		{[]string{}, 0, false},             // no codec info: stay safe
+		{[]string{"aac"}, 0, true},         // MP4-safe
+		{[]string{"ac3"}, 0, true},         // MP4-safe
+		{[]string{"dts"}, 0, false},        // must re-encode
+		{[]string{"truehd"}, 0, false},     // must re-encode
+		{[]string{"aac", "dts"}, 0, true},  // selected track is safe
+		{[]string{"aac", "dts"}, 1, false}, // selected track is not
+		{[]string{"aac", "dts"}, 9, false}, // out of range: all must be safe
+		{[]string{"aac", "ac3"}, 9, true},  // out of range but all safe
+	}
+	for _, tc := range cases {
+		item := &library.Item{}
+		item.ProbedAudioCodecs = tc.codecs
+		if got := audioCopyable(item, tc.track); got != tc.want {
+			t.Errorf("audioCopyable(%v, %d) = %v, want %v", tc.codecs, tc.track, got, tc.want)
+		}
+	}
+}
+
+func TestRemuxReencodesUnsafeAudio(t *testing.T) {
+	cfg := Config{HWAccel: "none", Preset: "veryfast"}
+
+	safe := buildArgs(Request{Path: "/m.mkv", Mode: ModeRemux, CopyAudio: true}, cfg)
+	if !hasPair(safe, "-c:v", "copy") || !hasPair(safe, "-c:a", "copy") {
+		t.Errorf("safe remux should copy both streams: %v", safe)
+	}
+
+	unsafe := buildArgs(Request{Path: "/m.mkv", Mode: ModeRemux, CopyAudio: false}, cfg)
+	if !hasPair(unsafe, "-c:v", "copy") {
+		t.Errorf("video must still be remuxed: %v", unsafe)
+	}
+	if !hasPair(unsafe, "-c:a", "aac") {
+		t.Errorf("unsafe audio should be re-encoded to aac: %v", unsafe)
+	}
+
+	// Session key must separate copy vs re-encode decisions.
+	a := Request{Path: "/m.mkv", Mode: ModeRemux, CopyAudio: true}
+	b := Request{Path: "/m.mkv", Mode: ModeRemux, CopyAudio: false}
+	if a.key() == b.key() {
+		t.Error("session key ignores audio copy decision")
+	}
 }

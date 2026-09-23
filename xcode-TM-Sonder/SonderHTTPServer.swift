@@ -34,6 +34,7 @@ nonisolated final class SonderHTTPServer: @unchecked Sendable {
     private let maxRequestBytes = 10 * 1024 * 1024
     /// Bytes pulled from disk and handed to the socket per write during streaming.
     private let streamChunkSize: UInt64 = 512 * 1024
+    private static let audiobookshelfLibraryID = "lib_sonder_audiobooks"
 
     // ── Connection metering ──────────────────────────────────────────────
     /// Maximum concurrent in-flight connections.  Exceeding this causes new
@@ -244,6 +245,14 @@ nonisolated final class SonderHTTPServer: @unchecked Sendable {
             return
         }
 
+        // Audiobookshelf clients authenticate through POST /login before they have
+        // a bearer token. The login handler still validates the configured Sonder
+        // pairing token, so this does not create an unauthenticated LAN surface.
+        if request.path == "/login" {
+            handleAudiobookshelfLogin(connection: connection, request: request)
+            return
+        }
+
         let auth = SonderAuthSnapshot(allowLAN: allowLAN, pairingToken: pairingToken)
         guard auth.isAuthorized(localhost: isLocalPeer, bearer: request.bearerToken, queryToken: request.queryToken) else {
             send(connection, response: makeJSONResponse(["error": "LAN access is disabled or pairing is required in Sonder settings."], status: "403 Forbidden"))
@@ -285,6 +294,16 @@ nonisolated final class SonderHTTPServer: @unchecked Sendable {
             sendAudiobookDetail(connection, path: path)
         case "/api/discovery":
             sendDiscovery(connection)
+        case "/api/libraries":
+            sendAudiobookshelfLibraries(connection)
+        case let path where path.hasPrefix("/api/libraries/") && path.hasSuffix("/items"):
+            sendAudiobookshelfItems(connection, path: path, query: request.queryItems["q"])
+        case let path where path.hasPrefix("/api/items/") && path.hasSuffix("/cover"):
+            sendAudiobookshelfCover(connection, path: path)
+        case let path where path.hasPrefix("/api/items/") && path.contains("/file/"):
+            streamAudiobookshelfFile(connection: connection, path: path, rangeHeader: request.headers["range"])
+        case let path where path.hasPrefix("/api/items/"):
+            sendAudiobookshelfItem(connection, path: path)
         case let path where path.hasPrefix("/api/playback/"):
             handlePlaybackSession(connection: connection, request: request, path: path)
         case let path where path.hasPrefix("/api/progress/"):
@@ -300,6 +319,197 @@ nonisolated final class SonderHTTPServer: @unchecked Sendable {
         default:
             send(connection, response: makeJSONResponse(["error": "Not found"], status: "404 Not Found"))
         }
+    }
+
+    // MARK: - Audiobookshelf compatibility
+
+    private func handleAudiobookshelfLogin(connection: NWConnection, request: HTTPRequest) {
+        struct Login: Decodable { var username: String?; var password: String? }
+        let login = (try? JSONDecoder().decode(Login.self, from: request.body))
+        let expectedPassword = pairingToken.isEmpty ? "sonder" : pairingToken
+        guard login?.password == expectedPassword else {
+            send(connection, response: makeJSONResponse(["error": "Invalid username or password"], status: "401 Unauthorized"))
+            return
+        }
+
+        let token = pairingToken.isEmpty ? "sonder-local-token" : pairingToken
+        let now = Int(Date().timeIntervalSince1970 * 1000)
+        let payload: [String: Any] = [
+            "user": [
+                "id": "sonder-user",
+                "username": login?.username ?? "sonder",
+                "type": "root",
+                "token": token,
+                "mediaProgress": [],
+                "permissions": [
+                    "download": true,
+                    "accessAllLibraries": true,
+                    "accessAllTags": true
+                ],
+                "isActive": true,
+                "isLocked": false,
+                "lastSeen": now
+            ],
+            "userDefaultLibraryId": Self.audiobookshelfLibraryID,
+            "serverSettings": ["version": "1.0.0", "language": "en-us"],
+            "Source": "TM Sonder"
+        ]
+        send(connection, response: makeAnyJSONResponse(payload))
+    }
+
+    private func sendAudiobookshelfLibraries(_ connection: NWConnection) {
+        let now = Int(Date().timeIntervalSince1970 * 1000)
+        let payload: [String: Any] = [
+            "libraries": [[
+                "id": Self.audiobookshelfLibraryID,
+                "name": "Sonder Audiobooks",
+                "folders": [],
+                "displayOrder": 1,
+                "icon": "audiobookshelf",
+                "mediaType": "book",
+                "provider": "sonder",
+                "settings": ["coverAspectRatio": 1],
+                "createdAt": now,
+                "lastUpdate": now
+            ]]
+        ]
+        send(connection, response: makeAnyJSONResponse(payload))
+    }
+
+    private func sendAudiobookshelfItems(_ connection: NWConnection, path: String, query: String?) {
+        let components = path.split(separator: "/").map(String.init)
+        guard components.count >= 4, components[2] == Self.audiobookshelfLibraryID else {
+            send(connection, response: makeJSONResponse(["error": "Library not found"], status: "404 Not Found"))
+            return
+        }
+        Task { @MainActor in
+            let normalizedQuery = query?.trimmingCharacters(in: .whitespacesAndNewlines)
+            let items = self.library.audiobookItems()
+                .filter { normalizedQuery?.isEmpty != false || $0.searchText.localizedCaseInsensitiveContains(normalizedQuery!) }
+                .map { self.makeAudiobookshelfItem($0) }
+            let payload: [String: Any] = [
+                "results": items,
+                "total": items.count,
+                "limit": 0,
+                "page": 0,
+                "sortBy": "media.metadata.title",
+                "sortDesc": false,
+                "mediaType": "book",
+                "minified": false,
+                "collapseseries": false,
+                "include": ""
+            ]
+            self.send(connection, response: self.makeAnyJSONResponse(payload))
+        }
+    }
+
+    @MainActor
+    private func makeAudiobookshelfItem(_ item: SonderMediaItem) -> [String: Any] {
+        let metadata = library.audiobookMetadata(for: item.id)
+        let chapters = library.audiobookChapters(for: item.id)
+        let remoteID = "li_\(item.id.uuidString.replacingOccurrences(of: "-", with: "").lowercased())"
+        let fileID = "\(item.id.uuidString.replacingOccurrences(of: "-", with: "").lowercased())"
+        let filename = item.sourcePath.map { URL(fileURLWithPath: $0).lastPathComponent } ?? "\(item.title).\(item.format.rawValue)"
+        let author = metadata?.author ?? item.studio
+        let metadataObject: [String: Any] = [
+            "title": item.title,
+            "subtitle": item.subtitle.isEmpty ? NSNull() : item.subtitle,
+            "authorName": author,
+            "narratorName": metadata?.narrator ?? NSNull(),
+            "seriesName": metadata?.series ?? NSNull(),
+            "genres": item.tags,
+            "publishedYear": item.year > 0 ? String(item.year) : NSNull(),
+            "publisher": item.studio,
+            "description": item.summary,
+            "explicit": false
+        ]
+        let audioFile: [String: Any] = [
+            "index": 1,
+            "ino": fileID,
+            "metadata": [
+                "filename": filename,
+                "ext": ".\(item.format.rawValue)",
+                "path": filename,
+                "relPath": filename,
+                "size": fileSize(for: item),
+                "mimeType": item.contentType
+            ],
+            "duration": item.durationSeconds,
+            "codec": item.format.rawValue,
+            "chapters": chapters.map { ["id": $0.index, "start": $0.startSeconds, "end": $0.endSeconds ?? item.durationSeconds, "title": $0.title] },
+            "mimeType": item.contentType
+        ]
+        return [
+            "id": remoteID,
+            "ino": fileID,
+            "libraryId": Self.audiobookshelfLibraryID,
+            "folderId": "sonder",
+            "path": filename,
+            "relPath": filename,
+            "isFile": true,
+            "addedAt": Int(Date().timeIntervalSince1970 * 1000),
+            "updatedAt": Int(Date().timeIntervalSince1970 * 1000),
+            "isMissing": false,
+            "isInvalid": false,
+            "mediaType": "book",
+            "media": [
+                "libraryItemId": remoteID,
+                "metadata": metadataObject,
+                "coverPath": item.localPosterPath ?? NSNull(),
+                "tags": item.tags,
+                "numTracks": 1,
+                "numAudioFiles": 1,
+                "numChapters": chapters.count,
+                "duration": item.durationSeconds,
+                "size": fileSize(for: item),
+                "audioFiles": [audioFile]
+            ],
+            "numFiles": 1,
+            "size": fileSize(for: item)
+        ]
+    }
+
+    @MainActor
+    private func fileSize(for item: SonderMediaItem) -> Int {
+        guard let path = item.sourcePath else { return 0 }
+        return (try? FileManager.default.attributesOfItem(atPath: path)[.size] as? NSNumber)?.intValue ?? 0
+    }
+
+    private func sendAudiobookshelfCover(_ connection: NWConnection, path: String) {
+        let components = path.split(separator: "/").map(String.init)
+        guard components.count >= 4,
+              let uuid = UUID(uuidString: String(components[2].dropFirst(3))) else {
+            send(connection, response: makeJSONResponse(["error": "Cover not found"], status: "404 Not Found"))
+            return
+        }
+        sendArtwork(connection: connection, path: "/artwork/poster/\(uuid.uuidString)", kind: .poster)
+    }
+
+    private func sendAudiobookshelfItem(_ connection: NWConnection, path: String) {
+        let components = path.split(separator: "/").map(String.init)
+        guard components.count == 3,
+              components[2].hasPrefix("li_"),
+              let uuid = UUID(uuidString: String(components[2].dropFirst(3))) else {
+            send(connection, response: makeJSONResponse(["error": "Library item not found"], status: "404 Not Found"))
+            return
+        }
+        Task { @MainActor in
+            guard let item = self.library.audiobookItem(id: uuid) else {
+                self.send(connection, response: self.makeJSONResponse(["error": "Library item not found"], status: "404 Not Found"))
+                return
+            }
+            self.send(connection, response: self.makeAnyJSONResponse(self.makeAudiobookshelfItem(item)))
+        }
+    }
+
+    private func streamAudiobookshelfFile(connection: NWConnection, path: String, rangeHeader: String?) {
+        let components = path.split(separator: "/").map(String.init)
+        guard components.count >= 6,
+              let uuid = UUID(uuidString: String(components[2].dropFirst(3))) else {
+            send(connection, response: makeJSONResponse(["error": "Audio file not found"], status: "404 Not Found"))
+            return
+        }
+        streamMedia(connection: connection, path: "/stream/\(uuid.uuidString)", rangeHeader: rangeHeader)
     }
 
     private func send(_ connection: NWConnection, response: Data) {

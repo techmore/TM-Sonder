@@ -59,6 +59,7 @@ func TestMediaItemKeyParity(t *testing.T) {
 		"format", "libraryID", "tags", "summary", "progressSeconds",
 		"showTitle", "seasonNumber", "episodeNumber", "metadataIDSource",
 		"metadataID", "edition", "splitPart", "isPlaceholder", "posterURL",
+		"coverAvailable", "coverEmbedded",
 		"backdropURL", "embeddedAudioTracks", "embeddedSubtitleTracks",
 		"trackProbeUpdatedAt", "probedWidth", "probedHeight", "probedCodec",
 		"probedBitrate", "bookValidation", "coverSource",

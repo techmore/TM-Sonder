@@ -29,6 +29,10 @@ var validHWAccel = map[string]bool{
 	"videotoolbox": true, "none": true, "vaapi": true, "qsv": true,
 }
 
+// ValidKind reports whether kind is a supported library kind. It is the single
+// source of truth shared by config loading and the settings API.
+func ValidKind(kind string) bool { return validKinds[kind] }
+
 type Library struct {
 	ID   string `json:"id"`
 	Name string `json:"name"`
@@ -52,6 +56,8 @@ type Config struct {
 	FFmpegPath   string    `json:"ffmpegPath"`
 	FFprobePath  string    `json:"ffprobePath"`
 	ProbeWorkers int       `json:"probeWorkers,omitempty"`
+	ThumbWorkers int       `json:"thumbWorkers,omitempty"`
+	SafeScan     bool      `json:"safeScan"`
 	Transcode    Transcode `json:"transcode"`
 	LogDir       string    `json:"logDir"`
 }
@@ -67,6 +73,7 @@ func Default() Config {
 		ThemePreset: DefaultThemePreset,
 		FFmpegPath:  "ffmpeg",
 		FFprobePath: "ffprobe",
+		SafeScan:    true,
 		Transcode:   Transcode{MaxConcurrent: 2, HWAccel: "videotoolbox", Preset: "veryfast"},
 		LogDir:      filepath.Join(dataDir, "logs"),
 	}
@@ -173,6 +180,9 @@ func (c *Config) applyEnv() {
 	if v := os.Getenv("SONDER_ALLOW_LAN"); v != "" {
 		c.AllowLAN = parseBool(v)
 	}
+	if v := os.Getenv("SONDER_SAFE_SCAN"); v != "" {
+		c.SafeScan = parseBool(v)
+	}
 	if v := os.Getenv("SONDER_TOKEN"); v != "" {
 		c.PairingToken = v
 	}
@@ -188,6 +198,11 @@ func (c *Config) applyEnv() {
 	if v := os.Getenv("SONDER_PROBE_WORKERS"); v != "" {
 		if n, err := strconv.Atoi(v); err == nil && n > 0 {
 			c.ProbeWorkers = n
+		}
+	}
+	if v := os.Getenv("SONDER_THUMB_WORKERS"); v != "" {
+		if n, err := strconv.Atoi(v); err == nil && n > 0 {
+			c.ThumbWorkers = n
 		}
 	}
 	if v := os.Getenv("SONDER_LOG_DIR"); v != "" {
@@ -266,8 +281,10 @@ var templateBytes = []byte(`// TM Sonder Go server configuration.
 //
 // Environment overrides (highest precedence):
 //   SONDER_PORT, SONDER_DATA_DIR, SONDER_ALLOW_LAN, SONDER_TOKEN,
-//   SONDER_THEME_PRESET, SONDER_FFMPEG_PATH, SONDER_FFPROBE_PATH,
-//   SONDER_LOG_DIR, SONDER_TRANSCODE_MAX_CONCURRENT, SONDER_HWACCEL,
+//   SONDER_SAFE_SCAN, SONDER_THEME_PRESET, SONDER_FFMPEG_PATH,
+//   SONDER_FFPROBE_PATH, SONDER_PROBE_WORKERS, SONDER_THUMB_WORKERS,
+//   SONDER_LOG_DIR,
+//   SONDER_TRANSCODE_MAX_CONCURRENT, SONDER_HWACCEL,
 //   SONDER_TRANSCODE_PRESET
 {
   "port": 8797,
@@ -277,9 +294,12 @@ var templateBytes = []byte(`// TM Sonder Go server configuration.
   ],
   "allowLAN": false,
   "pairingToken": "",
+  "safeScan": true,
   "themePreset": "earthy",
   "ffmpegPath": "ffmpeg",
   "ffprobePath": "ffprobe",
+  "probeWorkers": 0,
+  "thumbWorkers": 0,
   "transcode": { "maxConcurrent": 2, "hwaccel": "videotoolbox", "preset": "veryfast" },
   "logDir": ""
 }

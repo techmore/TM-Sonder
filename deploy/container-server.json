@@ -1,0 +1,19 @@
+// Copy or mount this example as the container's /data/server.json and adjust
+// the library list for the media mounted at /media.
+{
+  "port": 8797,
+  "dataDir": "/data",
+  "libraries": [
+    { "id": "media", "name": "Media", "path": "/media", "kind": "all" }
+  ],
+  "allowLAN": true,
+  "pairingToken": "",
+  "safeScan": true,
+  "themePreset": "earthy",
+  "ffmpegPath": "ffmpeg",
+  "ffprobePath": "ffprobe",
+  "probeWorkers": 0,
+  "thumbWorkers": 0,
+  "transcode": { "maxConcurrent": 2, "hwaccel": "none", "preset": "veryfast" },
+  "logDir": "/data/logs"
+}

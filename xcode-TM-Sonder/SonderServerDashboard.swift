@@ -58,6 +58,22 @@ struct ServerDashboard: View {
                         .fixedSize(horizontal: false, vertical: true)
                 }
 
+                DashboardPanel(title: "BookPlayer / Audiobookshelf") {
+                    Label("Audiobookshelf-compatible audiobook access is available on the same LAN server.", systemImage: "iphone.and.arrow.forward")
+                        .foregroundStyle(SonderTheme.textLight)
+                    EndpointRow(label: "Server", value: "http://<this Mac>:\(library.serverSettings.port)")
+                    EndpointRow(label: "Username", value: "sonder")
+                    EndpointRow(label: "Password", value: library.serverSettings.pairingToken.isEmpty ? "sonder" : library.serverSettings.pairingToken)
+                    Text("In BookPlayer, choose Audiobookshelf and enter this server address. Use any username and the password shown above. The app exposes the Audiobookshelf library, covers, chapters, and downloads for Sonder audiobook files.")
+                        .font(.caption)
+                        .foregroundStyle(SonderTheme.textLight)
+                        .fixedSize(horizontal: false, vertical: true)
+                    Text("For phone access, enable LAN sharing and make sure the Mac and phone are on the same network. If LAN pairing is enabled, the generated pairing token is the password.")
+                        .font(.caption)
+                        .foregroundStyle(SonderTheme.textLight)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+
                 DashboardPanel(title: "Theme") {
                     Picker("Palette", selection: Binding(
                         get: { SonderThemePreset(rawValue: library.serverSettings.themePreset) ?? .earthy },

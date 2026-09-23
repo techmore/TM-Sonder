@@ -23,6 +23,40 @@ func StableID(canonicalPath string) string {
 	return uuidV5(sonderNamespace, canonicalPath)
 }
 
+// StableMediaKey identifies a file by its configured library and path inside
+// that library. Unlike StableID, it remains the same when the library root is
+// mounted at a different absolute path (for example, native macOS versus an
+// Apple Container's /media mount).
+func StableMediaKey(libraryID, relativePath string) string {
+	libraryID = strings.TrimSpace(libraryID)
+	if strings.TrimSpace(relativePath) == "" {
+		return ""
+	}
+	// Preserve significant spaces in filenames while normalizing separators.
+	relativePath = filepath.ToSlash(filepath.Clean(relativePath))
+	if libraryID == "" || relativePath == "" || relativePath == "." || relativePath == ".." || strings.HasPrefix(relativePath, "../") {
+		return ""
+	}
+	return libraryID + "\x00" + relativePath
+}
+
+// RelativeMediaPath returns a portable, slash-separated path within root.
+// It rejects paths outside root so an import cannot accidentally rewrite an
+// unrelated file path.
+func RelativeMediaPath(root, path string) (string, bool) {
+	root = filepath.Clean(root)
+	path = filepath.Clean(path)
+	rel, err := filepath.Rel(root, path)
+	if err != nil {
+		return "", false
+	}
+	rel = filepath.ToSlash(rel)
+	if rel == "." || rel == ".." || strings.HasPrefix(rel, "../") {
+		return "", false
+	}
+	return rel, true
+}
+
 // uuidV5 computes an RFC 4122 version-5 (SHA-1) UUID.
 func uuidV5(ns [16]byte, name string) string {
 	h := sha1.New()
@@ -40,7 +74,7 @@ func uuidV5(ns [16]byte, name string) string {
 // (IDs are path-derived, so progress and item identity survive the rebuild),
 // which propagates parsing fixes to already-cataloged libraries without a
 // full wipe.
-const ParserVersion = 6
+const ParserVersion = 8
 
 // Parsed is the ported result of SonderMediaParser.parseTitle. Kind is chosen
 // by the scanner from library config + extension, not by the parser.
@@ -56,6 +90,7 @@ type Parsed struct {
 	Edition          string
 	SplitPart        string
 	Series           string // ebook/audiobook series or author grouping
+	SeriesNumber     float64
 }
 
 var (
@@ -70,15 +105,17 @@ var (
 
 	reLeadingTag    = regexp.MustCompile(`^\[[^\]]+\][\s._-]*`)
 	reQualityBrack  = regexp.MustCompile(`(?i)\[[^\]]*(?:720|1080|2160|x264|x265|h\.264|h\.265|hevc|aac|flac|bd|bluray|web|webrip|dvd|dual audio)[^\]]*\]`)
-	reQualityParen  = regexp.MustCompile(`(?i)\([^)]*(?:720|1080|2160|x264|x265|h\.264|h\.265|hevc|aac|flac|bd|bluray|web|webrip|dvd|dual audio)[^)]*\]`)
+	reQualityParen  = regexp.MustCompile(`(?i)\([^)]*(?:720|1080|2160|x264|x265|h\.264|h\.265|hevc|aac|flac|bd|bluray|web|webrip|dvd|dual audio)[^)]*\)`)
 	reHash8         = regexp.MustCompile(`(?i)\[[A-F0-9]{8}\]`)
 	reYearParen     = regexp.MustCompile(`\(\d{4}\)`)
+	rePackedEpisode = regexp.MustCompile(`^\d{3,4}\s*-\s*\S`)
 	reYearBare      = regexp.MustCompile(`\b\d{4}\b`)
 	reYearAny       = regexp.MustCompile(`(19|20)\d{2}`)
 	reMetadataTag   = regexp.MustCompile(`(?i)\{(imdb|tmdb|audible|audnexus)-([^}]+)\}`)
 	reEditionTag    = regexp.MustCompile(`(?i)\{edition-([^}]{1,32})\}`)
 	reSplitSuffix   = regexp.MustCompile(`(?i)(?:^|[\s._-])(cd\d+|disc\d+|disk\d+|dvd\d+|part\d+|pt\d+)$`)
 	reTrailingSplit = regexp.MustCompile(`(?i)[\s._-]+(?:cd\d+|disc\d+|disk\d+|dvd\d+|part\d+|pt\d+)$`)
+	reSeriesNumber  = regexp.MustCompile(`(?i)^\s*(?:book|bk|volume|vol\.?\s*)?([0-9]+(?:\.[0-9]+)?)\s*[-._:)]+\s+`)
 
 	// Quality tail: from the first resolution token (1080p/720p/480p...) to
 	// the end — e.g. " Show S04 E18 Extended 1080p Bluray AAC" -> " Show S04 E18 Extended".
@@ -242,6 +279,12 @@ var tvPatterns = []tvMatch{
 // parseAbsoluteEpisode ports the tvShows-library absolute numbering fallback.
 func parseAbsoluteEpisode(raw, folderShow string, season int) (*Parsed, bool) {
 	normalized := cleanMediaTitle(reLeadingTag.ReplaceAllString(raw, ""))
+	// Packed numeric filenames are ambiguous (101 may mean S01E01 or
+	// absolute episode 101). Never treat a trailing copy suffix as an
+	// episode code and the preceding episode title as a new show.
+	if rePackedEpisode.MatchString(normalized) {
+		return nil, false
+	}
 	type cand struct {
 		showGroup bool
 		re        *regexp.Regexp
@@ -254,6 +297,12 @@ func parseAbsoluteEpisode(raw, folderShow string, season int) (*Parsed, bool) {
 		var show, epStr, title string
 		if c.showGroup {
 			show, epStr, title = m[1], m[2], m[3]
+			// Prefer the folder only when the parsed prefix is its name plus
+			// a stray Season marker, not for unrelated or ambiguous titles.
+			candidate := strings.TrimSuffix(show, " Season")
+			if candidate != show && strings.EqualFold(candidate, strings.TrimSpace(reYearParen.ReplaceAllString(folderShow, ""))) {
+				show = candidate
+			}
 		} else {
 			epStr, title = m[1], m[2]
 		}
@@ -395,7 +444,11 @@ func ParseFilename(path, libraryKind string) Parsed {
 		if y := extractYear(raw); y > 0 {
 			sub = "Audiobook - " + strconv.Itoa(y)
 		}
-		return simpleParsed(t, sub, extractYear(raw), metadataSource, metadataID, edition, splitPart)
+		p := simpleParsed(t, sub, extractYear(raw), metadataSource, metadataID, edition, splitPart)
+		if m := reSeriesNumber.FindStringSubmatch(raw); m != nil {
+			p.SeriesNumber, _ = strconv.ParseFloat(m[1], 64)
+		}
+		return p
 	case "ebook":
 		t := fileTitle
 		if t == "" {

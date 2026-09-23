@@ -84,30 +84,39 @@ type PlaybackTrack struct {
 }
 
 type MediaItem struct {
-	ID               string      `json:"id"`
-	Title            string      `json:"title"`
-	Subtitle         string      `json:"subtitle"`
-	Kind             MediaKind   `json:"kind"`
-	Studio           string      `json:"studio"`
-	Year             int         `json:"year"`
-	DurationSeconds  float64     `json:"durationSeconds"`
-	Format           MediaFormat `json:"format"`
-	LibraryID        *string     `json:"libraryID"`
-	Tags             []string    `json:"tags"`
-	Summary          string      `json:"summary"`
-	ProgressSeconds  float64     `json:"progressSeconds"`
-	ShowTitle        *string     `json:"showTitle"`
-	SeasonNumber     *int        `json:"seasonNumber"`
-	EpisodeNumber    *int        `json:"episodeNumber"`
-	MetadataIDSource *string     `json:"metadataIDSource"`
-	MetadataID       *string     `json:"metadataID"`
-	Edition          *string     `json:"edition"`
-	SplitPart        *string     `json:"splitPart"`
+	ID              string      `json:"id"`
+	Title           string      `json:"title"`
+	Subtitle        string      `json:"subtitle"`
+	Kind            MediaKind   `json:"kind"`
+	Studio          string      `json:"studio"`
+	Series          string      `json:"series,omitempty"`
+	SeriesNumber    float64     `json:"seriesNumber,omitempty"`
+	Year            int         `json:"year"`
+	DurationSeconds float64     `json:"durationSeconds"`
+	Format          MediaFormat `json:"format"`
+	LibraryID       *string     `json:"libraryID"`
+	Tags            []string    `json:"tags"`
+	// Genres is the curated genre list (distinct from Tags, which also holds
+	// free-form provider keywords and people names).
+	Genres           []string `json:"genres,omitempty"`
+	Summary          string   `json:"summary"`
+	ProgressSeconds  float64  `json:"progressSeconds"`
+	ShowTitle        *string  `json:"showTitle"`
+	ShowGroupID      *string  `json:"showGroupID,omitempty"`
+	ShowGroupTitle   *string  `json:"showGroupTitle,omitempty"`
+	SeasonNumber     *int     `json:"seasonNumber"`
+	EpisodeNumber    *int     `json:"episodeNumber"`
+	MetadataIDSource *string  `json:"metadataIDSource"`
+	MetadataID       *string  `json:"metadataID"`
+	Edition          *string  `json:"edition"`
+	SplitPart        *string  `json:"splitPart"`
 	// Author/Narrator are populated for audiobooks and ebooks (enrichment
 	// and filename parsing); they are distinct from Tags, which holds
 	// genres plus provider keywords.
 	Author                 *string         `json:"author,omitempty"`
 	Narrator               *string         `json:"narrator,omitempty"`
+	CoverAvailable         bool            `json:"coverAvailable"`
+	CoverEmbedded          bool            `json:"coverEmbedded"`
 	IsPlaceholder          bool            `json:"isPlaceholder"`
 	PosterURL              *string         `json:"posterURL"`
 	BackdropURL            *string         `json:"backdropURL"`
@@ -117,6 +126,7 @@ type MediaItem struct {
 	ProbedWidth            *int            `json:"probedWidth"`
 	ProbedHeight           *int            `json:"probedHeight"`
 	ProbedCodec            *string         `json:"probedCodec"`
+	ProbedAudioCodecs      []string        `json:"probedAudioCodecs,omitempty"`
 	ProbedBitrate          *int            `json:"probedBitrate"`
 	BookValidation         *string         `json:"bookValidation"`
 	CoverSource            *string         `json:"coverSource"`

@@ -4,7 +4,13 @@ import (
 	"context"
 	"sync"
 	"time"
+
+	"tm-sonder/server/internal/api"
 )
+
+// maxCacheEntries bounds the probe cache so a long-lived server that churns
+// through many files cannot grow it without limit.
+const maxCacheEntries = 4096
 
 type cacheEntry struct {
 	size   int64
@@ -13,10 +19,12 @@ type cacheEntry struct {
 }
 
 // Cache memoizes probe results keyed by path, invalidated by size+mtime.
-// It is safe for concurrent use.
+// It is safe for concurrent use and evicts least-recently-inserted entries
+// once maxCacheEntries is reached.
 type Cache struct {
 	mu      sync.RWMutex
 	entries map[string]cacheEntry
+	order   []string // insertion order for FIFO eviction
 	ffprobe string
 }
 
@@ -24,13 +32,13 @@ func NewCache(ffprobePath string) *Cache {
 	return &Cache{entries: make(map[string]cacheEntry), ffprobe: ffprobePath}
 }
 
-// ProbeResult returns the cached result when the file is unchanged, else it
-// re-probes and refreshes the cache.
+// ProbeResult returns a copy of the cached result when the file is unchanged,
+// else it re-probes and refreshes the cache. Callers own the returned value.
 func (c *Cache) ProbeResult(ctx context.Context, path string, size int64, mod time.Time) (*Result, error) {
 	c.mu.RLock()
 	if e, ok := c.entries[path]; ok && e.size == size && e.mod.Equal(mod) {
 		c.mu.RUnlock()
-		return e.result, nil
+		return e.result.clone(), nil
 	}
 	c.mu.RUnlock()
 
@@ -39,65 +47,81 @@ func (c *Cache) ProbeResult(ctx context.Context, path string, size int64, mod ti
 		return nil, err
 	}
 	c.mu.Lock()
-	c.entries[path] = cacheEntry{size: size, mod: mod, result: res}
+	c.storeLocked(path, cacheEntry{size: size, mod: mod, result: res})
 	c.mu.Unlock()
-	return res, nil
+	return res.clone(), nil
 }
 
-// probeJob is one pending unit of work handed to RunPool.
-type probeJob struct {
-	Path string
-	Size int64
-	Mod  time.Time
-}
-
-type probeOutcome struct {
-	job    probeJob
-	result *Result
-	err    error
-}
-
-// RunPool probes jobs with `workers` concurrent goroutines, invoking onDone
-// per completed outcome. Workers defaults to 2. Blocks until all work drains.
-func (c *Cache) RunPool(ctx context.Context, workers int, jobs []probeJob, onDone func(job probeJob, res *Result, err error)) {
-	if workers < 1 {
-		workers = 2
-	}
-	in := make(chan probeJob)
-	out := make(chan probeOutcome)
-
-	var wg sync.WaitGroup
-	for i := 0; i < workers; i++ {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
-			for j := range in {
-				res, err := c.ProbeResult(ctx, j.Path, j.Size, j.Mod)
-				out <- probeOutcome{job: j, result: res, err: err}
-			}
-		}()
-	}
-
-	go func() {
-		defer close(out)
-		for _, j := range jobs {
-			select {
-			case in <- j:
-			case <-ctx.Done():
-				close(in)
-				return
-			}
+// storeLocked inserts or replaces an entry, evicting the oldest insertion when
+// the cache is full. Caller must hold c.mu.
+func (c *Cache) storeLocked(path string, e cacheEntry) {
+	if _, exists := c.entries[path]; !exists {
+		if len(c.order) >= maxCacheEntries {
+			oldest := c.order[0]
+			c.order = c.order[1:]
+			delete(c.entries, oldest)
 		}
-		close(in)
-	}()
-
-	for i := 0; i < len(jobs); i++ {
-		select {
-		case o := <-out:
-			onDone(o.job, o.result, o.err)
-		case <-ctx.Done():
-			return
-		}
+		c.order = append(c.order, path)
 	}
-	wg.Wait()
+	c.entries[path] = e
+}
+
+// Len reports the number of cached entries (introspection/tests).
+func (c *Cache) Len() int {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	return len(c.entries)
+}
+
+// clone deep-copies a Result so cached state can never be mutated by callers.
+func (r *Result) clone() *Result {
+	if r == nil {
+		return nil
+	}
+	c := *r
+	c.Width = cloneIntPtr(r.Width)
+	c.Height = cloneIntPtr(r.Height)
+	c.Codec = cloneStringPtr(r.Codec)
+	c.Bitrate = cloneIntPtr(r.Bitrate)
+	c.AudioTracks = cloneTracks(r.AudioTracks)
+	c.SubtitleTracks = cloneTracks(r.SubtitleTracks)
+	if r.AudioCodecs != nil {
+		c.AudioCodecs = append([]string(nil), r.AudioCodecs...)
+	}
+	if r.AudioChannels != nil {
+		c.AudioChannels = append([]int(nil), r.AudioChannels...)
+	}
+	if r.AudioBitrates != nil {
+		c.AudioBitrates = append([]int(nil), r.AudioBitrates...)
+	}
+	return &c
+}
+
+func cloneTracks(in []api.PlaybackTrack) []api.PlaybackTrack {
+	if in == nil {
+		return nil
+	}
+	out := make([]api.PlaybackTrack, len(in))
+	copy(out, in)
+	for i := range out {
+		out[i].LanguageCode = cloneStringPtr(out[i].LanguageCode)
+		out[i].URL = cloneStringPtr(out[i].URL)
+	}
+	return out
+}
+
+func cloneStringPtr(p *string) *string {
+	if p == nil {
+		return nil
+	}
+	v := *p
+	return &v
+}
+
+func cloneIntPtr(p *int) *int {
+	if p == nil {
+		return nil
+	}
+	v := *p
+	return &v
 }

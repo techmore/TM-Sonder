@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -27,6 +28,7 @@ func TestSettingsGetLoopbackIncludesToken(t *testing.T) {
 
 	req := httptest.NewRequest("GET", "/api/settings", nil)
 	req.RemoteAddr = "127.0.0.1:1111"
+	req.Host = "127.0.0.1:8797"
 	rec := httptest.NewRecorder()
 	f.s.Handler().ServeHTTP(rec, req)
 	if rec.Code != 200 {
@@ -54,6 +56,7 @@ func TestSettingsPutAddsLibraryAndRescans(t *testing.T) {
 	body := `{"libraries":[{"name":"NAS","path":"` + mediaDir + `","kind":"movie"}]}`
 	req := httptest.NewRequest("PUT", "/api/settings", strings.NewReader(body))
 	req.RemoteAddr = "127.0.0.1:1111"
+	req.Host = "127.0.0.1:8797"
 	rec := httptest.NewRecorder()
 	f.s.Handler().ServeHTTP(rec, req)
 	if rec.Code != 200 {
@@ -91,6 +94,7 @@ func TestSettingsPutRejectsBadKindAndMissingPath(t *testing.T) {
 	for _, body := range cases {
 		req := httptest.NewRequest("PUT", "/api/settings", strings.NewReader(body))
 		req.RemoteAddr = "127.0.0.1:1111"
+		req.Host = "127.0.0.1:8797"
 		rec := httptest.NewRecorder()
 		f.s.Handler().ServeHTTP(rec, req)
 		if rec.Code != http.StatusBadRequest {
@@ -103,6 +107,7 @@ func TestSettingsRescanEndpoint(t *testing.T) {
 	f := newFixture(t, nil)
 	req := httptest.NewRequest("POST", "/api/settings/rescan", nil)
 	req.RemoteAddr = "127.0.0.1:1111"
+	req.Host = "127.0.0.1:8797"
 	rec := httptest.NewRecorder()
 	f.s.Handler().ServeHTTP(rec, req)
 	if rec.Code != http.StatusAccepted {
@@ -120,6 +125,7 @@ func TestSettingsBrowse(t *testing.T) {
 	getJSON := func(q string) map[string]any {
 		req := httptest.NewRequest("GET", "/api/settings/browse"+q, nil)
 		req.RemoteAddr = "127.0.0.1:1111"
+		req.Host = "127.0.0.1:8797"
 		rec := httptest.NewRecorder()
 		f.s.Handler().ServeHTTP(rec, req)
 		if rec.Code != 200 {
@@ -145,6 +151,7 @@ func TestSettingsBrowse(t *testing.T) {
 	// Nonexistent path -> 400.
 	req := httptest.NewRequest("GET", "/api/settings/browse?path=/no/such/dir", nil)
 	req.RemoteAddr = "127.0.0.1:1111"
+	req.Host = "127.0.0.1:8797"
 	rec2 := httptest.NewRecorder()
 	f.s.Handler().ServeHTTP(rec2, req)
 	if rec2.Code != 400 {
@@ -160,5 +167,81 @@ func TestSettingsBrowse(t *testing.T) {
 	joined := strings.Join(names, ",")
 	if !strings.Contains(joined, "Home") || !strings.Contains(joined, "Volumes") {
 		t.Errorf("starting points missing Home/Volumes: %v", names)
+	}
+}
+
+// TestConcurrentSettingsWritesAndReads guards the copy-on-write config fix:
+// settings writes must not race config reads from other handlers. Run with
+// -race to be meaningful.
+func TestConcurrentSettingsWritesAndReads(t *testing.T) {
+	mediaDir := t.TempDir()
+	cfg := config.Default()
+	f := newFixture(t, func(c *config.Config) { c.DataDir = cfg.DataDir })
+	f.s.SetConfigPath(filepath.Join(t.TempDir(), "server.json"))
+
+	do := func(method, path, body string) {
+		var rdr *strings.Reader
+		if body != "" {
+			rdr = strings.NewReader(body)
+		} else {
+			rdr = strings.NewReader("")
+		}
+		req := httptest.NewRequest(method, path, rdr)
+		req.RemoteAddr = "127.0.0.1:1111"
+		req.Host = "127.0.0.1:8797"
+		rec := httptest.NewRecorder()
+		f.s.Handler().ServeHTTP(rec, req)
+	}
+
+	body := `{"libraries":[{"name":"NAS","path":"` + mediaDir + `","kind":"movie"}],"themePreset":"earthy"}`
+	var wg sync.WaitGroup
+	for i := 0; i < 8; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			do("PUT", "/api/settings", body)
+		}()
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			do("GET", "/api/health", "")
+			do("GET", "/api/discovery", "")
+			do("GET", "/api/settings", "")
+		}()
+	}
+	wg.Wait()
+
+	// The last write is visible and the config file parses.
+	if got := f.s.cfg().ThemePreset; got != "earthy" {
+		t.Errorf("theme = %q", got)
+	}
+}
+
+// TestSettingsClearingLibrariesRequiresConfirmation verifies the guard against
+// accidentally wiping the catalog with an empty library table.
+func TestSettingsClearingLibrariesRequiresConfirmation(t *testing.T) {
+	cfg := config.Default()
+	f := newFixture(t, func(c *config.Config) {
+		c.DataDir = cfg.DataDir
+		c.Libraries = []config.Library{{ID: "movies", Name: "Movies", Path: t.TempDir(), Kind: "movie"}}
+	})
+	f.s.SetConfigPath(filepath.Join(t.TempDir(), "server.json"))
+
+	put := func(path string) int {
+		req := httptest.NewRequest("PUT", path, strings.NewReader(`{"libraries":[]}`))
+		req.RemoteAddr = "127.0.0.1:1111"
+		req.Host = "127.0.0.1:8797"
+		rec := httptest.NewRecorder()
+		f.s.Handler().ServeHTTP(rec, req)
+		return rec.Code
+	}
+	if got := put("/api/settings"); got != http.StatusConflict {
+		t.Errorf("unconfirmed clear status = %d, want 409", got)
+	}
+	if got := put("/api/settings?confirm=empty-libraries"); got != http.StatusOK {
+		t.Errorf("confirmed clear status = %d, want 200", got)
+	}
+	if n := len(f.s.cfg().Libraries); n != 0 {
+		t.Errorf("libraries = %d, want 0 after confirmed clear", n)
 	}
 }

@@ -2,9 +2,7 @@ package httpapi
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
-	"io"
 	"log"
 	"net/http"
 	"os"
@@ -12,11 +10,11 @@ import (
 	"strings"
 	"sync"
 	"sync/atomic"
+	"time"
 
 	"tm-sonder/server/internal/api"
 	"tm-sonder/server/internal/config"
 	"tm-sonder/server/internal/enrich"
-	"tm-sonder/server/internal/library"
 )
 
 // SettingsPayload is the GET/PUT shape for /api/settings. The pairing token
@@ -45,14 +43,9 @@ type LibraryEntry struct {
 }
 
 func (s *Server) settingsPayload(includeToken bool) SettingsPayload {
-	counts := map[string]int{}
-	for _, it := range s.store.InternalItems() {
-		if it.LibraryID != nil {
-			counts[*it.LibraryID]++
-		}
-	}
-	libs := make([]LibraryEntry, 0, len(s.cfg.Libraries))
-	for _, l := range s.cfg.Libraries {
+	counts := s.store.CountByLibrary()
+	libs := make([]LibraryEntry, 0, len(s.cfg().Libraries))
+	for _, l := range s.cfg().Libraries {
 		libs = append(libs, LibraryEntry{
 			ID: l.ID, Name: l.Name, Path: l.Path, Kind: l.Kind,
 			ItemCount: counts[l.ID],
@@ -60,27 +53,50 @@ func (s *Server) settingsPayload(includeToken bool) SettingsPayload {
 	}
 	p := SettingsPayload{
 		Version:         int(atomic.LoadInt64(&s.settingsVersion)),
-		Port:            s.cfg.Port,
-		DataDir:         s.cfg.DataDir,
-		AllowLAN:        s.cfg.AllowLAN,
-		TokenConfigured: s.cfg.PairingToken != "",
+		Port:            s.cfg().Port,
+		DataDir:         s.cfg().DataDir,
+		AllowLAN:        s.cfg().AllowLAN,
+		TokenConfigured: s.cfg().PairingToken != "",
 		RequiresPairing: s.requiresPairing(),
-		ThemePreset:     s.cfg.ThemePreset,
-		HWAccel:         s.cfg.Transcode.HWAccel,
-		MaxConcurrent:   s.cfg.Transcode.MaxConcurrent,
+		ThemePreset:     s.cfg().ThemePreset,
+		HWAccel:         s.cfg().Transcode.HWAccel,
+		MaxConcurrent:   s.cfg().Transcode.MaxConcurrent,
 		Libraries:       libs,
 		SuggestedMounts: suggestedMounts(),
 	}
-	if includeToken && s.cfg.PairingToken != "" {
-		t := s.cfg.PairingToken
+	if includeToken && s.cfg().PairingToken != "" {
+		t := s.cfg().PairingToken
 		p.PairingToken = &t
 	}
 	return p
 }
 
+// mountsCacheTTL bounds how stale the mount list may be. Enumerating /Volumes
+// and /mnt can block for seconds on a stale network mount, so it must not run
+// on every settings request.
+const mountsCacheTTL = 30 * time.Second
+
+var (
+	mountsMu     sync.Mutex
+	mountsCache  []string
+	mountsCached time.Time
+)
+
 // suggestedMounts lists mounted external volumes — NAS shares mount under
-// /Volumes on macOS; /mnt covers common Linux container layouts.
+// /Volumes on macOS; /mnt covers common Linux container layouts. The listing is
+// cached briefly so a hung mount cannot stall the settings endpoint.
 func suggestedMounts() []string {
+	mountsMu.Lock()
+	defer mountsMu.Unlock()
+	if mountsCache != nil && time.Since(mountsCached) < mountsCacheTTL {
+		return append([]string(nil), mountsCache...)
+	}
+	out := listMounts()
+	mountsCache, mountsCached = out, time.Now()
+	return append([]string(nil), out...)
+}
+
+func listMounts() []string {
 	var out []string
 	for _, root := range []string{"/Volumes", "/mnt"} {
 		entries, err := os.ReadDir(root)
@@ -115,19 +131,33 @@ type settingsUpdate struct {
 // changes to the running config, persists the config file, and rescans when
 // the library table changed.
 func (s *Server) handleSettingsPut(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPut && r.Method != http.MethodPatch {
+		writeError(w, http.StatusMethodNotAllowed, "Method not allowed")
+		return
+	}
 	var upd settingsUpdate
-	if err := json.NewDecoder(io.LimitReader(r.Body, 1<<20)).Decode(&upd); err != nil {
+	if err := jsonDecode(w, r, &upd); err != nil {
 		writeError(w, http.StatusBadRequest, "Invalid settings payload")
 		return
 	}
 
+	current := s.cfg()
 	rescanNeeded := false
+	nextLibs := current.Libraries
 	if upd.Libraries != nil {
+		// Guard against an accidental empty library table wiping the catalog:
+		// require an explicit acknowledgement when libraries already exist.
+		if len(*upd.Libraries) == 0 && len(current.Libraries) > 0 &&
+			r.URL.Query().Get("confirm") != "empty-libraries" {
+			writeError(w, http.StatusConflict,
+				"Refusing to clear all libraries; resend with ?confirm=empty-libraries")
+			return
+		}
 		// Preserve stable library identities: a re-submitted library pointing
 		// at the same path keeps its previous ID so already-scanned items
 		// stay attached.
 		prevByID := map[string]config.Library{}
-		for _, l := range s.cfg.Libraries {
+		for _, l := range current.Libraries {
 			prevByID[l.Path] = l
 		}
 		for i := range *upd.Libraries {
@@ -142,21 +172,35 @@ func (s *Server) handleSettingsPut(w http.ResponseWriter, r *http.Request) {
 			writeError(w, http.StatusBadRequest, err.Error())
 			return
 		}
-		s.cfg.Libraries = libs
-		s.store.SetDirectories(directoriesFromLibraries(libs))
+		nextLibs = libs
 		rescanNeeded = true
 	}
-	if upd.AllowLAN != nil {
-		s.cfg.AllowLAN = *upd.AllowLAN
-		// Mirror startup policy: enabling LAN auto-provisions a token.
-		if s.cfg.AllowLAN && s.cfg.PairingToken == "" {
-			token := api.NewID() + api.NewID()
-			s.cfg.PairingToken = token
-			s.persistPairingToken(token)
+
+	newToken := ""
+	updated := s.updateConfig(func(next *config.Config) {
+		if upd.Libraries != nil {
+			next.Libraries = nextLibs
+		}
+		if upd.AllowLAN != nil {
+			next.AllowLAN = *upd.AllowLAN
+			// Mirror startup policy: enabling LAN auto-provisions a token.
+			if next.AllowLAN && next.PairingToken == "" {
+				next.PairingToken = api.NewID() + api.NewID()
+				newToken = next.PairingToken
+			}
+		}
+		if upd.ThemePreset != nil && strings.TrimSpace(*upd.ThemePreset) != "" {
+			next.ThemePreset = strings.TrimSpace(*upd.ThemePreset)
+		}
+	})
+	if upd.Libraries != nil {
+		s.store.SetDirectories(directoriesFromLibraries(updated.Libraries))
+		if s.audiobookOptimizer != nil {
+			s.audiobookOptimizer.SetLibraries(updated.Libraries)
 		}
 	}
-	if upd.ThemePreset != nil && strings.TrimSpace(*upd.ThemePreset) != "" {
-		s.cfg.ThemePreset = strings.TrimSpace(*upd.ThemePreset)
+	if newToken != "" {
+		s.persistPairingToken(newToken)
 	}
 
 	if err := s.persistConfig(); err != nil {
@@ -166,8 +210,9 @@ func (s *Server) handleSettingsPut(w http.ResponseWriter, r *http.Request) {
 	atomic.AddInt64(&s.settingsVersion, 1)
 
 	if rescanNeeded {
+		libs := append([]config.Library(nil), updated.Libraries...)
 		go func() {
-			if _, err := s.scanner.ScanAll(s.cfg.Libraries); err == nil && s.snapshotPath != "" {
+			if _, err := s.scanner.ScanAll(libs); err == nil && s.snapshotPath != "" {
 				_ = s.store.Flush(s.snapshotPath)
 			}
 		}()
@@ -247,7 +292,7 @@ func (s *Server) handleSettingsRescan(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	go func() {
-		if _, err := s.scanner.ScanAll(s.cfg.Libraries); err == nil && s.snapshotPath != "" {
+		if _, err := s.scanner.ScanAll(s.cfg().Libraries); err == nil && s.snapshotPath != "" {
 			_ = s.store.Flush(s.snapshotPath)
 		}
 	}()
@@ -264,7 +309,8 @@ func (s *Server) handleSettingsEnrich(w http.ResponseWriter, r *http.Request) {
 	go func() {
 		defer s.enriching.Store(false)
 		logger := log.New(log.Writer(), "sonder-enrich ", log.LstdFlags)
-		RunEnrichmentPass(logger, s.store, filepath.Join(s.cfg.DataDir, "metadata-cache"))
+		enrich.RunPass(context.Background(), logger, s.store,
+			filepath.Join(s.cfg().DataDir, "metadata-cache"))
 		if s.snapshotPath != "" {
 			_ = s.store.Flush(s.snapshotPath)
 		}
@@ -276,8 +322,6 @@ func (s *Server) handleSettingsEnrich(w http.ResponseWriter, r *http.Request) {
 func sanitizeLibraries(in []LibraryEntry) ([]config.Library, error) {
 	out := make([]config.Library, 0, len(in))
 	seenPath := map[string]bool{}
-	validKinds := map[string]bool{"movie": true, "tvShow": true, "documentary": true,
-		"audiobook": true, "ebook": true, "all": true, "plex": true}
 	for i, l := range in {
 		path := filepath.Clean(strings.TrimSpace(l.Path))
 		name := strings.TrimSpace(l.Name)
@@ -288,7 +332,7 @@ func sanitizeLibraries(in []LibraryEntry) ([]config.Library, error) {
 		if st, err := os.Stat(path); err != nil || !st.IsDir() {
 			return nil, fmt.Errorf("libraries[%d] (%q): path is not a readable directory", i, name)
 		}
-		if !validKinds[kind] {
+		if !config.ValidKind(kind) {
 			return nil, fmt.Errorf("libraries[%d] (%q): kind must be movie|tvShow|documentary|audiobook|ebook|all", i, name)
 		}
 		if seenPath[path] {
@@ -320,164 +364,4 @@ func directoriesFromLibraries(libs []config.Library) []api.MediaDirectory {
 		})
 	}
 	return out
-}
-
-// RunEnrichmentPass fetches official metadata for items missing a summary or
-// still carrying only generated thumbnails. Official posters override frame
-// grabs; locally discovered artwork is never replaced. Returns updates count.
-// runEnrichmentPass fetches official metadata for items that are missing a
-// summary or still carry only a generated thumbnail. Official provider
-// posters override generated thumbnails; locally discovered artwork is never
-// replaced. Returns how many items were updated.
-func RunEnrichmentPass(logger *log.Logger, store *library.Store, cacheRoot string) int {
-	enricher := enrich.New(cacheRoot)
-	const workers = 3
-
-	type job struct{ item *library.Item }
-	var candidates []*library.Item
-	for _, it := range store.InternalItems() {
-		needsSummary := it.Summary == ""
-		needsOfficialPoster := it.PosterSource == "" || it.PosterSource == "thumbnail"
-		if needsSummary || needsOfficialPoster {
-			candidates = append(candidates, it)
-		}
-	}
-	logger.Printf("enrichment pass: %d candidate item(s)", len(candidates))
-
-	in := make(chan job)
-	var wg sync.WaitGroup
-	var updated atomic.Int64
-	done := 0
-	var progressMu sync.Mutex
-
-	for i := 0; i < workers; i++ {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
-			for j := range in {
-				it := j.item
-				in2 := enrich.Input{
-					Title:            it.Title,
-					Kind:             string(it.Kind),
-					Year:             it.Year,
-					Studio:           it.Studio,
-					Edition:          derefStr(it.Edition),
-					MetadataIDSource: derefStr(it.MetadataIDSource),
-					MetadataID:       derefStr(it.MetadataID),
-				}
-				if it.ShowTitle != nil {
-					in2.ShowTitle = *it.ShowTitle
-				}
-				if it.SeasonNumber != nil && it.EpisodeNumber != nil {
-					in2.Season, in2.Episode = *it.SeasonNumber, *it.EpisodeNumber
-				}
-
-				result, err := enricher.Enrich(context.Background(), in2)
-				if os.Getenv("SONDER_ENRICH_DEBUG") == "1" &&
-					(done < 3 || strings.Contains(strings.ToLower(in2.Title), "matrix") ||
-						strings.Contains(strings.ToLower(in2.Title), "inception")) {
-					why := ""
-					switch {
-					case err != nil:
-						why = err.Error()
-					case result == nil:
-						why = "result nil"
-					default:
-						why = fmt.Sprintf("sum=%d tags=%d poster=%v provider=%s",
-							len(result.Summary), len(result.Tags), result.PosterPath != "", result.Provider)
-					}
-					fmt.Fprintf(os.Stderr, "[pass] %q (%s): %s\n", in2.Title, in2.Kind, why)
-				}
-				if err != nil || result == nil ||
-					(result.Summary == "" && len(result.Tags) == 0 && result.PosterPath == "") {
-					progressMu.Lock()
-					done++
-					if done%25 == 0 {
-						logger.Printf("enrichment: %d/%d processed", done, len(candidates))
-					}
-					progressMu.Unlock()
-					continue
-				}
-
-				fresh, ok := store.Get(it.ID)
-				if ok {
-					changed := false
-					if result.Summary != "" && fresh.Summary == "" {
-						fresh.Summary = result.Summary
-						changed = true
-					}
-					if result.Author != "" && fresh.Author == nil {
-						a := result.Author
-						fresh.Author = &a
-						changed = true
-					}
-					if result.Narrator != "" && fresh.Narrator == nil {
-						n := result.Narrator
-						fresh.Narrator = &n
-						changed = true
-					}
-					for _, tag := range result.Tags {
-						dup := false
-						for _, existing := range fresh.Tags {
-							if strings.EqualFold(existing, tag) {
-								dup = true
-								break
-							}
-						}
-						if !dup {
-							fresh.Tags = append(fresh.Tags, tag)
-							changed = true
-						}
-					}
-					// Official poster beats generated thumbnails; local
-					// discovered artwork is never replaced. Art is installed
-					// Plex-style into the media folder when possible so other
-					// tools see it; the enricher cache copy is the fallback.
-					if result.PosterPath != "" && fresh.PosterSource != "local" {
-						installed := result.PosterPath
-						posterDest, _ := library.PlexArtPaths(fresh)
-						if dest, err := library.CopyArtTo(result.PosterPath, posterDest); err == nil {
-							installed = dest
-						}
-						if fresh.PosterPath != installed || fresh.PosterSource != result.Provider {
-							fresh.PosterPath = installed
-							u := "/artwork/poster/" + fresh.ID
-							fresh.PosterURL = &u
-							fresh.PosterSource = result.Provider
-							changed = true
-						}
-					}
-					if result.BackdropPath != "" && fresh.BackdropPath == "" {
-						_, fanartDest := library.PlexArtPaths(fresh)
-						installed := result.BackdropPath
-						if dest, err := library.CopyArtTo(result.BackdropPath, fanartDest); err == nil {
-							installed = dest
-						}
-						fresh.BackdropPath = installed
-						u := "/artwork/backdrop/" + fresh.ID
-						fresh.BackdropURL = &u
-						changed = true
-					}
-					if changed {
-						store.Upsert(fresh)
-						updated.Add(1)
-					}
-				}
-
-				progressMu.Lock()
-				done++
-				if done%25 == 0 {
-					logger.Printf("enrichment: %d/%d processed (%d updated)",
-						done, len(candidates), updated.Load())
-				}
-				progressMu.Unlock()
-			}
-		}()
-	}
-	for _, it := range candidates {
-		in <- job{item: it}
-	}
-	close(in)
-	wg.Wait()
-	return int(updated.Load())
 }

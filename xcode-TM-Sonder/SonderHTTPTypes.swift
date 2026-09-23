@@ -129,6 +129,18 @@ nonisolated struct HTTPRequest {
              "/health", "/api/health", "/api/status", "/api/library",
              "/library.json", "/api/audiobooks", "/api/discovery":
             return ["GET"]
+        case "/login":
+            return ["POST"]
+        case "/api/libraries":
+            return ["GET"]
+        case let path where path.hasPrefix("/api/libraries/"):
+            return ["GET"]
+        case let path where path.hasPrefix("/api/items/") && path.hasSuffix("/cover"):
+            return ["GET"]
+        case let path where path.hasPrefix("/api/items/") && path.contains("/file/"):
+            return ["GET"]
+        case let path where path.hasPrefix("/api/items/"):
+            return ["GET"]
         case let path where path.hasPrefix("/api/audiobooks/"):
             return ["GET"]
         case let path where path.hasPrefix("/api/playback/") && path.hasSuffix("/refresh-tracks"):

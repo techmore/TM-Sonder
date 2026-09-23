@@ -2,6 +2,7 @@ package probe
 
 import (
 	"context"
+	"fmt"
 	"os/exec"
 	"path/filepath"
 	"testing"
@@ -72,11 +73,38 @@ func TestCacheInvalidatedByModTime(t *testing.T) {
 	c.mu.Unlock()
 
 	got, err := c.ProbeResult(context.Background(), "/m.mkv", 5, mod)
-	if err != nil || got != first {
+	if err != nil || got.DurationSeconds != first.DurationSeconds {
 		t.Fatalf("cache hit failed: %v %v", got, err)
+	}
+	// The cache must hand out copies: mutating a returned result must not
+	// corrupt the stored entry.
+	got.DurationSeconds = 999
+	again, err := c.ProbeResult(context.Background(), "/m.mkv", 5, mod)
+	if err != nil || again.DurationSeconds != first.DurationSeconds {
+		t.Fatalf("returned value aliased cached state: %v %v", again, err)
 	}
 	if _, err := c.ProbeResult(context.Background(), "/m.mkv", 5, mod.Add(time.Second)); err == nil {
 		t.Error("stale entry served after mtime change")
+	}
+}
+
+func TestCacheEvictsOldestBeyondBound(t *testing.T) {
+	c := NewCache("")
+	mod := time.Unix(1700000000, 0)
+	c.mu.Lock()
+	for i := 0; i < maxCacheEntries+10; i++ {
+		c.storeLocked(fmt.Sprintf("/f%d.mkv", i), cacheEntry{size: 1, mod: mod, result: &Result{}})
+	}
+	c.mu.Unlock()
+
+	if got := c.Len(); got != maxCacheEntries {
+		t.Fatalf("cache size = %d, want %d", got, maxCacheEntries)
+	}
+	c.mu.RLock()
+	_, oldestPresent := c.entries["/f0.mkv"]
+	c.mu.RUnlock()
+	if oldestPresent {
+		t.Error("oldest entry should have been evicted")
 	}
 }
 

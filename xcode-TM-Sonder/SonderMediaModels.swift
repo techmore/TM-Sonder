@@ -13,6 +13,8 @@ nonisolated struct SonderMediaItem: Codable, Identifiable, Hashable {
     var format: SonderMediaFormat
     var libraryID: UUID? = nil
     var tags: [String]
+    /// Curated media genres, kept separate from free-form tags.
+    var genres: [String] = []
     var summary: String
     var sourcePath: String?
     var sourceBookmark: Data?

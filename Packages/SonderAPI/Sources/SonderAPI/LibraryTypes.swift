@@ -11,11 +11,16 @@ public struct SonderPublicMediaItem: Codable, Sendable, Identifiable, Hashable {
     public var year: Int
     public var durationSeconds: Double
     public var format: SonderMediaFormat
-    public var libraryID: UUID?
-    public var tags: [String]
+    public var libraryID: String?
+    @DefaultEmptyArray public var tags: [String]
+    /// Curated genres, distinct from free-form `tags` (provider keywords and
+    /// people names). Older servers may omit it; decodes to an empty list.
+    @DefaultEmptyArray public var genres: [String]
     public var summary: String
     public var progressSeconds: Double
     public var showTitle: String?
+    public var showGroupID: String? = nil
+    public var showGroupTitle: String? = nil
     public var seasonNumber: Int?
     public var episodeNumber: Int?
     public var metadataIDSource: String?
@@ -25,15 +30,20 @@ public struct SonderPublicMediaItem: Codable, Sendable, Identifiable, Hashable {
     public var isPlaceholder: Bool
     public var posterURL: String?
     public var backdropURL: String?
-    public var embeddedAudioTracks: [SonderPlaybackTrack]
-    public var embeddedSubtitleTracks: [SonderPlaybackTrack]
+    @DefaultEmptyArray public var embeddedAudioTracks: [SonderPlaybackTrack]
+    @DefaultEmptyArray public var embeddedSubtitleTracks: [SonderPlaybackTrack]
     public var trackProbeUpdatedAt: Date?
     public var probedWidth: Int?
     public var probedHeight: Int?
     public var probedCodec: String?
+    /// Audio stream codecs reported by the server probe (for example, "aac" or "opus").
+    @DefaultEmptyArray public var probedAudioCodecs: [String]
     public var probedBitrate: Int?
     public var bookValidation: String?
     public var coverSource: String?
+    /// Populated for audiobooks and ebooks.
+    public var author: String?
+    public var narrator: String?
 
     public init(
         id: UUID = UUID(),
@@ -44,7 +54,7 @@ public struct SonderPublicMediaItem: Codable, Sendable, Identifiable, Hashable {
         year: Int,
         durationSeconds: Double,
         format: SonderMediaFormat,
-        libraryID: UUID? = nil,
+        libraryID: String? = nil,
         tags: [String] = [],
         summary: String,
         progressSeconds: Double = 0,
@@ -64,9 +74,13 @@ public struct SonderPublicMediaItem: Codable, Sendable, Identifiable, Hashable {
         probedWidth: Int? = nil,
         probedHeight: Int? = nil,
         probedCodec: String? = nil,
+        probedAudioCodecs: [String] = [],
         probedBitrate: Int? = nil,
         bookValidation: String? = nil,
-        coverSource: String? = nil
+        coverSource: String? = nil,
+        genres: [String] = [],
+        author: String? = nil,
+        narrator: String? = nil
     ) {
         self.id = id
         self.title = title
@@ -96,9 +110,13 @@ public struct SonderPublicMediaItem: Codable, Sendable, Identifiable, Hashable {
         self.probedWidth = probedWidth
         self.probedHeight = probedHeight
         self.probedCodec = probedCodec
+        self.probedAudioCodecs = probedAudioCodecs
         self.probedBitrate = probedBitrate
         self.bookValidation = bookValidation
         self.coverSource = coverSource
+        self.genres = genres
+        self.author = author
+        self.narrator = narrator
     }
 
     public var episodeCode: String {
@@ -195,19 +213,19 @@ public struct SonderPublicServerSettings: Codable, Sendable, Hashable {
 public typealias SonderServerSettingsDTO = SonderPublicServerSettings
 
 public struct SonderPublicMediaDirectory: Codable, Sendable, Identifiable, Hashable {
-    public var id: UUID
+    public var id: String
     public var name: String
     public var kind: String
-    public var libraryID: UUID
+    public var libraryID: String
     public var lastIndexedCount: Int
     public var lastScannedFileCount: Int
     public var lastScannedAt: Date?
 
     public init(
-        id: UUID,
+        id: String,
         name: String,
         kind: String,
-        libraryID: UUID,
+        libraryID: String,
         lastIndexedCount: Int = 0,
         lastScannedFileCount: Int = 0,
         lastScannedAt: Date? = nil

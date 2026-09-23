@@ -1,0 +1,17 @@
+.git
+.gitignore
+.DS_Store
+bin
+m4b_work
+server/.ab-av1-*
+server/sonder
+server/*.profraw
+.poster-cache
+__pycache__
+IOS_Client_Xcode
+DesignAssets
+docs
+tools
+*.html
+*.csv
+*.txt

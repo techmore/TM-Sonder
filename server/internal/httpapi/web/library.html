@@ -4,144 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>TM Sonder</title>
-  <style>
-    :root {
-      color-scheme: dark;
-      --bg:#0b0e09; --panel:#151a12; --panel2:#1f2618; --line:#2f3a24;
-      --text:#eff4e8; --muted:#9aa78d; --accent:#b6d56d; --accent-dark:#11160f;
-      --gold:#e0a14a; --radius:10px;
-    }
-    * { box-sizing:border-box; }
-    body { margin:0; font:14px -apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif; background:var(--bg); color:var(--text); }
-    button { font:inherit; }
-    header {
-      position:sticky; top:0; z-index:5; display:flex; flex-wrap:wrap;
-      align-items:center; gap:12px; padding:14px 22px;
-      background:rgba(11,14,9,.95); backdrop-filter:blur(8px); border-bottom:1px solid var(--line);
-    }
-    h1 { margin:0 auto 0 0; font-size:22px; letter-spacing:.3px; }
-    h1 span { color:var(--accent); }
-    input[type="search"], select {
-      background:var(--panel); border:1px solid var(--line); color:var(--text);
-      border-radius:8px; padding:9px 11px; font-size:13px;
-    }
-    input[type="search"] { width:min(280px, 60vw); }
-    input:focus-visible, select:focus-visible, button:focus-visible, .card:focus-visible {
-      outline:2px solid var(--accent); outline-offset:2px;
-    }
-    section.row { padding:6px 22px 0; }
-    section.row h2 { font-size:15px; color:var(--muted); margin:10px 0 10px; text-transform:uppercase; letter-spacing:1px; }
-    .rail { display:flex; gap:14px; overflow-x:auto; padding-bottom:8px; scrollbar-width:thin; }
-    main.grid {
-      display:grid; grid-template-columns:repeat(auto-fill,minmax(165px,1fr));
-      gap:16px; padding:18px 22px 40px;
-    }
-    main.grid.rail-mode { display:flex; overflow-x:auto; padding-top:4px; }
-    main.grid.rail-mode .card { flex:0 0 165px; }
-
-    .card {
-      background:none; border:0; padding:0; text-align:left; cursor:pointer;
-      color:var(--text); border-radius:var(--radius); position:relative;
-    }
-    .card .frame {
-      position:relative; aspect-ratio:2/3; border-radius:var(--radius); overflow:hidden;
-      background:linear-gradient(150deg,#2c3721,#12170d);
-      box-shadow:0 2px 10px rgba(0,0,0,.45); transition:transform .15s ease, box-shadow .15s ease;
-    }
-    .card:hover .frame, .card:focus-visible .frame { transform:translateY(-3px); box-shadow:0 8px 22px rgba(0,0,0,.55); }
-    .card img.poster { width:100%; height:100%; object-fit:cover; display:block; }
-    .card .play-glyph {
-      position:absolute; inset:0; display:grid; place-items:center; font-size:44px;
-      color:var(--accent); opacity:0; transition:opacity .15s ease; background:rgba(8,10,6,.35);
-    }
-    .card:hover .play-glyph, .card:focus-visible .play-glyph { opacity:1; }
-    .card .bar { position:absolute; left:0; right:0; bottom:0; height:4px; background:rgba(255,255,255,.18); }
-    .card .bar > i { display:block; height:100%; background:var(--gold); }
-    .badge {
-      position:absolute; top:8px; left:8px; border-radius:5px; padding:2px 7px;
-      font-size:10px; font-weight:800; letter-spacing:.6px;
-    }
-    .badge.unwatched { background:var(--gold); color:#1c1408; }
-    .badge.watched { background:rgba(20,24,16,.85); color:var(--muted); border:1px solid var(--line); }
-    .badge.copies { top:auto; bottom:12px; left:8px; background:rgba(11,14,9,.85); color:var(--accent); border:1px solid var(--line); }
-    .card h3 { margin:9px 2px 2px; font-size:13.5px; font-weight:600; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
-    .card p.meta { margin:0 2px; font-size:12px; color:var(--muted); white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
-
-    /* Detail modal */
-    dialog#detail {
-      width:min(880px, 94vw); max-height:90vh; border:1px solid var(--line); border-radius:14px;
-      background:var(--panel); color:var(--text); padding:0;
-    }
-    dialog::backdrop { background:rgba(4,6,3,.72); backdrop-filter:blur(2px); }
-    .modal-body { padding:22px; overflow:auto; max-height:calc(90vh - 56px); }
-    .modal-head { display:flex; align-items:center; justify-content:space-between; padding:14px 22px; border-bottom:1px solid var(--line); }
-    .modal-head strong { font-size:16px; }
-    video { width:100%; max-height:56vh; background:#000; border-radius:8px; margin-bottom:16px; }
-    .meta-line { color:var(--muted); font-size:13px; margin:2px 0 12px; }
-    .summary { line-height:1.5; color:#cfd8c2; margin:0 0 14px; }
-    .tagrow { display:flex; flex-wrap:wrap; gap:6px; }
-    .tag { background:var(--panel2); border:1px solid var(--line); border-radius:999px; padding:3px 10px; font-size:12px; color:var(--muted); }
-    .actions { display:flex; gap:10px; margin:14px 0 4px; flex-wrap:wrap; }
-    .actions button, .actions a {
-      background:var(--panel2); border:1px solid var(--line); color:var(--text);
-      border-radius:8px; padding:9px 14px; text-decoration:none; cursor:pointer;
-    }
-    .actions button.primary { background:var(--accent); border-color:var(--accent); color:var(--accent-dark); font-weight:700; }
-    .not-playable { background:var(--panel2); border:1px dashed var(--line); border-radius:8px; padding:18px; text-align:center; color:var(--muted); }
-    .empty-state { padding:60px 22px; text-align:center; color:var(--muted); }
-    .pager { display:flex; gap:8px; justify-content:center; align-items:center; padding:0 22px 40px; }
-    .pager button { background:var(--panel2); border:1px solid var(--line); color:var(--text);
-      border-radius:8px; padding:8px 14px; cursor:pointer; }
-    .pager button:disabled { opacity:.4; cursor:default; }
-    .pager .pageinfo { color:var(--muted); font-size:12.5px; font-variant-numeric:tabular-nums; }
-    .crumbs { display:flex; flex-wrap:wrap; gap:4px; align-items:center; }
-    button.crumb { background:var(--panel2); border:1px solid var(--line); color:var(--text);
-      border-radius:6px; padding:4px 8px; font-size:12px; cursor:pointer; }
-    button.browse-row { display:block; width:100%; text-align:left; background:transparent;
-      border:0; border-bottom:1px solid rgba(52,65,40,.5); color:var(--text);
-      padding:9px 14px; cursor:pointer; }
-    button.browse-row:hover { background:var(--panel); }
-    nav.tabs { display:flex; gap:6px; }
-    nav.tabs button {
-      background:var(--panel2); border:1px solid var(--line); color:var(--text);
-      border-radius:8px; padding:8px 14px; font-size:13px; cursor:pointer;
-      display:flex; align-items:center; gap:7px;
-    }
-    nav.tabs button.active { background:var(--accent); border-color:var(--accent); color:var(--accent-dark); font-weight:700; }
-    section.season { margin:0 22px 18px; background:var(--panel); border:1px solid var(--line); border-radius:var(--radius); overflow:hidden; }
-    section.season h2 { margin:0; padding:12px 16px; font-size:14px; letter-spacing:.6px; text-transform:uppercase; color:var(--muted); border-bottom:1px solid var(--line); }
-    button.ep-row { display:grid; grid-template-columns:auto 1fr auto auto; gap:12px; align-items:center;
-      width:100%; text-align:left; background:transparent; border:0; border-top:1px solid rgba(52,65,40,.5);
-      color:var(--text); padding:11px 16px; cursor:pointer; }
-    button.ep-row:first-of-type { border-top:0; }
-    button.ep-row:hover { background:var(--panel2); }
-    button.ep-row .code { color:var(--accent); font-weight:700; font-size:12.5px; min-width:58px; font-variant-numeric:tabular-nums; }
-    button.ep-row .eptitle { white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
-    button.ep-row .runtime { color:var(--muted); font-size:12px; font-variant-numeric:tabular-nums; }
-    button.ep-row .epbar { position:relative; width:110px; height:4px; background:rgba(255,255,255,.18); border-radius:2px; overflow:hidden; }
-    button.ep-row .epbar > i { display:block; height:100%; background:var(--gold); }
-    /* Edition picker rows inside the detail modal */
-    div.editions { margin:14px 0 4px; border:1px solid var(--line); border-radius:8px; overflow:hidden; }
-    div.editions h4 { margin:0; padding:9px 13px; font-size:12px; letter-spacing:.6px; text-transform:uppercase;
-      color:var(--muted); border-bottom:1px solid var(--line); background:var(--panel2); }
-    button.ed-row { display:grid; grid-template-columns:auto 1fr auto; gap:12px; align-items:center;
-      width:100%; text-align:left; background:transparent; border:0; border-top:1px solid rgba(52,65,40,.5);
-      color:var(--text); padding:10px 13px; cursor:pointer; }
-    button.ed-row:first-of-type { border-top:0; }
-    button.ed-row:hover { background:var(--panel2); }
-    button.ed-row.current { color:var(--accent); }
-    button.ed-row .edlabel { white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
-    button.ed-row .edmeta { color:var(--muted); font-size:12px; font-variant-numeric:tabular-nums; white-space:nowrap; }
-    button.ed-row .edwatch { font-size:11px; font-weight:800; letter-spacing:.5px; color:var(--gold); }
-    .backrow { padding:14px 22px 0; }
-    button.back { background:var(--panel2); border:1px solid var(--line); color:var(--text);
-      border-radius:8px; padding:8px 14px; cursor:pointer; }
-    @media (max-width: 640px) {
-      header { gap:8px; padding:12px 14px; }
-      input[type="search"] { flex:1; }
-      main.grid { grid-template-columns:repeat(auto-fill,minmax(128px,1fr)); gap:12px; padding:14px; }
-    }
-  </style>
+  <link rel="stylesheet" href="/library.css?v=optimization-monitor-2">
   <script src="/shared.js"></script>
 </head>
 <body>
@@ -154,6 +17,9 @@
       <button data-tab="documentaries">🎥 Documentaries</button>
       <button data-tab="audiobooks">🎧 Audiobooks</button>
       <button data-tab="books">📚 Books</button>
+      <button data-tab="lists">📋 Lists</button>
+      <button data-tab="storage">💾 Storage</button>
+      <button data-tab="optimize">⚡ Optimize</button>
     </nav>
     <input type="search" id="q" placeholder="Search titles and summaries…" aria-label="Search library">
     <select id="watched" aria-label="Watched filter">
@@ -161,14 +27,112 @@
       <option value="unwatched">Unwatched</option>
       <option value="watched">Watched</option>
     </select>
+    <select id="coverFilter" aria-label="Audiobook cover audit filter">
+      <option value="all">Covers: All</option>
+      <option value="has-cover">Covers: Available</option>
+      <option value="missing-cover">Covers: Missing</option>
+      <option value="needs-embed">Covers: Needs M4B embed</option>
+    </select>
     <select id="sort" aria-label="Sort order">
       <option value="title">Title A–Z</option>
       <option value="year">Year</option>
       <option value="duration">Longest first</option>
+      <option value="series">Series order</option>
       <option value="recent">Recently watched</option>
     </select>
     <button id="settingsBtn" aria-label="Settings" title="Settings" style="background:var(--panel);border:1px solid var(--line);color:var(--text);border-radius:8px;padding:9px 11px;cursor:pointer">⚙︎</button>
   </header>
+
+  <section class="row filter-row" id="filterRow" aria-label="Metadata filters" hidden>
+    <div class="filter-head">
+      <div id="filterModes" class="filter-modes" role="group" aria-label="Filter by"></div>
+      <div class="facet-tools">
+        <input id="facetSearch" type="search" placeholder="Find…" aria-label="Search filter values" hidden>
+        <button type="button" id="facetClear" class="facet-clear" hidden>Clear filter</button>
+      </div>
+    </div>
+    <div id="metadataChips" class="chips" role="group" aria-label="Filter values"></div>
+    <!-- Toggle lives outside the scrolling chip area so it stays reachable. -->
+    <div id="chipsFooter" class="chips-footer" hidden></div>
+  </section>
+
+  <section id="storagePanel" class="storage-panel" hidden aria-live="polite"></section>
+
+  <section id="listsPanel" class="row lists-panel" hidden aria-live="polite">
+    <h2>Reading lists</h2>
+    <p class="muted">A book can appear in many lists. Each list keeps its own order and tags.</p>
+    <form id="listCreateForm" class="list-create-form">
+      <input id="newListName" required placeholder="New list name" aria-label="New list name">
+      <input id="newListDescription" placeholder="Description" aria-label="List description">
+      <input id="newListTags" placeholder="Tags, comma separated" aria-label="List tags">
+      <button type="submit" class="primary">Create list</button>
+    </form>
+    <div id="listsView"></div>
+  </section>
+
+  <details class="row" id="libraryHealth" hidden>
+    <summary id="libraryHealthSummary">Library consistency</summary>
+    <p>Read-only checks of catalog source folders, not a complete disk inventory. Warnings need review, not automatic merging.</p>
+    <div id="libraryHealthIssues"></div>
+  </details>
+
+  <section class="optimization-page" id="optimizationPage" hidden aria-labelledby="optimizationTitle">
+    <div class="optimization-hero">
+      <div>
+        <p class="optimization-eyebrow">Storage · staged, reversible trials</p>
+        <h2 id="optimizationTitle">Storage optimization</h2>
+        <p>Find large files with room to shrink, then run selected audiobook conversions one at a time. Every result is validated and kept beside the library in hidden review staging; source files stay untouched.</p>
+      </div>
+      <div class="optimization-hero-actions">
+        <button type="button" id="optimizationRefresh">Refresh analysis</button>
+        <button type="button" id="optimizationQueueSelected" class="optimization-start" disabled>▶ Start selected</button>
+        <button type="button" id="optimizationPause" disabled>Pause queue</button>
+      </div>
+    </div>
+    <p class="optimization-selection-count"><span id="optimizationSelectedCount">0 selected</span> · selected jobs run sequentially, one book at a time</p>
+    <div class="optimization-target-picker">
+      <label for="optimizationSearch"><strong>Choose a specific audiobook</strong><span>Search by title, select its Opus bitrate, then press Start selected.</span></label>
+      <input id="optimizationSearch" type="search" placeholder="Search for one audiobook to optimize…" aria-label="Choose a specific audiobook to optimize">
+      <button type="button" id="optimizationClearSearch">Clear</button>
+    </div>
+    <div class="optimization-metrics" aria-label="Optimization overview">
+      <div><span>Audiobooks ready</span><strong id="optimizationAudioCount">—</strong></div>
+      <div><span>AV1 samples to assess</span><strong id="optimizationVideoCount">—</strong></div>
+      <div><span>Needs review</span><strong id="optimizationReviewCount">—</strong></div>
+      <div><span>Estimated audiobook savings</span><strong id="optimizationSavings">—</strong></div>
+    </div>
+    <p class="optimization-note"><strong>How a run works:</strong> select audiobook trials, choose a bitrate, and start. The worker processes one book at a time, validates the complete output, and records measured savings. Listen to each staged result and check playback on your target device before accepting it. AV1 recommendations require a separate representative-scene quality test.</p>
+    <p id="optimizationStatus" role="status" aria-live="polite">Open this page to analyze the library.</p>
+    <section class="optimization-run-summary" aria-labelledby="optimizationRunTitle">
+      <div class="optimization-run-head"><div><p class="optimization-eyebrow">Live run monitor</p><h3 id="optimizationRunTitle">No conversion running</h3><p id="optimizationRunDetail">Queue a book to see its live progress here.</p></div><span id="optimizationRunState" class="optimization-state">idle</span></div>
+      <div class="optimization-run-stats" aria-label="Conversion queue totals">
+        <div><span>Completed</span><strong id="optimizationCompletedCount">0</strong></div>
+        <div><span>In progress</span><strong id="optimizationActiveCount">0</strong></div>
+        <div><span>Queued</span><strong id="optimizationQueuedCount">0</strong></div>
+        <div><span>Needs attention</span><strong id="optimizationAttentionCount">0</strong></div>
+      </div>
+      <div id="optimizationRunProgress" class="optimization-run-progress" hidden><div class="optimization-run-progress-label"><span id="optimizationRunProgressText"></span><span id="optimizationRunETA"></span></div><progress id="optimizationRunProgressBar" max="100" value="0"></progress></div>
+      <div id="optimizationNextJobs" class="optimization-next-jobs"></div>
+    </section>
+    <div class="optimization-columns">
+      <section class="optimization-card" aria-labelledby="optimizationAudiobooksTitle">
+        <div class="optimization-card-head"><div><h3 id="optimizationAudiobooksTitle">Audiobook trials</h3><p>Choose titles and a trial bitrate. Missing covers need explicit approval.</p></div></div>
+        <div id="optimizationAudiobooks"><p>Refresh analysis to screen the current catalog.</p></div>
+      </section>
+      <section class="optimization-card" aria-labelledby="optimizationVideoTitle">
+        <div class="optimization-card-head"><div><h3 id="optimizationVideoTitle">Video samples</h3><p>Large H.264 files need measured scene samples before savings can be estimated.</p></div></div>
+        <div id="optimizationVideoSamples"><p>No video sample recommendations loaded.</p></div>
+      </section>
+    </div>
+    <section class="optimization-card optimization-job-card" aria-labelledby="optimizationJobsTitle">
+      <div class="optimization-card-head"><div><h3 id="optimizationJobsTitle">Sequential job queue</h3><p>Progress, validation receipts, staged playback, and review controls.</p></div></div>
+      <div id="optimizationJobs"><p>No audiobook jobs queued yet.</p></div>
+    </section>
+    <section class="optimization-card optimization-review-card" aria-labelledby="optimizationReviewTitle">
+      <div class="optimization-card-head"><div><h3 id="optimizationReviewTitle">Previous recommendations to review</h3><p>Items excluded from the current eligible list because a prior decision or result needs attention.</p></div></div>
+      <div id="optimizationReviews"><p>No previous reviews loaded.</p></div>
+    </section>
+  </section>
 
   <section class="row" id="continueRow" hidden>
     <h2>Continue Watching</h2>
@@ -192,6 +156,46 @@
     </div>
     <div class="modal-body" id="detailBody"></div>
   </dialog>
+
+  <!-- Persistent player: lives outside every re-rendered region so audio and
+       video keep playing while you browse, and follows you across tabs. -->
+  <section id="nowPlaying" class="nowplaying np-audio-mode" hidden aria-label="Now playing">
+    <div class="np-video" id="npVideoWrap">
+      <video id="npMedia" playsinline preload="metadata"></video>
+    </div>
+    <div class="np-bar">
+      <button type="button" class="np-art" id="npArt" aria-label="Now playing artwork"></button>
+      <div class="np-meta">
+        <div class="np-title" id="npTitle">—</div>
+        <div class="np-sub" id="npSub"></div>
+      </div>
+      <div class="np-controls">
+        <button type="button" class="np-btn" id="npBack" aria-label="Back 30 seconds" title="Back 30 seconds (←)">↺30</button>
+        <button type="button" class="np-btn np-play" id="npPlayPause" aria-label="Play" title="Play or pause (space)">▶</button>
+        <button type="button" class="np-btn" id="npFwd" aria-label="Forward 30 seconds" title="Forward 30 seconds (→)">↻30</button>
+      </div>
+      <div class="np-seek">
+        <input type="range" id="npSeek" min="0" max="1000" value="0" step="1" aria-label="Seek">
+        <span class="np-time"><span id="npCur">0:00</span> / <span id="npDur">0:00</span></span>
+      </div>
+      <div class="np-tools">
+        <label class="np-rate">
+          <span class="np-rate-label">Speed</span>
+          <select id="npRate" aria-label="Playback speed" title="Playback speed">
+            <option value="0.75">0.75×</option>
+            <option value="1" selected>1×</option>
+            <option value="1.25">1.25×</option>
+            <option value="1.5">1.5×</option>
+            <option value="1.75">1.75×</option>
+            <option value="2">2×</option>
+          </select>
+        </label>
+        <button type="button" class="np-btn" id="npExpand" aria-label="Expand video" title="Expand video" hidden>⤢</button>
+        <button type="button" class="np-btn" id="npClose" aria-label="Stop player" title="Stop">✕</button>
+      </div>
+    </div>
+    <p class="np-status" id="npStatus" role="status" aria-live="polite"></p>
+  </section>
 
   <dialog id="settingsDlg" role="dialog" aria-modal="true" aria-labelledby="settingsTitle">
     <div class="modal-head"><strong id="settingsTitle">Settings</strong>
@@ -237,6 +241,18 @@
       </p>
       <p id="pairingLine" style="font-size:12.5px;margin:8px 0"></p>
 
+      <h3 style="margin:18px 0 8px">Portable data</h3>
+      <p style="color:var(--muted);font-size:12px;margin:8px 0">
+        Export your catalog, lists, tags, and playback progress without copying media files.
+        Imports restore data immediately and never start a scan automatically.
+      </p>
+      <div class="actions">
+        <a class="button-like" href="/api/data/export" download="sonder-data.json">Export Sonder data</a>
+        <button type="button" id="dataImportBtn">Import data bundle</button>
+        <input type="file" id="dataImportFile" accept="application/json,.json" hidden>
+        <span id="dataPortabilityStatus" style="color:var(--muted);align-self:center" role="status"></span>
+      </div>
+
       <div class="actions">
         <button class="primary" onclick="saveSettings()">Save changes (rescans)</button>
         <button onclick="rescanNow()">Rescan now</button>
@@ -246,924 +262,6 @@
     </div>
   </dialog>
 
-  <script>
-    let items = [];
-    const progressByID = new Map();
-
-    const { api, escapeHTML, formatTime } = window.Sonder;
-
-    const BROWSER_PLAYABLE = new Set(["mp4", "m4v", "mov", "webm"]);
-    const $ = sel => document.querySelector(sel);
-
-    function kindLabel(v) {
-      return ({ movie:"Movie", tvShow:"TV Show", documentary:"Documentary",
-                audiobook:"Audiobook", ebook:"Book", all:"All" })[v] || v;
-    }
-    function progressFor(id) { return progressByID.get(id) ?? null; }
-    function isWatched(p, item) {
-      if (!p || p.seconds <= 0) return false;
-      const dur = p.duration || item.durationSeconds || 0;
-      return dur > 0 && p.seconds / dur >= 0.96;
-    }
-    function inProgress(p, item) {
-      if (!p || p.seconds <= 5) return false;
-      return !isWatched(p, item);
-    }
-    function runtimeLabel(item) {
-      const d = item.durationSeconds;
-      if (!d || d <= 0) return "";
-      return formatTime(d);
-    }
-
-    // Collapse same-title copies into one card per title, best copy first.
-    // Ranking prefers probed runtime > resolution > format browser-playability.
-    const FORMAT_RANK = { mp4:3, m4v:3, mov:3, webm:3, mkv:2, avi:1 };
-    function titleHeight(i) {
-      // Fall back to a resolution hint embedded in the title ("720p", "1080P").
-      const m = (i.title || "").match(/(\d{3,4})\s*p\b/i);
-      return m ? parseInt(m[1], 10) : 0;
-    }
-    function copyHeight(i) {
-      return i.probedHeight || titleHeight(i);
-    }
-    function rankCopy(i) {
-      // Resolution dominates: a higher-definition copy is the default even
-      // if the low-res one has probe data and the HD one doesn't.
-      return copyHeight(i) * 1e8
-           + ((i.durationSeconds || 0) > 0 ? 1e6 : 0)
-           + (FORMAT_RANK[(i.format||"").toLowerCase()] || 0) * 1e2;
-    }
-    let dedupEnabled = true;
-    function visibleItems() {
-      const term = $("#q").value.trim().toLowerCase();
-      const watchSel = $("#watched").value;
-      let list = items.filter(i => !i.isPlaceholder);
-      // Tabs are the kind filter; documentaries ride with movies elsewhere.
-      const kindByTab = { all:null, movies:"movie", tvshows:"tvShow",
-                          documentaries:"documentary", audiobooks:"audiobook",
-                          books:"ebook" };
-      const kindSel = kindByTab[activeTab] ?? null;
-      if (kindSel) list = list.filter(i => i.kind === kindSel);
-      if (term) {
-        list = list.filter(i =>
-          [i.title, i.subtitle, i.showTitle, i.summary]
-            .some(f => f && String(f).toLowerCase().includes(term)));
-      }
-      switch ($("#sort").value) {
-        case "year":     list.sort((a,b)=>(b.year||0)-(a.year||0)||a.title.localeCompare(b.title)); break;
-        case "duration": list.sort((a,b)=>(b.durationSeconds||0)-(a.durationSeconds||0)); break;
-        case "recent":   list.sort((a,b)=>{
-                           const ua = progressByID.get(a.id)?.updatedAt || "";
-                           const ub = progressByID.get(b.id)?.updatedAt || "";
-                           return ub.localeCompare(ua) || a.title.localeCompare(b.title);
-                         }); break;
-        default:         list.sort((a,b)=>a.title.localeCompare(b.title));
-      }
-      if (dedupEnabled) {
-        // Keep the best copy of each (kind,title); default to the highest
-        // definition (rankCopy), but a copy with watch progress wins so the
-        // user resumes where they left off. Keys are the MERGED group keys
-        // (exact + fuzzy roots) so variants like "Good Will Hunting V2"
-        // fold into "Good Will Hunting" here too. Groups may have been
-        // rebuilt for a different render scope; membership maps always hold.
-        const byKey = new Map();
-        for (const i of list) {
-          const key = itemGroupKey.get(i.id) ?? copyKey(i);
-          const prev = byKey.get(key);
-          if (!prev) { byKey.set(key, i); continue; }
-          const prevP = progressFor(prev.id), curP = progressFor(i.id);
-          const prevActive = inProgress(prevP, prev) || isWatched(prevP, prev);
-          const curActive = inProgress(curP, i) || isWatched(curP, i);
-          const better = curActive !== prevActive ? curActive
-                       : rankCopy(i) > rankCopy(prev);
-          if (better) byKey.set(key, i);
-        }
-        list = Array.from(byKey.values());
-      }
-      if (watchSel !== "all") {
-        list = list.filter(i => watchSel === "watched" ? isWatched(progressFor(i.id), i)
-                                                       : !isWatched(progressFor(i.id), i));
-      }
-      return list;
-    }
-
-    // All copies of each collapsed title, for the edition picker and the
-    // per-card copy badge. Groups are rebuilt once per data/progress change
-    // (rebuildCopyGroups) instead of rescanning the full catalog per card.
-    // Keys normalize punctuation/case and strip embedded release tags so
-    // "Tucker: The Man..." / "Tucker The Man..." collapse, as do titles
-    // carrying " 1080p BluRay x265" style suffixes.
-    let copyGroups = new Map();
-    let itemGroupKey = new Map();   // item.id -> merged group key (incl. fuzzy roots)
-    function foldDiacritics(s) {
-      return s.normalize("NFD").replace(/[\u0300-\u036f]/g, "");
-    }
-    function copyKey(i) {
-      let t = foldDiacritics(i.title || "").toLowerCase();
-      t = t.replace(/\b\d{3,4}\s*p\b/gi, "")           // resolution hints
-           .replace(/[\[\(\{][^\]\)\}]*[\]\)\}]/g, "")  // any (...) [...] {...} tag group
-           .replace(/(?:bluray|webrip|web[- ]?dl|hdtv|hdrip|dvdrip|bdrip|brrip|remux|x265|x264|hevc|h264|10bit|8bit|aac|ddp5|yify|rarbg|mkvcage|s4filmes|proper|repack|unrated)\b/gi, "")
-           .replace(/\b(dual|multi|subs?|ws)\b/gi, "")
-           .replace(/\bv\d+\b/gi, "")                   // V2 / v3 re-encode tags
-           .replace(/\b(?:cd|disc|dvd|pt|part)\s*\d+\b/gi, "")  // split parts (arabic; roman "Part II" may be a real sequel)
-           .replace(/[^a-z0-9]+/g, "");
-      return i.kind + "\u0000" + t;
-    }
-    // Near-duplicate folding: typos ("007 Jame" vs "007 James"), junk tails
-    // ("-1", " a", "-cd1", "800MB"), diacritics (Nausicaa/Nausicaä), and
-    // release-tag variants get merged into the same card. Guards keep real
-    // sequels/plurals separate: different trailing numbers ("Predator" vs
-    // "Predators", "Sherlock Holmes" vs "Holmes 2") or disjoint years never
-    // merge. Ratios calibrated on the live catalog (folds verified correct).
-    function diceRatio(a, b) {
-      if (a === b) return 1;
-      if (a.length < 4 || b.length < 4) return 0;
-      const A = new Set(), B = new Set();
-      for (let i = 0; i < a.length - 1; i++) A.add(a.slice(i, i + 2));
-      for (let i = 0; i < b.length - 1; i++) B.add(b.slice(i, i + 2));
-      let inter = 0;
-      for (const x of A) if (B.has(x)) inter++;
-      return 2 * inter / (A.size + B.size);
-    }
-    const FUZZ_MIN = 0.85;
-    function numTail(k) {
-      const m = k.match(/(\d+|[ivxl]{1,5})$/);
-      return m ? m[1] : null;
-    }
-    function isPluralPair(a, b) {
-      // Word-boundary plural: "predator"/"predators". Only when the shorter
-      // ends at a whole-token boundary of the longer and the extra letters
-      // are just an s/es tail.
-      const short = a.length <= b.length ? a : b;
-      const long = a.length <= b.length ? b : a;
-      return long.startsWith(short) && /^(?:es|s)$/.test(long.slice(short.length));
-    }
-    function yearSet(kind, key) {
-      const s = new Set();
-      for (const i of items) {
-        if (i.isPlaceholder || i.kind !== kind) continue;
-        if (copyKey(i) !== key) continue;
-        if (i.year) s.add(i.year);
-      }
-      return s;
-    }
-    // Generic bonus-feature titles: identical across films ("Trailer" under
-    // every Featurettes/ dir) but different content. Keys are post-copyKey
-    // normalized titles; matching items always get solo cards.
-    const GENERIC_EXTRAS = new Set([
-      "trailer", "theatricaltrailer", "teaser",
-      "deletedscenes", "behindthescenes", "makingof",
-      "featurette", "bloopers", "outtakes", "gagreeel",
-      "interview", "interviews", "commentary",
-    ]);
-    function rebuildCopyGroups() {
-      copyGroups = new Map();
-      const extrasGroups = new Map();  // generic bonus-feature titles: never merged
-      for (const i of items) {
-        if (i.isPlaceholder) continue;
-        const k = copyKey(i);
-        if (GENERIC_EXTRAS.has(k.split(" ")[1])) {
-          // "Trailer" / "Deleted Scenes" from different films share a key but
-          // are different content — one card per item.
-          const solo = k + " " + i.id;
-          if (!copyGroups.has(solo)) copyGroups.set(solo, []);
-          copyGroups.get(solo).push(i);
-          extrasGroups.set(solo, true);
-          continue;
-        }
-        if (!copyGroups.has(k)) copyGroups.set(k, []);
-        copyGroups.get(k).push(i);
-      }
-      // Union-find over near-identical keys (per kind), only for kinds with
-      // meaningful dupes (movies/documentaries). TV uses exact keys only —
-      // episode codes make fuzzy keys unreliable.
-      const kinds = new Set();
-      for (const k of copyGroups.keys()) kinds.add(k.split("\u0000")[0]);
-      const parent = new Map();
-      const find = (k) => {
-        let r = k;
-        while (parent.get(r) !== r) r = parent.get(r);
-        parent.set(k, r);
-        return r;
-      };
-      const yearsOf = new Map();
-      const yearCache = (kind, key) => {
-        const ck = kind + "\u0000" + key;
-        if (!yearsOf.has(ck)) yearsOf.set(ck, yearSet(kind, key));
-        return yearsOf.get(ck);
-      };
-      for (const kind of kinds) {
-        if (kind !== "movie" && kind !== "documentary") continue;
-        const keys = [...copyGroups.keys()].filter(k => k.startsWith(kind + " "))
-          .map(k => k.slice(kind.length + 1))
-          .filter(t => !extrasGroups.has(kind + " " + t))
-          .sort();
-        for (const k of keys) parent.set(k, k);
-        for (let i = 0; i < keys.length; i++) {
-          for (let j = i + 1; j < Math.min(i + 6, keys.length); j++) {
-            const a = keys[i], b = keys[j];
-            if (Math.abs(a.length - b.length) > 3) continue;
-            if (diceRatio(a, b) < FUZZ_MIN) continue;
-            if (isPluralPair(a, b)) continue;              // Predator/Predators
-            const ta = numTail(a), tb = numTail(b);
-            if ((ta && !tb) || (tb && !ta)) continue;      // sequel guard
-            if (ta && tb && ta !== tb) continue;
-            const ya = yearCache(kind, a), yb = yearCache(kind, b);
-            ya.add(0); yb.add(0);
-            if (![...ya].some(y => yb.has(y))) continue;   // year guard
-            const ra = find(a), rb = find(b);
-            if (ra === rb) continue;
-            const root = a.length <= b.length ? ra : rb;
-            parent.set(ra, root); parent.set(rb, root);
-          }
-        }
-        // Re-point every group key to its merged root bucket.
-        // Solo extras cards bypass the union entirely. Keys of other kinds
-        // are identity-mapped: find() only knows this kind's union, and
-        // letting other kinds fall through would collapse each of them into
-        // a single "<kind> undefined" bucket.
-        itemGroupKey = new Map();
-        for (const k of [...copyGroups.keys()]) {
-          if (extrasGroups.has(k)) {
-            for (const it of copyGroups.get(k)) itemGroupKey.set(it.id, k);
-            continue;
-          }
-          const kindx = k.split(" ")[0], t = k.slice(kindx.length + 1);
-          if (kindx !== kind) {
-            for (const it of copyGroups.get(k)) itemGroupKey.set(it.id, k);
-            continue;
-          }
-          const root = find(t);
-          const rk = kindx + "\u0000" + root;
-          if (root !== t) {
-            if (!copyGroups.has(rk)) copyGroups.set(rk, []);
-            copyGroups.get(rk).push(...copyGroups.get(k));
-            copyGroups.delete(k);
-          }
-          for (const it of copyGroups.get(rk) || []) itemGroupKey.set(it.id, rk);
-        }
-      }
-      for (const group of copyGroups.values()) {
-        group.sort((a,b) => {
-          const pa = progressFor(a.id), pb = progressFor(b.id);
-          const aa = inProgress(pa,a)||isWatched(pa,a), ab = inProgress(pb,b)||isWatched(pb,b);
-          if (aa !== ab) return aa ? -1 : 1;
-          return rankCopy(b) - rankCopy(a);
-        });
-      }
-    }
-    function copiesOf(item) {
-      const gk = itemGroupKey.get(item.id);
-      if (gk) {
-        const g = copyGroups.get(gk);
-        if (g && g.length) return g;
-      }
-      return copyGroups.get(copyKey(item)) ?? [item];
-    }
-
-    function cardHTML(item, opts = {}) {
-      const p = progressFor(item.id);
-      const watched = isWatched(p, item);
-      const pct = (() => {
-        if (!p || p.seconds <= 0) return 0;
-        const dur = p.duration || item.durationSeconds || 0;
-        return dur > 0 ? Math.min(100, p.seconds / dur * 100) : 0;
-      })();
-      const poster = item.posterURL
-        ? `<img class="poster" src="${api(item.posterURL)}" alt="" loading="lazy">`
-        : "";
-      const copies = opts.copyCount != null ? opts.copyCount : (dedupEnabled ? copiesOf(item).length : 1);
-      const h = copies > 1 ? copyHeight(item) : 0;
-      const qualityBit = h ? (h >= 2160 ? "4K" : h + "p") : "";
-      const metaBits = [item.year || "", runtimeLabel(item), qualityBit].filter(Boolean).join(" • ");
-      const badge = watched
-        ? `<span class="badge watched">WATCHED</span>`
-        : (pct > 0 ? `<span class="badge unwatched">${Math.round(100-pct)}% LEFT</span>` : "");
-      const copiesBadge = copies > 1
-        ? `<span class="badge copies" title="Also available in other versions">${copies} VERSIONS</span>` : "";
-      return `
-      <button class="card" data-id="${item.id}" data-action="open-detail"
-              aria-label="${escapeHTML(item.title)}${metaBits ? ", " + metaBits : ""}">
-        <div class="frame">
-          ${poster}
-          <span class="play-glyph" aria-hidden="true">▶</span>
-          ${badge}
-          ${copiesBadge}
-          ${pct > 0 ? `<span class="bar"><i style="width:${pct}%"></i></span>` : ""}
-        </div>
-        <h3>${escapeHTML(opts.showTitle ? (item.showTitle || item.title) : item.title)}</h3>
-        <p class="meta">${escapeHTML(metaBits || kindLabel(item.kind))}</p>
-      </button>`;
-    }
-
-    const PAGE_SIZE = 200;
-    let currentPage = 1;
-    let activeTab = "all";
-    let openShow = null; // show name when drilled into a TV show
-
-    function buildShowGroups() {
-      const map = new Map();
-      for (const i of items) {
-        if (i.kind !== "tvShow" || i.isPlaceholder || !i.showTitle) continue;
-        let show = map.get(i.showTitle);
-        if (!show) {
-          show = { name:i.showTitle, seasons:new Map(), posterItem:null };
-          map.set(i.showTitle, show);
-        }
-        const sn = i.seasonNumber ?? 0;
-        if (!show.seasons.has(sn)) show.seasons.set(sn, []);
-        show.seasons.get(sn).push(i);
-        if (i.posterURL && (!show.posterItem || !show.posterItem.posterURL)) show.posterItem = i;
-      }
-      for (const show of map.values()) {
-        for (const eps of show.seasons.values())
-          eps.sort((a,b)=>(a.episodeNumber??0)-(b.episodeNumber??0)||a.title.localeCompare(b.title));
-      }
-      return Array.from(map.values()).sort((a,b)=>a.name.localeCompare(b.name));
-    }
-
-    function seasonLabel(n) {
-      return n > 0 ? `Season ${String(n).padStart(2,"0")}` : "Specials / Extras";
-    }
-
-    // A card for a TV show folder: clicking drills in instead of opening the detail modal.
-    function showCardHTML(show) {
-      const epCount = Array.from(show.seasons.values()).reduce((n,e)=>n+e.length,0);
-      let watchedCount = 0;
-      for (const eps of show.seasons.values())
-        for (const e of eps) if (isWatched(progressFor(e.id), e)) watchedCount++;
-      const pct = epCount ? Math.round(watchedCount/epCount*100) : 0;
-      const item = show.posterItem;
-      const poster = item?.posterURL
-        ? `<img class="poster" src="${api(item.posterURL)}" alt="" loading="lazy">`
-        : "";
-      const badge = pct >= 100
-        ? `<span class="badge watched">WATCHED</span>`
-        : (watchedCount > 0 ? `<span class="badge unwatched">${epCount-watchedCount} LEFT</span>` : "");
-      return `
-      <button class="card" data-show="${escapeHTML(show.name)}" data-action="open-show" aria-label="${escapeHTML(show.name)}">
-        <div class="frame">${poster}<span class="play-glyph" aria-hidden="true">▶</span>${badge}</div>
-        <h3>${escapeHTML(show.name)}</h3>
-        <p class="meta">${show.seasons.size} season${show.seasons.size===1?"":"s"} • ${epCount} episode${epCount===1?"":"s"}</p>
-      </button>`;
-    }
-
-    function episodeRowHTML(ep) {
-      const p = progressFor(ep.id);
-      const pct = (() => {
-        if (!p || p.seconds <= 0) return 0;
-        const dur = p.duration || ep.durationSeconds || 0;
-        return dur > 0 ? Math.min(100, p.seconds/dur*100) : 0;
-      })();
-      const code = ep.seasonNumber != null && ep.episodeNumber != null
-        ? `S${String(ep.seasonNumber).padStart(2,"0")}E${String(ep.episodeNumber).padStart(2,"0")}`
-        : "—";
-      return `
-      <button class="ep-row" data-id="${ep.id}" data-action="open-detail" aria-label="${escapeHTML(code + " " + ep.title)}">
-        <span class="code">${code}</span>
-        <span class="eptitle">${escapeHTML(ep.title)}</span>
-        <span class="runtime">${pct>0 ? (isWatched(p,ep) ? "Watched" : formatTime(p.seconds)+" / "+runtimeLabel(ep)) : runtimeLabel(ep)}</span>
-        <span class="epbar"><i style="width:${pct}%"></i></span>
-      </button>`;
-    }
-
-    function renderShowPage() {
-      const show = buildShowGroups().find(s => s.name === openShow);
-      const grid = $("#grid");
-      const pager = $("#pager");
-      const seasons = $("#seasonList");
-      $("#backRow").hidden = false;
-      grid.className = "";
-      pager.innerHTML = "";
-      if (!show) {
-        openShow = null;
-        $("#backRow").hidden = true;
-        seasons.innerHTML = "";
-        render();
-        return;
-      }
-      document.title = `${show.name} — TM Sonder`;
-      const numbers = Array.from(show.seasons.keys()).sort((a,b)=>{
-        if (a<=0 && b>0) return 1; if (b<=0 && a>0) return -1; return a-b;
-      });
-      seasons.innerHTML = numbers.map(n => `
-        <section class="season">
-          <h2>${seasonLabel(n)} — ${show.seasons.get(n).length} episode${show.seasons.get(n).length===1?"":"s"}</h2>
-          ${show.seasons.get(n).map(episodeRowHTML).join("")}
-        </section>`).join("")
-        || `<div class="empty-state">No episodes found.</div>`;
-    }
-
-    function openShowPage(name) {
-      openShow = name;
-      currentPage = 1;
-      setTab("tvshows", true);
-      render();
-      syncHash(true);
-      window.scrollTo({ top:0 });
-    }
-    function leaveShow() {
-      openShow = null;
-      document.title = "TM Sonder";
-      $("#backRow").hidden = true;
-      $("#seasonList").innerHTML = "";
-      render();
-      syncHash(false);
-    }
-
-    // --- URL state (#tab[/show/<name>|/page/<n>]) so refresh and Back work ---
-    function syncHash(push) {
-      const parts = [activeTab];
-      if (openShow) parts.push("show", encodeURIComponent(openShow));
-      else if (currentPage > 1) parts.push("page", String(currentPage));
-      const h = "#" + parts.map(encodeURIComponent).join("/");
-      if (location.hash === h) return;
-      if (push) history.pushState(null, "", h);
-      else history.replaceState(null, "", h);
-    }
-    function applyHash() {
-      const seg = location.hash.replace(/^#\/?/, "").split("/")
-        .filter(s => s !== "").map(decodeURIComponent);
-      if (seg.length === 0) return false;
-      const tabs = ["all", "movies", "tvshows", "documentaries", "audiobooks", "books"];
-      const tab = tabs.includes(seg[0]) ? seg[0] : "all";
-      activeTab = tab;
-      for (const b of document.querySelectorAll("#tabs button"))
-        b.classList.toggle("active", b.dataset.tab === tab);
-      openShow = null;
-      currentPage = 1;
-      if (seg[1] === "show" && seg[2]) openShow = seg[2];
-      else if (seg[1] === "page") currentPage = Math.max(1, parseInt(seg[2], 10) || 1);
-      return true;
-    }
-    window.addEventListener("popstate", () => {
-      applyHash();
-      if (!openShow) {
-        $("#backRow").hidden = true;
-        $("#seasonList").innerHTML = "";
-        if (document.title !== "TM Sonder") document.title = "TM Sonder";
-      }
-      render();
-    });
-
-    function setTab(tab, keepShow=false) {
-      activeTab = tab;
-      if (!keepShow) leaveShow();
-      for (const b of document.querySelectorAll("#tabs button")) {
-        b.classList.toggle("active", b.dataset.tab === tab);
-      }
-    }
-
-    for (const b of document.querySelectorAll("#tabs button")) {
-      b.addEventListener("click", () => { currentPage = 1; setTab(b.dataset.tab); render(); syncHash(true); window.scrollTo({ top:0 }); });
-    }
-
-    function render() {
-      if (openShow) { renderShowPage(); return; }
-
-      const list = visibleItems();
-      const continuing = items.filter(i =>
-        ["movie","tvShow","documentary"].includes(i.kind) &&
-        inProgress(progressFor(i.id), i))
-        .sort((a,b)=>(progressByID.get(b.id)?.updatedAt || "").localeCompare(
-                      progressByID.get(a.id)?.updatedAt || ""));
-
-      $("#continueRow").hidden = continuing.length === 0 || activeTab !== "all";
-      if (!$("#continueRow").hidden) {
-        $("#continueGrid").innerHTML = continuing.map(i => cardHTML(i)).join("");
-      }
-
-      const grid = $("#grid");
-      const pager = $("#pager");
-      const seasons = $("#seasonList");
-      seasons.innerHTML = "";
-
-      // TV Shows tab: group episodes into clickable show folders.
-      if (activeTab === "tvshows") {
-        let shows = buildShowGroups();
-        const term = $("#q").value.trim().toLowerCase();
-        if (term) shows = shows.filter(s => s.name.toLowerCase().includes(term));
-        grid.className = "grid";
-        pager.innerHTML = `<span class="pageinfo">${shows.length} show${shows.length===1?"":"s"}</span>`;
-        if (shows.length === 0) {
-          grid.innerHTML = `<div class="empty-state">No shows yet. Add a TV Shows library with Show Name/Season XX/Episode files.</div>`;
-          return;
-        }
-        grid.innerHTML = shows.map(showCardHTML).join("");
-        return;
-      }
-
-      // Kind tabs with no content get a specific hint instead of a generic
-      // "no matches" (e.g. no Documentaries library configured).
-      const tabHints = {
-        documentaries: "No documentaries yet. Add a Documentaries library in Settings.",
-        audiobooks: "No audiobooks yet. Add an Audiobooks library in Settings, or open the Audiobook player from the app menu.",
-        books: "No books yet. Add a Books library in Settings.",
-      };
-      if (list.length === 0 && tabHints[activeTab]) {
-        grid.className = "";
-        grid.innerHTML = `<div class="empty-state">${tabHints[activeTab]}</div>`;
-        pager.innerHTML = "";
-        return;
-      }
-
-      if (list.length === 0) {
-        grid.className = "";
-        grid.innerHTML = `<div class="empty-state">No matches. Adjust filters or add media to your libraries.</div>`;
-        pager.innerHTML = "";
-        return;
-      }
-      grid.className = "grid";
-
-      const totalPages = Math.max(1, Math.ceil(list.length / PAGE_SIZE));
-      if (currentPage > totalPages) currentPage = totalPages;
-      if (currentPage < 1) currentPage = 1;
-      const pageItems = list.slice((currentPage-1)*PAGE_SIZE, currentPage*PAGE_SIZE);
-
-      grid.innerHTML = pageItems.map(i => cardHTML(i, { showTitle:false })).join("");
-
-      if (totalPages > 1 || list.length > PAGE_SIZE) {
-        pager.innerHTML = `
-          <button ${currentPage<=1?"disabled":""} data-action="goto-page" data-page="${currentPage-1}" aria-label="Previous page">‹ Prev</button>
-          <span class="pageinfo">Page ${currentPage} of ${totalPages} — ${list.length.toLocaleString()} titles</span>
-          <button ${currentPage>=totalPages?"disabled":""} data-action="goto-page" data-page="${currentPage+1}" aria-label="Next page">Next ›</button>`;
-      } else {
-        pager.innerHTML = `<span class="pageinfo">${list.length.toLocaleString()} title${list.length===1?"":"s"}</span>`;
-      }
-    }
-
-    function gotoPage(n) { currentPage = n; render(); syncHash(true); window.scrollTo({ top:0 }); }
-
-    // Delegated clicks for grid/episode/edition rows (no inline JS strings).
-    document.addEventListener("click", e => {
-      const btn = e.target.closest("[data-action]");
-      if (!btn) return;
-      const act = btn.dataset.action;
-      if (act === "open-detail" && btn.dataset.id) openDetail(btn.dataset.id);
-      else if (act === "open-show" && btn.dataset.show) openShowPage(btn.dataset.show);
-      else if (act === "switch-copy" && btn.dataset.id) switchCopy(btn.dataset.id);
-      else if (act === "goto-page") { gotoPage(parseInt(btn.dataset.page, 10)); }
-      else if (act === "browse" && btn.dataset.path !== undefined) browseTo(btn.dataset.path);
-    });
-
-    let activeVideo = null;
-    function editionLabel(c) {
-      // Lead with quality: resolution (probed or from the filename), then
-      // container, runtime, and edition tag.
-      const h = copyHeight(c);
-      const quality = h ? (h >= 2160 ? "4K" : h >= 720 ? h + "p" : h + "p") : "";
-      const bits = [quality,
-        c.format ? "." + String(c.format).toUpperCase() : ""];
-      if (c.durationSeconds) bits.push(formatTime(c.durationSeconds));
-      if (c.edition) bits.push(String(c.edition));
-      return bits.filter(Boolean).join(" · ");
-    }
-    function editionsHTML(item) {
-      const copies = copiesOf(item);
-      if (copies.length <= 1) return "";
-      return `
-      <div class="editions">
-        <h4>${copies.length} versions — stream in</h4>
-        ${copies.map(c => {
-          const cp = progressFor(c.id);
-          const cw = isWatched(cp, c);
-          const current = c.id === item.id;
-          return `
-          <button class="ed-row ${current ? "current" : ""}" data-id="${c.id}" data-action="switch-copy"
-                  aria-label="Stream copy ${editionLabel(c)}">
-            <span class="edwatch">${cw ? "WATCHED" : (cp && cp.seconds > 5 ? "RESUME" : "")}</span>
-            <span class="edlabel">${current ? "▶ " : ""}${escapeHTML(editionLabel(c))}</span>
-            <span class="edmeta">${current ? "playing" : "switch"}</span>
-          </button>`;
-        }).join("")}
-      </div>`;
-    }
-
-    function switchCopy(id) {
-      const wasOpen = $("#detail").open;
-      openDetail(id, wasOpen);
-    }
-
-    function openDetail(id, keepVideo) {
-      const item = items.find(i => i.id === id);
-      if (!item) return;
-      const p = progressFor(id);
-      const playable = BROWSER_PLAYABLE.has((item.format || "").toLowerCase());
-      const resumeAt = p && p.seconds > 5 ? p.seconds : 0;
-
-      if (activeVideo && !keepVideo) { activeVideo.pause(); activeVideo = null; }
-
-      $("#detailTitle").textContent =
-        item.showTitle && item.seasonNumber != null
-          ? `${item.showTitle} — S${String(item.seasonNumber).padStart(2,"0")}E${String(item.episodeNumber ?? 0).padStart(2,"0")} · ${item.title}`
-          : item.title;
-
-      const playerHTML = playable
-        ? `<video id="player" controls preload="metadata" src="${api("/stream/" + item.id)}"></video>`
-        : `<div class="not-playable"><strong>.${(item.format||"?").toUpperCase()}</strong> can't play inline.
-             <a href="${api("/stream/" + item.id)}" target="_blank" rel="noopener">Open in a native player</a>.</div>`;
-
-      const tags = (item.tags || []).slice(0, 10).map(tg => `<span class="tag">${escapeHTML(tg)}</span>`).join("");
-      const summaryBits = [item.summary, item.subtitle].filter(Boolean)
-        .map(s => `<p class="summary">${escapeHTML(s)}</p>`).join("");
-
-      $("#detailBody").innerHTML = `
-        ${playerHTML}
-        <div class="meta-line">${[kindLabel(item.kind), item.year || "", runtimeLabel(item),
-          (item.probedHeight ? item.probedWidth + "×" + item.probedHeight : "")]
-          .filter(Boolean).join(" • ")}</div>
-        ${summaryBits}
-        ${tags ? `<div class="tagrow">${tags}</div>` : ""}
-        ${editionsHTML(item)}
-        <div class="actions">
-          ${playable ? `<button class="primary" onclick="playFrom(${resumeAt})">${resumeAt ? "Resume at " + formatTime(resumeAt) : "Play"}</button>` : ""}
-          <a href="${api("/stream/" + item.id)}" target="_blank" rel="noopener">Open stream URL</a>
-        </div>`;
-
-      const dlg = $("#detail");
-      if (!dlg.open) dlg.showModal();
-      if (playable) attachPlayerHandlers(item, resumeAt);
-    }
-
-    function attachPlayerHandlers(item, resumeAt) {
-      const v = $("#player");
-      activeVideo = v;
-      v.addEventListener("loadedmetadata", () => {
-        if (resumeAt > 5 && resumeAt < Math.max((v.duration || 0) - 8, 0)) v.currentTime = resumeAt;
-      }, { once:true });
-      let last = 0;
-      const save = (force=false) => {
-        if (!v.duration || !Number.isFinite(v.currentTime)) return;
-        if (!force && Math.abs(v.currentTime - last) < 15) return;
-        last = v.currentTime;
-        fetch(api(`/api/progress/${item.id}`), {
-          method:"POST", headers:{"Content-Type":"application/json"},
-          body: JSON.stringify({ seconds:v.currentTime, duration:v.duration })
-        }).then(() => { progressByID.set(item.id, { itemID:item.id, seconds:v.currentTime, duration:v.duration }); })
-          .catch(()=>{});
-      };
-      v.addEventListener("timeupdate", () => save(false));
-      v.addEventListener("pause", () => save(true));
-      v.addEventListener("ended", () => save(true));
-    }
-
-    function playFrom(seconds) {
-      const v = $("#player");
-      if (!v) return;
-      if (seconds > 0) v.currentTime = seconds;
-      v.play();
-    }
-
-    function closeDetail() {
-      if (activeVideo) { activeVideo.pause(); activeVideo = null; }
-      $("#detail").close();
-      render(); // refresh badges/bars after watching
-    }
-    $("#detail").addEventListener("click", e => { if (e.target === $("#detail")) closeDetail(); });
-    document.addEventListener("keydown", e => { if (e.key === "Escape") closeDetail(); });
-
-    // Search input is debounced; selects fire immediately.
-    let searchDebounce = null;
-    for (const [id, ev] of [["q","input"],["watched","change"],["sort","change"]]) {
-      $(`#${id}`).addEventListener(ev, () => {
-        if (ev === "input") {
-          clearTimeout(searchDebounce);
-          searchDebounce = setTimeout(() => { currentPage = 1; render(); }, 200);
-        } else {
-          currentPage = 1; render();
-        }
-      });
-    }
-
-    fetch(api("/api/library")).then(r => r.json()).then(data => {
-      items = data.items ?? [];
-      (data.progress ?? []).forEach(pr => progressByID.set(pr.itemID, pr));
-      rebuildCopyGroups();
-      applyHash(); // restore tab/show/page from the URL on load
-      render();
-    }).catch(() => {
-      $("#grid").innerHTML = `<div class="empty-state">Could not load the library. Is the token valid?</div>`;
-    });
-
-    // ---------- Settings ----------
-    let settingsData = null;
-    document.querySelector("#settingsBtn").addEventListener("click", openSettings);
-    document.querySelector("#addLibDetails").addEventListener("toggle", e => {
-      if (e.target.open) browseTo("");
-    });
-
-    function openSettings() {
-      const dlg = document.querySelector("#settingsDlg");
-      dlg.showModal();
-      loadSettings();
-    }
-
-    async function loadSettings() {
-      const status = document.querySelector("#settingsStatus");
-      status.textContent = "Loading…";
-      try {
-        settingsData = await (await fetch(api("/api/settings"))).json();
-        pendingLibs = null; // fresh server state wins over stale edits
-      } catch { settingsData = null; }
-      renderSettings();
-      status.textContent = "";
-    }
-
-    function renderSettings() {
-      if (!settingsData) return;
-      const rows = document.querySelector("#libRows");
-      rows.innerHTML = (settingsData.libraries ?? []).map((l, idx) => `
-        <div style="display:grid;grid-template-columns:1fr auto;gap:8px;align-items:center;padding:8px 0;border-bottom:1px solid var(--line)">
-          <div>
-            <strong>${escapeHTML(l.name)}</strong>
-            <span style="color:var(--muted)">· ${l.itemCount} items · ${escapeHTML(l.kind)}</span>
-            <p style="margin:2px 0 0;font-size:12px">${escapeHTML(l.path)}</p>
-          </div>
-          <button onclick="removeLibraryRow(${idx})" aria-label="Remove ${escapeHTML(l.name)}">Remove</button>
-        </div>`).join("") || `<p style="color:var(--muted)">No libraries configured.</p>`;
-
-      document.querySelector("#allowLAN").checked = !!settingsData.allowLAN;
-      document.querySelector("#themeSel").value = settingsData.themePreset || "earthy";
-      document.querySelector("#mounts").innerHTML =
-        (settingsData.suggestedMounts ?? []).map(m => `<option value="${escapeHTML(m)}">`).join("");
-
-      const line = document.querySelector("#pairingLine");
-      if (settingsData.pairingToken) {
-        line.innerHTML = `Pairing token: <code id="tok" style="user-select:all">${settingsData.pairingToken}</code>`;
-      } else if (settingsData.tokenConfigured) {
-        line.innerHTML = `Pairing token is configured (visible only from this Mac).`;
-      } else {
-        line.textContent = "No pairing token (LAN access is open).";
-      }
-    }
-
-    let pendingLibs = null;
-    let browsedPath = "";
-    function currentLibraries() {
-      return pendingLibs ?? (settingsData?.libraries ?? []).map(l => ({
-        id: l.id, name: l.name, path: l.path, kind: l.kind,
-      }));
-    }
-    function addLibraryRow() {
-      const name = document.querySelector("#newName").value.trim();
-      const path = document.querySelector("#selectedPath").textContent.trim() ||
-                   browsedPath;
-      const kind = document.querySelector("#newKind").value;
-      if (!path) return flashStatus("Pick a folder first");
-      pendingLibs = currentLibraries().concat([{ id:"", name, path, kind }]);
-      document.querySelector("#newName").value = "";
-      document.querySelector("#selectedPath").textContent = "";
-      browsedPath = "";
-      applyPendingLibs();
-      flashStatus("Library added — Save changes to scan it");
-    }
-    function removeLibraryRow(idx) {
-      pendingLibs = currentLibraries().filter((_, i) => i !== idx);
-      applyPendingLibs();
-    }
-    function applyPendingLibs() {
-      const counts = new Map((settingsData?.libraries ?? []).map(l => [l.path, l.itemCount]));
-      settingsData.libraries = currentLibraries().map(l => ({ ...l, itemCount: counts.get(l.path) ?? 0 }));
-      renderSettings();
-      pendingLibs = currentLibraries();
-    }
-
-    async function saveSettings() {
-      const body = {};
-      if (pendingLibs) body.libraries = currentLibraries().map(({ id, name, path, kind }) => ({ id, name, path, kind }));
-      body.allowLAN = document.querySelector("#allowLAN").checked;
-      body.themePreset = document.querySelector("#themeSel").value;
-      await putSettings(body);
-      pendingLibs = null;
-      // library table may have changed -> refresh catalog behind the dialog
-      fetch(api("/api/library")).then(r => r.json()).then(data => {
-        items = data.items ?? [];
-        (data.progress ?? []).forEach(pr => progressByID.set(pr.itemID, pr));
-        renderSettings();
-        render();
-      });
-    }
-
-    async function rescanNow() {
-      const r = await fetch(api("/api/settings/rescan"), { method:"POST" });
-      flashStatus(r.status === 202 ? "Rescan started…" : "Scan already running");
-      if (r.status === 202) pollUntilScanned();
-    }
-
-    // Poll /api/status until the background job (scan or enrichment) finishes.
-    function pollStatus(done, attempt = 0) {
-      if (attempt > 300) return flashStatus("Still working — check back later");
-      setTimeout(() => {
-        fetch(api("/api/status")).then(r => r.json()).then(st => {
-          if (st.scanning || st.enriching) return pollStatus(done, attempt + 1);
-          done();
-        }).catch(() => pollStatus(done, attempt + 1));
-      }, 2000);
-    }
-    async function refreshLibrary() {
-      const data = await (await fetch(api("/api/library"))).json();
-      items = data.items ?? [];
-      progressByID.clear();
-      (data.progress ?? []).forEach(pr => progressByID.set(pr.itemID, pr));
-      rebuildCopyGroups();
-      render();
-    }
-
-    async function enrichNow() {
-      const r = await fetch(api("/api/settings/enrich"), { method:"POST" });
-      if (r.status !== 202) return flashStatus("Enrichment already running");
-      flashStatus("Fetching posters & summaries…");
-      pollStatus(() => {
-        refreshLibrary().then(() => {
-          renderSettings();
-          flashStatus("Enrichment done ✓");
-        });
-      });
-    }
-
-    function pollUntilScanned() {
-      pollStatus(() => {
-        refreshLibrary().then(() => flashStatus("Scan complete ✓"));
-      });
-    }
-
-    async function putSettings(body) {
-      const status = document.querySelector("#settingsStatus");
-      status.textContent = "Saving…";
-      body.version = settingsData?.version;
-      try {
-        const r = await fetch(api("/api/settings"), {
-          method:"PUT", headers:{"Content-Type":"application/json"},
-          body: JSON.stringify(body),
-        });
-        if (r.status === 409) {
-          status.textContent = "Settings changed elsewhere — reloading latest";
-          await loadSettings();
-          setTimeout(() => status.textContent = "", 3500);
-          return false;
-        }
-        settingsData = await r.json();
-        renderSettings();
-        status.textContent = "Saved ✓";
-        setTimeout(() => status.textContent = "", 2500);
-        return true;
-      } catch (e) {
-        status.textContent = "Save failed";
-        return false;
-      }
-    }
-
-    function flashStatus(msg) {
-      const el = document.querySelector("#settingsStatus");
-      el.textContent = msg;
-      setTimeout(() => el.textContent = "", 3000);
-    }
-
-    // ---------- Folder browser ----------
-    async function browseTo(path) {
-      const crumbs = document.querySelector("#browseCrumbs");
-      const list = document.querySelector("#browserList");
-      list.innerHTML = `<div style="padding:10px;color:var(--muted)">Loading…</div>`;
-      try {
-        const u = api("/api/settings/browse" + (path ? "?path=" + encodeURIComponent(path) : ""));
-        const data = await (await fetch(u)).json();
-        if (data.error) { list.innerHTML = `<div style="padding:10px">${escapeHTML(data.error)}</div>`; return; }
-        browsedPath = data.path || "";
-        renderCrumbs(data);
-        document.querySelector("#selectedPath").textContent = browsedPath;
-        if ((data.entries ?? []).length === 0) {
-          list.innerHTML = `<div style="padding:10px;color:var(--muted)">No subfolders</div>`;
-          return;
-        }
-        list.innerHTML = data.entries.map(e => `
-          <button class="browse-row" data-path="${escapeHTML(e.path)}" data-action="browse">
-            <span style="color:var(--accent);margin-right:8px">▸</span>${escapeHTML(e.name)}
-          </button>`).join("");
-      } catch (err) {
-        list.innerHTML = `<div style="padding:10px">Browse failed</div>`;
-      }
-    }
-
-    function renderCrumbs(data) {
-      const el = document.querySelector("#browseCrumbs");
-      if (!data.path) {
-        el.innerHTML = `<span style="color:var(--muted)">Choose a starting point:</span>`;
-        return;
-      }
-      const parts = data.path.split("/").filter(Boolean);
-      let acc = "";
-      let html = `<button class="crumb" data-path="/" data-action="browse">/</button> `;
-      for (const seg of parts) {
-        acc += "/" + seg;
-        html += `<button class="crumb" data-path="${escapeHTML(acc)}" data-action="browse">${escapeHTML(seg)}</button> <span style="color:var(--muted)">/</span> `;
-      }
-      el.innerHTML = html;
-    }
-
-    function chooseBrowsed() {
-      if (!browsedPath) return flashStatus("Navigate into a folder first");
-      addLibraryRow();
-    }
-  </script>
+  <script src="/library.js?v=lists-1"></script>
 </body>
 </html>

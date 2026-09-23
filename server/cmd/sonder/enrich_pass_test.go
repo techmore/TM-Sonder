@@ -1,13 +1,14 @@
 package main
 
 import (
+	"context"
 	"log"
 	"os"
 	"path/filepath"
 	"testing"
 
 	"tm-sonder/server/internal/api"
-	"tm-sonder/server/internal/httpapi"
+	"tm-sonder/server/internal/enrich"
 	"tm-sonder/server/internal/library"
 )
 
@@ -28,7 +29,7 @@ func TestRunEnrichmentPassLive(t *testing.T) {
 	})
 
 	logger := log.New(log.Writer(), "", 0)
-	updated := httpapi.RunEnrichmentPass(logger, store, filepath.Join(t.TempDir(), "cache"))
+	updated := enrich.RunPass(context.Background(), logger, store, filepath.Join(t.TempDir(), "cache"))
 	if updated == 0 {
 		t.Fatal("enrichment pass updated nothing for a well-known title")
 	}

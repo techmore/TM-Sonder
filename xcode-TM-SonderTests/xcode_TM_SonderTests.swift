@@ -727,6 +727,32 @@ struct xcode_TM_SonderTests {
         #expect(SonderLibraryQueries.audiobookItem(id: movie.id, in: [movie, audiobook]) == nil)
     }
 
+    @Test func libraryQueriesBuildScopedGenreFacets() async throws {
+        var drama = makeItem(id: UUID(), title: "A")
+        drama.genres = ["Drama", "Sci-Fi"]
+        var caseVariant = makeItem(id: UUID(), title: "B")
+        caseVariant.genres = ["drama", "Adventure"]
+        var audiobook = makeItem(id: UUID(), title: "C")
+        audiobook.kind = .audiobook
+        audiobook.genres = ["Fantasy"]
+
+        // Counted once per item, grouped case-insensitively, most-used first.
+        let facets = SonderLibraryQueries.genreFacets(in: [drama, caseVariant, audiobook])
+        #expect(facets.map(\.key) == ["drama", "adventure", "fantasy", "sci-fi"])
+        #expect(facets.first { $0.key == "drama" }?.count == 2)
+        #expect(facets.first { $0.key == "drama" }?.label == "Drama")
+        #expect(facets.first { $0.key == "adventure" }?.count == 1)
+
+        // Any-of, normalized genre filtering.
+        #expect(SonderLibraryQueries.applyGenres([drama, caseVariant, audiobook], genres: ["drama"]).map(\.id) == [drama.id, caseVariant.id])
+        #expect(SonderLibraryQueries.applyGenres([drama, caseVariant, audiobook], genres: []).count == 3)
+
+        // Facets are scoped to the other active filters.
+        let movieBase = SonderLibraryQueries.search(items: [drama, caseVariant, audiobook], query: "", kind: .movie, tag: nil)
+        #expect(SonderLibraryQueries.genreFacets(in: movieBase).map(\.key).contains("fantasy") == false)
+        #expect(SonderLibraryQueries.genreFacets(in: movieBase).count == 3)
+    }
+
     @Test func libraryQueriesPrioritizeAssetTargetsForShowAndSingleTitle() async throws {
         var episodeA = makeItem(id: UUID(), title: "Pilot")
         episodeA.kind = .tvShow

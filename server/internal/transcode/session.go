@@ -28,6 +28,12 @@ const (
 	chunkSize = 64 << 10
 )
 
+// SessionIdleTTL is how long a session with zero attached readers keeps
+// running before it is reaped. This preserves warm-session reuse for nearby
+// seeks while ensuring a disconnected client cannot leave an ffmpeg process
+// running to the end of the file. It is a var so tests can shorten it.
+var SessionIdleTTL = 30 * time.Second
+
 type Mode string
 
 const (
@@ -50,10 +56,22 @@ type Request struct {
 	Mode          Mode
 	StartSeconds  float64
 	BurnSubtitleN int // embedded-subtitle:N for burn-in; -1 disables
+	AudioTrackN   int // embedded-audio:N to map; -1 selects the first audio track
+	// CopyAudio is true only when the mapped audio codec can be copied into
+	// fragmented MP4. Remux mode still copies the video but re-encodes audio
+	// to AAC when the source codec (DTS, TrueHD, FLAC, ...) is not playable.
+	CopyAudio bool
 }
 
 func (r Request) key() string {
-	return fmt.Sprintf("%s|%s|%d", r.Path, r.Mode, r.BurnSubtitleN)
+	return fmt.Sprintf("%s|%s|%d|%d|%t", r.Path, r.Mode, r.BurnSubtitleN, r.AudioTrackN, r.CopyAudio)
+}
+
+// mp4SafeAudio lists audio codecs that can be copied into fragmented MP4 and
+// played by AVPlayer. Anything else (DTS, TrueHD, FLAC, Vorbis, PCM...) must be
+// re-encoded to AAC even when the video stream is remuxed.
+var mp4SafeAudio = map[string]bool{
+	"aac": true, "mp3": true, "ac3": true, "eac3": true, "alac": true,
 }
 
 // Session is one live ffmpeg process feeding zero or more attached readers.
@@ -68,6 +86,7 @@ type Session struct {
 
 	mu      sync.Mutex
 	readers map[*reader]struct{}
+	idle    *time.Timer
 	done    chan struct{}
 	dead    bool
 }
@@ -102,6 +121,7 @@ func (r *reader) Close() error {
 	_, ok := s.readers[r]
 	if ok {
 		delete(s.readers, r)
+		s.maybeScheduleIdleLocked()
 	}
 	s.mu.Unlock()
 	if ok {
@@ -114,8 +134,45 @@ func (s *Session) closeReader(r *reader) {
 	r.once.Do(func() {
 		s.mu.Lock()
 		delete(s.readers, r)
+		s.maybeScheduleIdleLocked()
 		s.mu.Unlock()
 		close(r.ch)
+	})
+}
+
+// stopIdle cancels a pending idle-reap timer, if any.
+func (s *Session) stopIdle() {
+	s.mu.Lock()
+	if s.idle != nil {
+		s.idle.Stop()
+		s.idle = nil
+	}
+	s.mu.Unlock()
+}
+
+// maybeScheduleIdleLocked arms the idle reaper once the last reader detaches,
+// so a disconnected client cannot leave ffmpeg running to the end of the file.
+// A short grace period preserves warm-session reuse for nearby seeks. Caller
+// must hold s.mu.
+func (s *Session) maybeScheduleIdleLocked() {
+	select {
+	case <-s.done:
+		return
+	default:
+	}
+	if len(s.readers) > 0 {
+		return
+	}
+	if s.idle != nil {
+		s.idle.Stop()
+	}
+	s.idle = time.AfterFunc(SessionIdleTTL, func() {
+		s.mu.Lock()
+		stillIdle := len(s.readers) == 0
+		s.mu.Unlock()
+		if stillIdle {
+			s.stop()
+		}
 	})
 }
 
@@ -182,11 +239,18 @@ func (m *Manager) sessionCount() int {
 
 // Attach returns a reader for the requested stream, reusing a warm session
 // when the seek target falls inside its fMP4 window; otherwise it respawns.
-func (m *Manager) Attach(ctx context.Context, item *library.Item, mode Mode, startSeconds float64, burnSub int) (io.ReadCloser, func(), error) {
+func (m *Manager) Attach(ctx context.Context, item *library.Item, mode Mode, startSeconds float64, burnSub, audioTrack int) (io.ReadCloser, func(), error) {
 	if mode == ModeAuto {
 		mode = m.pickMode(item)
 	}
-	req := Request{Path: item.FilePath, Mode: mode, StartSeconds: startSeconds, BurnSubtitleN: burnSub}
+	if audioTrack < 0 {
+		audioTrack = 0
+	}
+	req := Request{
+		Path: item.FilePath, Mode: mode, StartSeconds: startSeconds,
+		BurnSubtitleN: burnSub, AudioTrackN: audioTrack,
+		CopyAudio: audioCopyable(item, audioTrack),
+	}
 
 	m.mu.Lock()
 	s, exists := m.sessions[req.key()]
@@ -194,6 +258,7 @@ func (m *Manager) Attach(ctx context.Context, item *library.Item, mode Mode, sta
 		if absDiff(startSeconds, s.posSeconds) <= SeekWindow.Seconds() {
 			r := s.attach()
 			m.mu.Unlock()
+			go watchContext(ctx, s, r)
 			return r, func() { s.closeReader(r) }, nil
 		}
 	}
@@ -206,11 +271,12 @@ func (m *Manager) Attach(ctx context.Context, item *library.Item, mode Mode, sta
 		s.stop()
 	}
 
-	s, err := m.spawn(req)
+	s, err := m.spawn(ctx, req)
 	if err != nil {
 		return nil, nil, err
 	}
 	r := s.attach()
+	go watchContext(ctx, s, r)
 
 	cleanup := func() {
 		s.closeReader(r)
@@ -218,7 +284,20 @@ func (m *Manager) Attach(ctx context.Context, item *library.Item, mode Mode, sta
 	return r, cleanup, nil
 }
 
-// pickMode implements the remux-first fast path using probed codec info.
+// watchContext detaches the reader when the client context ends (disconnect or
+// handler return). Once the last reader is gone the session is reaped after
+// SessionIdleTTL, so no ffmpeg process outlives its clients by more than the
+// warm-reuse grace period.
+func watchContext(ctx context.Context, s *Session, r *reader) {
+	select {
+	case <-ctx.Done():
+		s.closeReader(r)
+	case <-s.done:
+	}
+}
+
+// pickMode implements the remux-first fast path using the probed video codec.
+// Audio compatibility is applied separately via Request.CopyAudio.
 func (m *Manager) pickMode(item *library.Item) Mode {
 	if item.ProbedCodec != nil {
 		switch *item.ProbedCodec {
@@ -227,6 +306,25 @@ func (m *Manager) pickMode(item *library.Item) Mode {
 		}
 	}
 	return ModeEncode
+}
+
+// audioCopyable reports whether the selected audio stream can be copied into
+// MP4. When the track index is unknown or no codec information was probed it
+// returns false, so remux always falls back to a safe AAC re-encode.
+func audioCopyable(item *library.Item, trackN int) bool {
+	codecs := item.ProbedAudioCodecs
+	if len(codecs) == 0 {
+		return false
+	}
+	if trackN < 0 || trackN >= len(codecs) {
+		for _, c := range codecs {
+			if !mp4SafeAudio[strings.ToLower(c)] {
+				return false
+			}
+		}
+		return true
+	}
+	return mp4SafeAudio[strings.ToLower(codecs[trackN])]
 }
 
 func absDiff(a, b float64) float64 {
@@ -239,6 +337,10 @@ func absDiff(a, b float64) float64 {
 func (s *Session) attach() *reader {
 	r := &reader{sess: s, ch: make(chan []byte, 32)}
 	s.mu.Lock()
+	if s.idle != nil {
+		s.idle.Stop()
+		s.idle = nil
+	}
 	s.readers[r] = struct{}{}
 	s.mu.Unlock()
 	return r
@@ -265,9 +367,15 @@ func (s *Session) stop() {
 	<-s.done
 }
 
-// spawn starts ffmpeg with stdout piped and a distributor goroutine.
-func (m *Manager) spawn(req Request) (*Session, error) {
-	m.sem <- struct{}{} // bounded by MaxConcurrent
+// spawn starts ffmpeg with stdout piped and a distributor goroutine. The
+// caller's context bounds the wait for a free concurrency slot; the process
+// itself is owned by the session so nearby seeks can reuse it.
+func (m *Manager) spawn(reqCtx context.Context, req Request) (*Session, error) {
+	select {
+	case m.sem <- struct{}{}: // bounded by MaxConcurrent
+	case <-reqCtx.Done():
+		return nil, reqCtx.Err()
+	}
 
 	ctx, cancel := context.WithCancel(context.Background())
 	args := buildArgs(req, m.cfg)
@@ -306,6 +414,7 @@ func (m *Manager) spawn(req Request) (*Session, error) {
 
 	go func() {
 		defer func() {
+			s.stopIdle()
 			s.drainReaders()
 			close(s.done)
 			cmd.Wait()
@@ -320,15 +429,17 @@ func (m *Manager) spawn(req Request) (*Session, error) {
 		for {
 			n, err := stdout.Read(buf)
 			if n > 0 {
-				chunk := make([]byte, n)
-				copy(chunk, buf[:n])
 				s.mu.Lock()
-				for r := range s.readers {
-					select {
-					case r.ch <- chunk:
-					default:
-						// Slow consumer: drop it rather than stall ffmpeg.
-						go s.closeReader(r)
+				if len(s.readers) > 0 {
+					chunk := make([]byte, n)
+					copy(chunk, buf[:n])
+					for r := range s.readers {
+						select {
+						case r.ch <- chunk:
+						default:
+							// Slow consumer: drop it rather than stall ffmpeg.
+							go s.closeReader(r)
+						}
 					}
 				}
 				s.mu.Unlock()
@@ -348,17 +459,29 @@ func (m *Manager) spawn(req Request) (*Session, error) {
 // buildArgs assembles the ffmpeg command line: fragmented MP4 to stdout,
 // remux or encode modes, HWAccel variants, optional subtitle burn-in.
 func buildArgs(req Request, cfg Config) []string {
+	// Honor the client's chosen audio track; "0:a:N?" keeps the stream
+	// optional so a file with fewer tracks still transcodes.
+	audioMap := "0:a:0?"
+	if req.AudioTrackN > 0 {
+		audioMap = fmt.Sprintf("0:a:%d?", req.AudioTrackN)
+	}
 	args := []string{
 		"-hide_banner", "-loglevel", "error",
 		"-ss", strconv.FormatFloat(req.StartSeconds, 'f', 3, 64),
 		"-i", req.Path,
 		"-map", "0:v:0",
-		"-map", "0:a:0?",
+		"-map", audioMap,
 	}
 
 	switch {
 	case req.Mode == ModeRemux:
-		args = append(args, "-c:v", "copy", "-c:a", "copy")
+		if req.CopyAudio {
+			args = append(args, "-c:v", "copy", "-c:a", "copy")
+		} else {
+			// Video is remuxed for free; audio is re-encoded because the
+			// source codec cannot live in MP4 / play in AVPlayer.
+			args = append(args, "-c:v", "copy", "-c:a", "aac", "-b:a", "192k")
+		}
 	case req.Mode == ModeEncode && cfg.HWAccel == "videotoolbox":
 		args = append(args, "-c:v", "h264_videotoolbox", "-b:v", "4M")
 		extra := []string{"-c:a", "aac", "-b:a", "192k"}

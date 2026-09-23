@@ -1,6 +1,7 @@
 package library
 
 import (
+	"bytes"
 	"os"
 	"path/filepath"
 	"sync"
@@ -203,6 +204,7 @@ func TestImportSwiftLibraryJSON(t *testing.T) {
       "id": "A1", "title": "Film", "subtitle": "", "kind": "movie",
       "studio": "", "year": 2020, "durationSeconds": 3600, "format": "mp4",
       "libraryID": "` + libID + `", "tags": ["fav"], "summary": "s",
+      "author": "Octavia Butler", "narrator": "Robin Miles",
       "progressSeconds": 12.5,
       "sourcePath": "` + src + `",
       "localPosterPath": "` + filepath.Join(dir, "poster.jpg") + `",
@@ -246,11 +248,136 @@ func TestImportSwiftLibraryJSON(t *testing.T) {
 		len(it.EmbeddedAudioTracks) != 1 || it.ProbedWidth == nil || *it.ProbedWidth != 1920 {
 		t.Errorf("swift fields not mapped: %+v", it)
 	}
+	if it.Author == nil || *it.Author != "Octavia Butler" ||
+		it.Narrator == nil || *it.Narrator != "Robin Miles" {
+		t.Errorf("author/narrator dropped in migration: author=%v narrator=%v", it.Author, it.Narrator)
+	}
+	if it.PosterURL == nil || *it.PosterURL != "/artwork/poster/A1" {
+		t.Errorf("poster URL not derived: %v", it.PosterURL)
+	}
 	if it.TrackProbeUpdatedAt == nil || it.TrackProbeUpdatedAt.UTC() != time.Date(2026, 1, 2, 3, 4, 5, 0, time.UTC) {
 		t.Errorf("ISO8601 date parse failed: %v", it.TrackProbeUpdatedAt)
 	}
 	dirs := s.Activity()
 	if len(dirs) == 0 {
 		t.Error("no import activity recorded")
+	}
+}
+
+// TestUpdateMergesConcurrentWriters guards the lost-update fix: a probe-style
+// Update must not revert progress written concurrently by SetProgress, and
+// neither writer may lose its own field.
+func TestUpdateMergesConcurrentWriters(t *testing.T) {
+	s := New()
+	s.Upsert(testItem("x", "X"))
+
+	const n = 200
+	var wg sync.WaitGroup
+	for i := 0; i < n; i++ {
+		wg.Add(2)
+		go func(i int) {
+			defer wg.Done()
+			s.Update("x", func(it *Item) bool {
+				it.Tags = append(it.Tags, "probe")
+				return true
+			})
+		}(i)
+		go func(i int) {
+			defer wg.Done()
+			s.SetProgress(api.ProgressRecord{
+				ItemID:    "x",
+				Seconds:   float64(i + 1),
+				Duration:  100,
+				UpdatedAt: time.Now().UTC().Add(time.Duration(i) * time.Millisecond),
+			})
+		}(i)
+	}
+	wg.Wait()
+
+	it, ok := s.Get("x")
+	if !ok {
+		t.Fatal("item vanished")
+	}
+	if it.ProgressSeconds <= 0 {
+		t.Errorf("progress clobbered by Update: %v", it.ProgressSeconds)
+	}
+	// One initial tag plus one per Update call.
+	if len(it.Tags) != n+1 {
+		t.Errorf("probe updates lost: %d tags, want %d", len(it.Tags), n+1)
+	}
+}
+
+// TestUpdateReportsExistenceAndChange verifies Update's contract: it reports
+// whether the item existed, and skips the generation bump when unchanged.
+func TestUpdateReportsExistenceAndChange(t *testing.T) {
+	s := New()
+	s.Upsert(testItem("x", "X"))
+
+	if s.Update("missing", func(*Item) bool { return true }) {
+		t.Error("Update reported existence for a missing item")
+	}
+
+	gen := s.Generation()
+	if !s.Update("x", func(*Item) bool { return false }) {
+		t.Error("Update reported missing for an existing item")
+	}
+	if s.Generation() != gen {
+		t.Errorf("no-op update bumped generation: %d -> %d", gen, s.Generation())
+	}
+	if !s.Update("x", func(it *Item) bool { it.Year = 1999; return true }) {
+		t.Error("Update failed")
+	}
+	if s.Generation() == gen {
+		t.Error("changing update did not bump generation")
+	}
+}
+
+// TestProgressSidecarRoundTrip verifies progress is persisted independently of
+// the catalog and overlays newer positions on load.
+func TestProgressSidecarRoundTrip(t *testing.T) {
+	dir := t.TempDir()
+	catalogPath := filepath.Join(dir, "library.json")
+	progressPath := filepath.Join(dir, "progress.json")
+
+	s := New()
+	s.Upsert(&Item{
+		MediaItem: api.MediaItem{ID: "a", Title: "ZZCatalogOnlyZZ", Kind: api.KindMovie, Format: api.FormatMP4},
+		FilePath:  "/media/zz-catalog-only.mp4",
+	})
+	if err := s.Save(catalogPath); err != nil {
+		t.Fatal(err)
+	}
+	if !s.SetProgress(api.ProgressRecord{
+		ItemID: "a", Seconds: 99, Duration: 100, UpdatedAt: time.Now().UTC(),
+	}) {
+		t.Fatal("progress not applied")
+	}
+	if err := s.SaveProgress(progressPath); err != nil {
+		t.Fatal(err)
+	}
+
+	data, err := os.ReadFile(progressPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if bytes.Contains(data, []byte("ZZCatalogOnlyZZ")) || bytes.Contains(data, []byte("zz-catalog-only.mp4")) {
+		t.Errorf("progress sidecar unexpectedly contains catalog data: %s", data)
+	}
+
+	// Fresh store: catalog snapshot (no progress) then the newer sidecar.
+	s2 := New()
+	if err := s2.Load(catalogPath); err != nil {
+		t.Fatal(err)
+	}
+	if err := s2.LoadProgress(progressPath); err != nil {
+		t.Fatal(err)
+	}
+	rec, ok := s2.ProgressFor("a")
+	if !ok || rec.Seconds != 99 {
+		t.Fatalf("progress not restored: %+v ok=%v", rec, ok)
+	}
+	it, ok := s2.Get("a")
+	if !ok || it.ProgressSeconds != 99 {
+		t.Fatalf("item progress not overlaid: %+v", it)
 	}
 }
