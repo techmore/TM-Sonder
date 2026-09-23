@@ -448,6 +448,15 @@ func hostIsLoopback(hostport string) bool {
 // withAuth implements API.md auth: loopback bypass, LAN gate, Bearer/?token=.
 func (s *Server) withAuth(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// The browser requests these immutable UI assets separately after it
+		// loads the token-bearing page URL. Browsers do not copy the page query
+		// string onto stylesheet, script, or favicon requests. The assets contain
+		// no catalog, settings, or media data; the page and all API routes remain
+		// protected below.
+		if isPublicWebAsset(r.URL.Path) {
+			next.ServeHTTP(w, r)
+			return
+		}
 		// Audiobookshelf/BookPlayer compatibility endpoints intentionally have no
 		// authentication. They are a local-LAN media feed, not the Sonder admin API.
 		if isAudiobookshelfPath(r.URL.Path) || isJellyfinPath(r.URL.Path) || hasJellyfinCredentials(r) {
@@ -489,6 +498,15 @@ func isJellyfinPath(path string) bool {
 		path == "/Users/AuthenticateByName" || path == "/UserViews" || path == "/Items" ||
 		strings.HasPrefix(path, "/Users/") || strings.HasPrefix(path, "/Items/") ||
 		strings.HasPrefix(path, "/Artists/") || path == "/Persons"
+}
+
+func isPublicWebAsset(path string) bool {
+	switch path {
+	case "/shared.js", "/library.css", "/library.js", "/favicon.svg", "/favicon.png":
+		return true
+	default:
+		return false
+	}
 }
 
 func hasJellyfinCredentials(r *http.Request) bool {

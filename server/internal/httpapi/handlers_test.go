@@ -375,6 +375,28 @@ func TestAuthMatrix(t *testing.T) {
 		}
 	})
 
+	t.Run("web assets load without copying page token", func(t *testing.T) {
+		f := newSrv(true)
+		for _, path := range []string{"/shared.js", "/library.css", "/library.js", "/favicon.svg", "/favicon.png"} {
+			req := httptest.NewRequest("GET", path, nil)
+			req.RemoteAddr = "192.168.1.50:1234"
+			req.Host = "192.168.1.20:8797"
+			rec := httptest.NewRecorder()
+			f.s.Handler().ServeHTTP(rec, req)
+			if rec.Code != http.StatusOK {
+				t.Errorf("%s status = %d, want 200", path, rec.Code)
+			}
+		}
+		page := httptest.NewRequest("GET", "/", nil)
+		page.RemoteAddr = "192.168.1.50:1234"
+		page.Host = "192.168.1.20:8797"
+		pageRec := httptest.NewRecorder()
+		f.s.Handler().ServeHTTP(pageRec, page)
+		if pageRec.Code != http.StatusUnauthorized {
+			t.Errorf("page without token status = %d, want 401", pageRec.Code)
+		}
+	})
+
 	t.Run("loopback bypasses everything", func(t *testing.T) {
 		f := newSrv(false)
 		if got := do(f, "127.0.0.1:5555", "", ""); got != 200 {
