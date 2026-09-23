@@ -10,11 +10,15 @@ private struct ServerConnection {
     let baseURL: URL
     let pairingToken: String?
 
-    func url(path: String) -> URL {
-        URLComponents(
+    func url(path: String, includingPairingToken: Bool = false) -> URL {
+        var components = URLComponents(
             url: baseURL.appendingPathComponent(path),
             resolvingAgainstBaseURL: false
-        )!.url!
+        )!
+        if includingPairingToken, let pairingToken, !pairingToken.isEmpty {
+            components.queryItems = [URLQueryItem(name: "token", value: pairingToken)]
+        }
+        return components.url!
     }
 }
 
@@ -126,7 +130,10 @@ final class StatusApp: NSObject, NSApplicationDelegate {
         return image
     }
 
-    @objc private func openSonder() { NSWorkspace.shared.open(baseURL) }
+    @objc private func openSonder() {
+        let connection = configuredServer()
+        NSWorkspace.shared.open(connection.url(path: "", includingPairingToken: true))
+    }
     @objc private func openLogs() {
         let manager = FileManager.default
         let folder = manager.homeDirectoryForCurrentUser.appendingPathComponent("Library/Application Support/TM-Sonder-Server/logs")

@@ -8,8 +8,10 @@ token is used only for the local status request and is never displayed or
 logged. The app does not start another server or load the media catalog.
 
 The menu shows running, scanning, updating, unreachable, or unexpected-response
-status; item count; and links to the web interface and logs. Quitting the
-indicator does not stop the launchd server. It has no Dock icon.
+status; item count; and links to the authenticated web interface and logs.
+Opening Sonder from the menu includes the local pairing token in the web URL;
+the status poll itself uses a Bearer header instead. Quitting the indicator does
+not stop the launchd server. It has no Dock icon.
 
 Install it as a persistent login menu-bar indicator with
 `make install-status-app`. This builds the app, installs a per-user LaunchAgent,
