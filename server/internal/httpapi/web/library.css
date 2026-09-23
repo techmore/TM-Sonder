@@ -347,6 +347,8 @@ body.optimize-mode #backRow { display:none !important; }
 .reading-list { margin:14px 0; padding:15px; border:1px solid var(--line); border-radius:12px; background:var(--panel); }
 .reading-list-head { display:flex; justify-content:space-between; align-items:flex-start; gap:12px; }
 .reading-list-head h3 { margin:0; }
+.list-open-title { border:0; padding:0; background:none; color:var(--accent); cursor:pointer; font:inherit; font-weight:600; text-align:left; }
+.list-open-title:hover { text-decoration:underline; }
 .reading-list-head p { margin:5px 0; color:var(--muted); }
 .reading-list ol { margin:8px 0 0; padding-left:28px; }
 .reading-list li { display:flex; align-items:center; gap:12px; padding:10px 0; border-top:1px solid var(--line); }

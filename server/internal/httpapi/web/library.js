@@ -1,6 +1,7 @@
     let items = [];
     let lists = [];
     let selectedListID = null;
+    let listCandidateState = null;
     const progressByID = new Map();
 
     const TOP_100_BOOKS = [
@@ -1476,21 +1477,64 @@
       await refreshLists();
     }
 
-    function listCandidates() {
-      return items.filter(item => ["audiobook", "ebook"].includes(item.kind))
-        .sort((a, b) => String(a.title || "").localeCompare(String(b.title || "")));
-    }
-
     function listTitleKey(value) {
       return String(value || "").toLowerCase().replace(/[^a-z0-9]+/g, "");
     }
 
-    function candidateForListTitle(title, candidates = listCandidates()) {
+    function listCandidateIndex() {
+      if (listCandidateState?.items === items) return listCandidateState;
+      const candidates = items.filter(item => ["audiobook", "ebook"].includes(item.kind))
+        .sort((a, b) => String(a.title || "").localeCompare(String(b.title || "")));
+      const records = candidates.map(item => ({ item, key: listTitleKey(item.title) }));
+      const exact = new Map();
+      for (const record of records) {
+        if (record.key && !exact.has(record.key)) exact.set(record.key, record.item);
+      }
+      listCandidateState = { items, candidates, records, exact, matches: new Map() };
+      return listCandidateState;
+    }
+
+    function listCandidates() {
+      return listCandidateIndex().candidates;
+    }
+
+    function candidateForListTitle(title, candidates) {
       const wanted = listTitleKey(title);
-      return candidates.find(item => {
-        const actual = listTitleKey(item.title);
-        return actual === wanted || actual.includes(wanted) || wanted.includes(actual);
-      });
+      const state = listCandidateIndex();
+      const pool = candidates || state.candidates;
+      if (pool !== state.candidates) {
+        return pool.find(item => {
+          const actual = listTitleKey(item.title);
+          return actual === wanted || actual.includes(wanted) || wanted.includes(actual);
+        });
+      }
+      if (state.matches.has(wanted)) return state.matches.get(wanted) || null;
+      let match = state.exact.get(wanted);
+      if (!match && wanted) {
+        match = state.records.find(record => record.key.includes(wanted) || wanted.includes(record.key))?.item;
+      }
+      state.matches.set(wanted, match || false);
+      return match || null;
+    }
+
+    function updateListBookChoices(input) {
+      const card = input.closest("[data-list-id]");
+      const select = card?.querySelector("[data-list-select]");
+      if (!select) return;
+      const wanted = listTitleKey(input.value);
+      if (!wanted) {
+        select.innerHTML = '<option value="">Type to search for a book…</option>';
+        select.disabled = true;
+        return;
+      }
+      const matches = listCandidateIndex().records
+        .filter(record => record.key.includes(wanted))
+        .slice(0, 80)
+        .map(record => record.item);
+      select.innerHTML = matches.length
+        ? `<option value="">Choose a matching book…</option>${matches.map(item => `<option value="${escapeHTML(item.id)}">${escapeHTML(item.title || item.id)}</option>`).join("")}`
+        : '<option value="">No matching books</option>';
+      select.disabled = matches.length === 0;
     }
 
     function renderLists() {
@@ -1511,12 +1555,17 @@
           const tags = (entry.tags || []).map(tag => `<span class="tag">${escapeHTML(tag)}</span>`).join("");
           return `<li>${cover}<span class="list-position">${index + 1}.</span><button class="list-entry-title" data-action="open-detail" data-id="${escapeHTML(item.id || "")}">${escapeHTML(item.title || item.id || "Unknown book")}</button><span class="list-entry-tags">${tags}</span><span class="list-entry-actions"><button data-action="move-list-item" data-list-id="${escapeHTML(list.id)}" data-index="${index}" data-direction="up" ${index === 0 ? "disabled" : ""}>↑</button><button data-action="move-list-item" data-list-id="${escapeHTML(list.id)}" data-index="${index}" data-direction="down" ${index === list.items.length - 1 ? "disabled" : ""}>↓</button><button data-action="remove-list-item" data-list-id="${escapeHTML(list.id)}" data-item-id="${escapeHTML(item.id || "")}">Remove</button></span></li>`;
         }).join("");
-        const options = candidates.map(item => `<option value="${escapeHTML(item.id)}">${escapeHTML(item.title || item.id)}</option>`).join("");
+        const addRow = selectedList
+          ? `<div class="list-add-row"><input class="list-book-search" data-list-book-search placeholder="Search books to add…" aria-label="Search books to add"><select data-list-select aria-label="Book to add" disabled><option value="">Type to search for a book…</option></select><input data-list-tags placeholder="Entry tags, comma separated" aria-label="Entry tags"><button class="primary" data-action="add-list-item" data-list-id="${escapeHTML(list.id)}">Add</button></div>`
+          : "";
         const listTags = (list.tags || []).map(tag => `<span class="tag">${escapeHTML(tag)}</span>`).join("");
         const recommendation = RECOMMENDED_LISTS.find(candidate => candidate.name === list.name);
         const missing = recommendation ? recommendation.titles.filter(title => !candidateForListTitle(title, candidates)) : [];
         const missingHTML = missing.length ? `<section class="list-missing"><div><strong>${missing.length} missing books</strong><p class="muted">These titles are not currently in your Books or Audiobooks collection.</p></div><button data-action="export-missing" data-list-id="${escapeHTML(list.id)}">Export missing .txt</button><ol>${missing.map(title => `<li>${escapeHTML(title)}</li>`).join("")}</ol></section>` : "";
-        return `<article class="reading-list${selectedListID === list.id ? " selected-reading-list" : ""}" data-list-id="${escapeHTML(list.id)}"><div class="reading-list-head"><div><h3>${escapeHTML(list.name)}</h3>${list.description ? `<p>${escapeHTML(list.description)}</p>` : ""}<div>${listTags}</div></div><button data-action="delete-list" data-list-id="${escapeHTML(list.id)}">Delete</button></div><div class="list-add-row"><select data-list-select aria-label="Book to add"><option value="">Choose a book…</option>${options}</select><input data-list-tags placeholder="Entry tags, comma separated" aria-label="Entry tags"><button class="primary" data-action="add-list-item" data-list-id="${escapeHTML(list.id)}">Add</button></div><ol>${entries || '<li class="list-empty">No books yet.</li>'}</ol>${missingHTML}</article>`;
+        const title = selectedList
+          ? `<h3>${escapeHTML(list.name)}</h3>`
+          : `<h3><button class="list-open-title" data-action="open-reading-list" data-list-id="${escapeHTML(list.id)}">${escapeHTML(list.name)}</button></h3>`;
+        return `<article class="reading-list${selectedListID === list.id ? " selected-reading-list" : ""}" data-list-id="${escapeHTML(list.id)}"><div class="reading-list-head"><div>${title}${list.description ? `<p>${escapeHTML(list.description)}</p>` : ""}<div>${listTags}</div></div><button data-action="delete-list" data-list-id="${escapeHTML(list.id)}">Delete</button></div>${addRow}<ol>${entries || '<li class="list-empty">No books yet.</li>'}</ol>${missingHTML}</article>`;
       }).join("");
       const detailHeader = selectedList ? `<div class="list-detail-header"><button data-action="back-to-lists">‹ All reading lists</button><span class="muted">Dedicated list page</span></div>` : "";
       host.innerHTML = detailHeader + recommended + (saved || '<div class="empty-state">Create a list to start building a reading plan.</div>');
@@ -1775,6 +1824,10 @@
     }
 
     // Delegated clicks for grid/episode/edition rows (no inline JS strings).
+    document.addEventListener("input", e => {
+      const input = e.target.closest("[data-list-book-search]");
+      if (input) updateListBookChoices(input);
+    });
     document.addEventListener("click", e => {
       const btn = e.target.closest("[data-action]");
       if (!btn) return;
@@ -1794,6 +1847,12 @@
       }
       else if (act === "export-missing" && btn.dataset.listId) {
         exportMissingList(btn.dataset.listId);
+      }
+      else if (act === "open-reading-list" && btn.dataset.listId) {
+        selectedListID = btn.dataset.listId;
+        syncHash(true);
+        renderLists();
+        window.scrollTo({ top: 0, behavior: "smooth" });
       }
       else if (act === "back-to-lists") {
         selectedListID = null;
