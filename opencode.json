@@ -6,6 +6,12 @@
       "command": ["node", "tools/opencode-pi-mcp.mjs"],
       "enabled": true,
       "description": "Delegate coding tasks to the Pi coding agent"
+    },
+    "harbor": {
+      "type": "local",
+      "command": ["node", "tools/harbor-mcp.mjs"],
+      "enabled": true,
+      "description": "Harbor torrent queue: status, queue magnets, pause seeding, move completed to Plex, cleanup"
     }
   }
 }

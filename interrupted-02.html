@@ -1,0 +1,40 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Interrupted-02 — Audiobook Naming Standardization</title>
+<style>
+body { font-family: -apple-system, Helvetica, Arial, sans-serif; max-width: 760px; margin: 2em auto; padding: 0 1em; line-height: 1.5; }
+h1 { font-size: 1.4em; } h2 { font-size: 1.1em; margin-top: 1.5em; }
+code { background: #f0f0f0; padding: 0 4px; border-radius: 3px; }
+table { border-collapse: collapse; } td, th { border: 1px solid #ccc; padding: 4px 10px; text-align: left; }
+.done { color: green; } .pending { color: #a60; } .stalled { color: #b00; }
+</style>
+</head>
+<body>
+<h1>Interrupted-02 — Audiobook Naming Standardization</h1>
+<p>Supersedes <code>interrupted.html</code>. Date: 2026-09-22. Library: <code>/Users/seandolbec/NAS/plex/Audiobooks</code>.<br>
+Target: <code>Audiobooks/Author/Book/Book.m4b</code> + <code>cover.jpg</code>, plus internal tag cleanup.</p>
+
+<h2 class="done">Phase 1 — DONE: unwrap 689 book folders</h2>
+<p>61 moved with sidecars verified, ~567 already moved externally, ~22 both-copies-exist duplicates held, 0 missing. Log: <code>m4b_work/migration/standardize-exec1.log</code>.</p>
+
+<h2 class="stalled">Phase 2 — STALLED at 20 of 72: filename renames</h2>
+<p>19 renamed + verified, 1 held (<code>Iain M. Banks/The State of the Art/03 - The State of the Art.m4b</code>, byte-identical size to existing copy — hash-verify then fold). No log movement across consecutive checks; background job <code>sh_0c9bf682c00182Y4BhkTPOOc8b</code> may be stuck on op 21 (slow NFS stat) or dead. Next op would be #21 — see <code>standardize-plan.json → filename_renames[20]</code>.</p>
+<p>Resume: confirm the job is dead, then <code>python3 &lt;tmp&gt;/exec-rename.py --live</code> (resumable, skips the 20 finished). Log: <code>m4b_work/migration/standardize-exec2.log</code>.</p>
+
+<h2 class="pending">Phase 3 — NOT STARTED: internal retags (228 files)</h2>
+<p><code>title</code>/<code>album</code> → Book, <code>artist</code>/<code>album_artist</code> → Author via <code>ffmpeg -c copy -map 0</code> + duration check + swap. Pilot first: <code>exec-retag.py --live --limit 3</code>.</p>
+
+<h2 class="pending">Manual-review queue (unchanged)</h2>
+<table>
+<tr><th>Item</th><th>Action</th></tr>
+<tr><td>~22 duplicate book folders</td><td>Size/hash compare, keep one, report</td></tr>
+<tr><td>Zero-byte <code>.wcqr1ulr.m4b</code> stub</td><td>Delete (valid copy beside it)</td></tr>
+<tr><td>6-part Screwtape folder</td><td>Concatenate with offset chapters, or leave</td></tr>
+<tr><td>Empty wrapper skeleton</td><td>Verify empty, remove</td></tr>
+<tr><td>Sonder :8797</td><td><code>POST /api/settings/rescan</code> after all moves</td></tr>
+<tr><td>Missing covers (48 files, 17 unmapped)</td><td>Separate cover pass</td></tr>
+</table>
+</body>
+</html>

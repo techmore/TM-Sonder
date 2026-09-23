@@ -32,6 +32,16 @@ func themeFor(preset string) api.ThemeSnapshot {
 			Accent:     "#4A5759",
 			Text:       "#4A5759",
 		}
+	case "techmore":
+		return api.ThemeSnapshot{
+			Preset:     preset,
+			Background: "#B5C8A3",
+			Sidebar:    "#E4E8D9",
+			Surface:    "#DDE5CF",
+			Border:     "#A7B891",
+			Accent:     "#526C3F",
+			Text:       "#403D36",
+		}
 	default:
 		return api.ThemeSnapshot{
 			Preset:     preset,

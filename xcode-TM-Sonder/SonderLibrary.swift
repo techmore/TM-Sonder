@@ -1167,6 +1167,26 @@ final class SonderLibrary: ObservableObject {
         )
     }
 
+    func applyBookList(_ list: SonderBookList) {
+        let resolved = resolvedBookList(list)
+        let tag = "List: \(list.name)"
+        for index in items.indices {
+            items[index].tags.removeAll { $0 == tag }
+        }
+        for item in resolved.matched {
+            guard let index = items.firstIndex(where: { $0.id == item.id }) else { continue }
+            if items[index].tags.contains(tag) == false { items[index].tags.append(tag) }
+        }
+        if let index = collections.firstIndex(where: { $0.name.caseInsensitiveCompare(list.name) == .orderedSame }) {
+            collections[index].kind = .collection
+            collections[index].itemIDs = resolved.matched.map(\.id)
+        } else {
+            collections.insert(SonderCollection(name: list.name, kind: .collection, itemIDs: resolved.matched.map(\.id)), at: 0)
+        }
+        addActivity("Applied book list", detail: "\(list.name): \(resolved.matched.count) matched, \(resolved.missing.count) missing", icon: "books.vertical")
+        commitLibraryMutation()
+    }
+
     private func applyCollectionMutation(_ mutation: SonderCollectionMutation) {
         guard mutation.didMutate else { return }
         collections = mutation.collections
@@ -1176,7 +1196,7 @@ final class SonderLibrary: ObservableObject {
         commitLibraryMutation()
     }
 
-    private func addActivity(_ title: String, detail: String, icon: String) {
+    func addActivity(_ title: String, detail: String, icon: String) {
         activity.insert(SonderActivityEvent(title: title, detail: detail, icon: icon), at: 0)
         activity = Array(activity.prefix(60))
     }
@@ -1189,7 +1209,7 @@ final class SonderLibrary: ObservableObject {
 
     /// Central mutation hook for library state. It refreshes derived data, invalidates
     /// HTTP response caches, and optionally schedules a coalesced background persist.
-    private func commitLibraryMutation(persist: Bool = true) {
+    func commitLibraryMutation(persist: Bool = true) {
         rebuildDerivedData()
         invalidateHTTPCache()
         guard persist else { return }

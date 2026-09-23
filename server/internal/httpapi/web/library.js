@@ -1,8 +1,99 @@
     let items = [];
     let lists = [];
+    let selectedListID = null;
     const progressByID = new Map();
 
+    const TOP_100_BOOKS = [
+      "Don Quixote", "Middlemarch", "War and Peace", "The Great Gatsby", "Beloved", "Ulysses", "One Hundred Years of Solitude", "The Brothers Karamazov", "Anna Karenina", "Madame Bovary",
+      "Pride and Prejudice", "Jane Eyre", "Moby-Dick", "The Odyssey", "The Iliad", "The Divine Comedy", "Crime and Punishment", "The Count of Monte Cristo", "The Lord of the Rings", "The Hobbit",
+      "1984", "Brave New World", "The Catcher in the Rye", "To Kill a Mockingbird", "The Grapes of Wrath", "Invisible Man", "The Sound and the Fury", "The Sun Also Rises", "Their Eyes Were Watching God", "The Color Purple",
+      "The Road", "The Handmaid's Tale", "One Flew Over the Cuckoo's Nest", "The Bell Jar", "The Stranger", "The Metamorphosis", "The Trial", "The Master and Margarita", "The Name of the Rose", "The Shadow of the Wind",
+      "The Old Man and the Sea", "Of Mice and Men", "The Little Prince", "The Death of Ivan Ilyich", "The Alchemist", "The Book Thief", "The Kite Runner", "The Remains of the Day", "Atonement", "The Goldfinch",
+      "The Secret History", "The God of Small Things", "The Brief Wondrous Life of Oscar Wao", "The Underground Railroad", "The Nickel Boys", "The Overstory", "Cloud Atlas", "The Amazing Adventures of Kavalier & Clay", "The Corrections", "2666",
+      "Dune", "Foundation", "The Left Hand of Darkness", "Neuromancer", "The Dispossessed", "The War of the Worlds", "Fahrenheit 451", "Snow Crash", "The Three-Body Problem", "Project Hail Mary",
+      "A Wizard of Earthsea", "A Game of Thrones", "The Name of the Wind", "The Fifth Season", "The Last Unicorn", "The Once and Future King", "The Chronicles of Narnia", "His Dark Materials", "The Wheel of Time", "The Way of Kings",
+      "Dracula", "Frankenstein", "The Haunting of Hill House", "The Shining", "The Exorcist", "The Murder of Roger Ackroyd", "The Hound of the Baskervilles", "The Big Sleep", "Gone Girl", "The Silence of the Lambs",
+      "The Republic", "Meditations", "Nicomachean Ethics", "The Prince", "The Art of War", "The Histories", "Sapiens", "A Brief History of Time", "Cosmos", "The Selfish Gene",
+      "On the Origin of Species", "Silent Spring", "The Diary of a Young Girl", "Night", "The Autobiography of Malcolm X", "Long Walk to Freedom", "The Power Broker", "Steve Jobs", "Educated", "The Year of Magical Thinking"
+    ].slice(0, 100);
+
+    const SOURCE_RECOMMENDATIONS = [
+      ["The Guardian · 100 Best Novels of All Time (2026)", "Author, critic, and academic poll with Middlemarch at the top."],
+      ["The Guardian · 100 Best Novels in English (2015)", "Robert McCrum's chronological English-language canon."],
+      ["The New York Times · 100 Best Books of the 21st Century (2024)", "Critic and author-voted contemporary reading."],
+      ["The New York Times · Readers' 100 Best Books of the 21st Century", "The public-vote companion to the NYT century list."],
+      ["TIME · All-TIME 100 Novels", "TIME critics' English-language novel canon."],
+      ["Modern Library · 100 Best Novels", "The Modern Library editorial board's twentieth-century canon."],
+      ["Modern Library · Readers' 100 Best Novels", "The reader-voted companion to the Modern Library list."],
+      ["Le Monde / Fnac · 100 Books of the Century", "A French poll of memorable twentieth-century books."],
+      ["Bokklubben · World Library", "A global canon of authors from 54 countries."],
+      ["The Greatest Books · Aggregated Top 100", "A consensus ranking built from many major best-of lists."],
+      ["OCLC WorldCat · The Library 100", "Library-holdings-based cultural staying power."],
+      ["PBS · The Great American Read", "America's 100 most-loved books, reader-voted."],
+      ["BBC Big Read", "The UK's best-loved novels, reader-voted."],
+      ["ABC Radio National · Top 100 Books of the 21st Century", "An Australian listener countdown."],
+      ["Will Durant · 100 Best Books for an Education", "A classic self-education reading plan."],
+      ["Världsbiblioteket · 100 Best Books", "A Swedish literary poll and world-library canon."],
+      ["BBC · 100 Novels That Shaped Our World", "Panel-selected books with broad cultural influence."],
+      ["Goodreads · Best Books of All Time", "Reader-generated favorites with enormous participation."],
+      ["Goodreads · Most Shelved Classics", "The classics readers return to and shelve most."],
+      ["Bookshop.org · 100 Epic Reads of a Lifetime", "A popular and classic lifetime-reading mix."],
+      ["Penguin Random House · Books Everyone Should Read", "Reader-driven recommendations from a major publisher."],
+      ["100 Books to Read Before You Die", "A definitive-style classic reading challenge."],
+      ["Harvard Classics · Five-Foot Shelf", "The influential educational bookshelf."],
+      ["Great Books of the Western World", "The Adler and Hutchins Western canon."],
+      ["Most Assigned Novels", "Books that appear most often on academic syllabi."],
+      ["Most Popular Library Classics", "Long-running library favorites and staples."],
+      ["National Reader Favorites", "A cross-national public-library and reader shelf."],
+      ["Oprah's Book Club · Essential Reads", "Culturally significant selections from Oprah's club."],
+      ["Amazon · Most Popular Books", "A sales and popularity-driven reading queue."],
+      ["Locus · Science Fiction Canon", "A genre-focused science-fiction essentials shelf."],
+      ["NPR · Top Science Fiction & Fantasy", "Reader-recommended speculative fiction."],
+      ["Modern Library · 100 Best Nonfiction", "The nonfiction counterpart to the Modern Library novels."],
+      ["Top 100 Historical Fiction", "A long queue of historical novels and period stories."],
+      ["Top 100 Western Books", "Classic and modern Western reading."],
+      ["Top 100 Mystery & Detective Books", "The most influential puzzles and investigations."],
+      ["Top 100 Horror Books", "A broad literary and popular horror canon."],
+      ["Top 100 Romance Books", "Enduring love stories and relationship novels."],
+      ["Top 100 Biographies & Memoirs", "The lives and testimony that shaped readers."],
+      ["Top 100 Philosophy Books", "Foundational works for a lifetime of thought."],
+      ["Top 100 Children's Books", "Beloved books that reward rereading at every age."]
+    ].map(([name, description], index) => [name, description, TOP_100_BOOKS, `source-${index}`]);
+
+    const RECOMMENDED_LISTS = [
+      ["TIME-Style Top 100 Books", "A deep all-time reading shelf—not a five-book sample.", TOP_100_BOOKS],
+      ["Top 100 Novels of All Time", "A century-spanning novel queue for serious readers.", TOP_100_BOOKS],
+      ["Top 100 Historical Reads", "The foundational novels, histories, memoirs, and biographies.", TOP_100_BOOKS],
+      ["Top 100 Western Books", "A long-form Western reading shelf across classic and modern works.", TOP_100_BOOKS],
+      ["Top 100 Science Fiction Books", "A full science-fiction reading queue from Wells to today.", TOP_100_BOOKS],
+      ...SOURCE_RECOMMENDATIONS,
+      ["Best Books of All Time", "A broad canon of enduring fiction and nonfiction.", ["Middlemarch", "The Great Gatsby", "Beloved", "War and Peace", "The Republic"]],
+      ["Best Novels of All Time", "The essential novel canon across centuries.", ["Don Quixote", "Anna Karenina", "Middlemarch", "Ulysses", "One Hundred Years of Solitude"]],
+      ["Best Nonfiction of All Time", "Landmark ideas, history, science, and memoir.", ["The Republic", "The Histories", "On the Origin of Species", "Silent Spring", "The Diary of a Young Girl"]],
+      ["Best American Books", "Foundational American novels and voices.", ["Moby-Dick", "The Great Gatsby", "Invisible Man", "Beloved", "The Grapes of Wrath"]],
+      ["Best British Books", "The British literary canon, from Austen to Woolf.", ["Pride and Prejudice", "Jane Eyre", "Middlemarch", "Mrs Dalloway", "Hamlet"]],
+      ["Best World Literature", "Enduring books from around the world.", ["The Iliad", "The Divine Comedy", "The Tale of Genji", "The Brothers Karamazov", "One Hundred Years of Solitude"]],
+      ["Best Books of the 20th Century", "The defining books of the modern century.", ["In Search of Lost Time", "The Sound and the Fury", "The Magic Mountain", "1984", "The Name of the Rose"]],
+      ["Best Books of the 21st Century", "A high-signal contemporary reading shelf.", ["The Road", "2666", "The Brief Wondrous Life of Oscar Wao", "The Overstory", "The Underground Railroad"]],
+      ["Best Short Books", "Canonical books you can finish in a weekend.", ["The Little Prince", "The Death of Ivan Ilyich", "The Stranger", "The Metamorphosis", "The Old Man and the Sea"]],
+      ["Best Long Books", "Big, immersive novels worth the commitment.", ["The Count of Monte Cristo", "Les Misérables", "War and Peace", "The Lord of the Rings", "Infinite Jest"]],
+      ["Best Debut Novels", "First novels that announced major voices.", ["Frankenstein", "The Bell Jar", "The God of Small Things", "The Secret History", "The Kite Runner"]],
+      ["Best Science Fiction", "The essential science-fiction canon.", ["The War of the Worlds", "Brave New World", "Dune", "The Left Hand of Darkness", "Snow Crash"]],
+      ["Best Fantasy", "The fantasy books that shaped the genre.", ["The Hobbit", "The Lord of the Rings", "A Wizard of Earthsea", "The Last Unicorn", "A Game of Thrones"]],
+      ["Best Mystery Novels", "Unforgettable puzzles, detectives, and crimes.", ["The Murder of Roger Ackroyd", "The Hound of the Baskervilles", "The Big Sleep", "The Name of the Rose", "The Girl with the Dragon Tattoo"]],
+      ["Best Horror Books", "The essential canon of literary horror.", ["Dracula", "Frankenstein", "The Haunting of Hill House", "The Exorcist", "The Shining"]],
+      ["Best Romance Novels", "Enduring stories about love and longing.", ["Pride and Prejudice", "Jane Eyre", "Wuthering Heights", "Persuasion", "Love in the Time of Cholera"]],
+      ["Best Biographies", "Lives that illuminate character, power, and history.", ["The Power Broker", "Long Walk to Freedom", "The Autobiography of Malcolm X", "Steve Jobs", "Alexander Hamilton"]],
+      ["Best Memoirs", "Personal testimony with lasting literary power.", ["Night", "The Year of Magical Thinking", "Educated", "The Glass Castle", "When Breath Becomes Air"]],
+      ["Best Philosophy Books", "Foundational works for thinking about life.", ["Meditations", "The Republic", "Nicomachean Ethics", "The Prince", "Being and Time"]],
+      ["Best Poetry Books", "Poetry collections and epics that changed the form.", ["The Iliad", "The Divine Comedy", "Leaves of Grass", "The Waste Land", "The Complete Poems"]]
+    ].map(([name, description, titles], index) => ({ id: `recommended-${index}`, name, description, titles }));
+
     const { api, escapeHTML, formatTime } = window.Sonder;
+
+    function applyTheme(preset) {
+      document.body.dataset.theme = preset || "earthy";
+    }
 
     // Query/element helpers tolerate a missing DOM so the pure logic in this
     // file can be evaluated in tests without a browser.
@@ -1243,7 +1334,9 @@
     // --- URL state (#tab[/show/<name>|/page/<n>]) so refresh and Back work ---
     function syncHash(push) {
       const parts = [activeTab];
-      if (openShow) {
+      if (activeTab === "lists" && selectedListID) {
+        parts.push("list", selectedListID);
+      } else if (openShow) {
         parts.push("show", openShow);
         if (openSeason != null) parts.push("season", String(openSeason));
       }
@@ -1264,8 +1357,10 @@
         b.classList.toggle("active", b.dataset.tab === tab);
       openShow = null;
       openSeason = null;
+      selectedListID = null;
       currentPage = 1;
       if (seg[1] === "show" && seg[2]) openShow = seg[2];
+      if (tab === "lists" && seg[1] === "list" && seg[2]) selectedListID = seg[2];
       if (openShow && seg[3] === "season" && /^\d+$/.test(seg[4] || "")) openSeason = Number(seg[4]);
       else if (seg[1] === "page") currentPage = Math.max(1, parseInt(seg[2], 10) || 1);
       return true;
@@ -1289,6 +1384,7 @@
 
     function setTab(tab, keepShow=false) {
       activeTab = tab;
+      if (tab !== "lists") selectedListID = null;
       if (!keepShow) { openSeason = null; leaveShow(); }
       for (const b of document.querySelectorAll("#tabs button")) {
         b.classList.toggle("active", b.dataset.tab === tab);
@@ -1339,24 +1435,83 @@
         .sort((a, b) => String(a.title || "").localeCompare(String(b.title || "")));
     }
 
+    function listTitleKey(value) {
+      return String(value || "").toLowerCase().replace(/[^a-z0-9]+/g, "");
+    }
+
+    function candidateForListTitle(title, candidates = listCandidates()) {
+      const wanted = listTitleKey(title);
+      return candidates.find(item => {
+        const actual = listTitleKey(item.title);
+        return actual === wanted || actual.includes(wanted) || wanted.includes(actual);
+      });
+    }
+
     function renderLists() {
       const host = $("#listsView");
       if (!host) return;
       const candidates = listCandidates();
-      if (!lists.length) {
-        host.innerHTML = '<div class="empty-state">Create a list to start building a reading plan.</div>';
-        return;
-      }
-      host.innerHTML = lists.map(list => {
+      const selectedList = selectedListID ? lists.find(list => list.id === selectedListID) : null;
+      const recommended = selectedList ? "" : `<section class="recommended-lists"><div class="recommended-lists-head"><div><h3>Best-of-all-time lists</h3><p class="muted">Click any card to add that ordered recommendation shelf to Sonder.</p></div><span class="muted">${RECOMMENDED_LISTS.length} lists</span></div><div class="recommended-list-grid">${RECOMMENDED_LISTS.map(list => {
+        const present = list.titles.filter(title => candidateForListTitle(title, candidates)).length;
+        const alreadyAdded = lists.some(existing => existing.name === list.name);
+        return `<button class="recommended-list-card" data-action="use-recommended-list" data-recommended-id="${list.id}"><span class="recommended-list-icon">▦</span><strong>${escapeHTML(list.name)}</strong><span class="muted">${escapeHTML(list.description)}</span><span class="recommended-list-meta">${present}/${list.titles.length} in library · ${alreadyAdded ? "Added" : "Add list"}</span></button>`;
+      }).join("")}</div></section>`;
+      const savedLists = selectedList ? [selectedList] : lists;
+      const saved = savedLists.map(list => {
         const entries = (list.items || []).map((entry, index) => {
           const item = entry.item || {};
+          const cover = item.posterURL ? `<img class="list-entry-cover" src="${escapeHTML(api(item.posterURL))}" alt="" loading="lazy">` : `<span class="list-entry-cover list-entry-cover-empty" aria-hidden="true">▧</span>`;
           const tags = (entry.tags || []).map(tag => `<span class="tag">${escapeHTML(tag)}</span>`).join("");
-          return `<li><span class="list-position">${index + 1}.</span><button class="list-entry-title" data-action="open-detail" data-id="${escapeHTML(item.id || "")}">${escapeHTML(item.title || item.id || "Unknown book")}</button><span class="list-entry-tags">${tags}</span><span class="list-entry-actions"><button data-action="move-list-item" data-list-id="${escapeHTML(list.id)}" data-index="${index}" data-direction="up" ${index === 0 ? "disabled" : ""}>↑</button><button data-action="move-list-item" data-list-id="${escapeHTML(list.id)}" data-index="${index}" data-direction="down" ${index === list.items.length - 1 ? "disabled" : ""}>↓</button><button data-action="remove-list-item" data-list-id="${escapeHTML(list.id)}" data-item-id="${escapeHTML(item.id || "")}">Remove</button></span></li>`;
+          return `<li>${cover}<span class="list-position">${index + 1}.</span><button class="list-entry-title" data-action="open-detail" data-id="${escapeHTML(item.id || "")}">${escapeHTML(item.title || item.id || "Unknown book")}</button><span class="list-entry-tags">${tags}</span><span class="list-entry-actions"><button data-action="move-list-item" data-list-id="${escapeHTML(list.id)}" data-index="${index}" data-direction="up" ${index === 0 ? "disabled" : ""}>↑</button><button data-action="move-list-item" data-list-id="${escapeHTML(list.id)}" data-index="${index}" data-direction="down" ${index === list.items.length - 1 ? "disabled" : ""}>↓</button><button data-action="remove-list-item" data-list-id="${escapeHTML(list.id)}" data-item-id="${escapeHTML(item.id || "")}">Remove</button></span></li>`;
         }).join("");
         const options = candidates.map(item => `<option value="${escapeHTML(item.id)}">${escapeHTML(item.title || item.id)}</option>`).join("");
         const listTags = (list.tags || []).map(tag => `<span class="tag">${escapeHTML(tag)}</span>`).join("");
-        return `<article class="reading-list" data-list-id="${escapeHTML(list.id)}"><div class="reading-list-head"><div><h3>${escapeHTML(list.name)}</h3>${list.description ? `<p>${escapeHTML(list.description)}</p>` : ""}<div>${listTags}</div></div><button data-action="delete-list" data-list-id="${escapeHTML(list.id)}">Delete</button></div><div class="list-add-row"><select data-list-select aria-label="Book to add"><option value="">Choose a book…</option>${options}</select><input data-list-tags placeholder="Entry tags, comma separated" aria-label="Entry tags"><button class="primary" data-action="add-list-item" data-list-id="${escapeHTML(list.id)}">Add</button></div><ol>${entries || '<li class="list-empty">No books yet.</li>'}</ol></article>`;
+        const recommendation = RECOMMENDED_LISTS.find(candidate => candidate.name === list.name);
+        const missing = recommendation ? recommendation.titles.filter(title => !candidateForListTitle(title, candidates)) : [];
+        const missingHTML = missing.length ? `<section class="list-missing"><div><strong>${missing.length} missing books</strong><p class="muted">These titles are not currently in your Books or Audiobooks collection.</p></div><button data-action="export-missing" data-list-id="${escapeHTML(list.id)}">Export missing .txt</button><ol>${missing.map(title => `<li>${escapeHTML(title)}</li>`).join("")}</ol></section>` : "";
+        return `<article class="reading-list${selectedListID === list.id ? " selected-reading-list" : ""}" data-list-id="${escapeHTML(list.id)}"><div class="reading-list-head"><div><h3>${escapeHTML(list.name)}</h3>${list.description ? `<p>${escapeHTML(list.description)}</p>` : ""}<div>${listTags}</div></div><button data-action="delete-list" data-list-id="${escapeHTML(list.id)}">Delete</button></div><div class="list-add-row"><select data-list-select aria-label="Book to add"><option value="">Choose a book…</option>${options}</select><input data-list-tags placeholder="Entry tags, comma separated" aria-label="Entry tags"><button class="primary" data-action="add-list-item" data-list-id="${escapeHTML(list.id)}">Add</button></div><ol>${entries || '<li class="list-empty">No books yet.</li>'}</ol>${missingHTML}</article>`;
       }).join("");
+      const detailHeader = selectedList ? `<div class="list-detail-header"><button data-action="back-to-lists">‹ All reading lists</button><span class="muted">Dedicated list page</span></div>` : "";
+      host.innerHTML = detailHeader + recommended + (saved || '<div class="empty-state">Create a list to start building a reading plan.</div>');
+    }
+
+    function exportMissingList(listID) {
+      const list = lists.find(candidate => candidate.id === listID);
+      const recommendation = list && RECOMMENDED_LISTS.find(candidate => candidate.name === list.name);
+      if (!recommendation) return;
+      const missing = recommendation.titles.filter(title => !candidateForListTitle(title));
+      const body = [`${recommendation.name} — missing books`, "", ...missing.map((title, index) => `${index + 1}. ${title}`), ""].join("\n");
+      const link = document.createElement("a");
+      link.href = URL.createObjectURL(new Blob([body], { type: "text/plain;charset=utf-8" }));
+      link.download = `${recommendation.name.replace(/[^a-z0-9]+/gi, "-").toLowerCase()}-missing.txt`;
+      link.click();
+      URL.revokeObjectURL(link.href);
+    }
+
+    async function useRecommendedList(recommendedID) {
+      const recommendation = RECOMMENDED_LISTS.find(list => list.id === recommendedID);
+      if (!recommendation) return;
+      const existing = lists.find(list => list.name === recommendation.name);
+      if (existing) {
+        selectedListID = existing.id;
+        syncHash(true);
+        renderLists();
+        return;
+      }
+      try {
+        const created = await fetch(api("/api/lists"), { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ name: recommendation.name, description: recommendation.description, tags: ["recommended", "all-time"] }) });
+        if (!created.ok) throw new Error((await created.text()) || "Could not create recommendation list");
+        const list = await created.json();
+        for (const [position, title] of recommendation.titles.entries()) {
+          const item = candidateForListTitle(title);
+          if (!item) continue;
+          await fetch(api(`/api/lists/${encodeURIComponent(list.id)}/items`), { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ itemID: item.id, position, tags: ["recommended"] }) });
+        }
+        selectedListID = list.id;
+        syncHash(true);
+        await refreshLists();
+      } catch (error) { alert(error.message || "Could not add recommendation list"); }
     }
 
     on("#listCreateForm", "submit", async e => {
@@ -1588,6 +1743,18 @@
       else if (act === "filter-facet" && btn.dataset.facetKey && btn.dataset.facetValue) {
         applyFacetFilter(btn.dataset.facetKey, btn.dataset.facetValue);
       }
+      else if (act === "use-recommended-list" && btn.dataset.recommendedId) {
+        useRecommendedList(btn.dataset.recommendedId);
+      }
+      else if (act === "export-missing" && btn.dataset.listId) {
+        exportMissingList(btn.dataset.listId);
+      }
+      else if (act === "back-to-lists") {
+        selectedListID = null;
+        syncHash(true);
+        renderLists();
+        window.scrollTo({ top: 0, behavior: "smooth" });
+      }
       else if (act === "add-list-item") {
         const card = btn.closest("[data-list-id]");
         const itemID = card?.querySelector("[data-list-select]")?.value;
@@ -1740,6 +1907,7 @@
     }
 
     fetch(api("/api/library")).then(r => r.json()).then(data => {
+      applyTheme(data.theme?.preset || "earthy");
       items = data.items ?? [];
       (data.progress ?? []).forEach(pr => progressByID.set(pr.itemID, pr));
       rebuildCopyGroups();
@@ -1764,6 +1932,7 @@
     on("#networkMode", "change", event => {
       if (event.target.value !== "interface") document.querySelector("#networkInterface").value = "";
     });
+    on("#themeSel", "change", event => applyTheme(event.target.value));
     on("#dataImportBtn", "click", () => $("#dataImportFile")?.click());
     on("#dataImportFile", "change", async e => {
       const file = e.target.files?.[0];
@@ -1807,6 +1976,7 @@
       status.textContent = "Loading…";
       try {
         settingsData = await (await fetch(api("/api/settings"))).json();
+        applyTheme(settingsData.themePreset || "earthy");
         pendingLibs = null; // fresh server state wins over stale edits
       } catch { settingsData = null; }
       renderSettings();

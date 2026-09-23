@@ -8,6 +8,7 @@ nonisolated enum SonderSection: String, CaseIterable, Identifiable {
     case ebooks
     case continueWatching
     case collections
+    case lists
     case server
     case log
     case about

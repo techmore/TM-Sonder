@@ -1,0 +1,97 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Audiobook cleanup — handover (3 entries)</title>
+<style>
+body{font-family:-apple-system,Helvetica,Arial,sans-serif;max-width:900px;margin:2em auto;padding:0 1em;line-height:1.5}
+h1{border-bottom:2px solid #333}
+.entry{border:2px solid #333;border-radius:8px;padding:1em 1.2em;margin:1.5em 0}
+.entry h2{margin-top:0;border:none}
+.entry-1{border-color:#1a73e8}.entry-1 h2{color:#1a73e8}
+.entry-2{border-color:#b06000}.entry-2 h2{color:#b06000}
+.entry-3{border-color:#137333}.entry-3 h2{color:#137333}
+code{background:#f4f4f4;padding:1px 5px;border-radius:3px}
+pre{background:#f4f4f4;padding:1em;overflow-x:auto}
+.bad{color:#b3261e}
+table{border-collapse:collapse}td,th{border:1px solid #ccc;padding:4px 10px;text-align:left}
+</style>
+</head>
+<body>
+<h1>Audiobook cleanup — handover</h1>
+<p>Date: 2026-09-22. Library: QNAP <code>NAS-02 (192.168.222.188:/volume2/14tb)</code>,
+<code>plex/Audiobooks</code> (NFS to Mac).</p>
+
+<div class="entry entry-1">
+<h2>Entry 1 — What was being done</h2>
+<p>Mission: organize <code>Audiobooks/</code>, standardize naming for Plex + Jellyfin +
+Audiobookshelf, find every missing cover and fix it properly.</p>
+<p>Standard agreed: one <code>.m4b</code> per book, cover embedded, chapters intact.
+AAC sources remuxed losslessly; MP3 sources become Opus-in-MP4 (30–60% space savings,
+already proven on the iOS/Plex path). Sidecars <code>cover.jpg</code> +
+<code>folder.jpg</code> + <code>poster.jpg</code> per book for the three servers.
+Never invent art; never overwrite existing art; never auto-join multi-file sets.</p>
+<p>Tools built for the job (cleanup/remux dry-run by default; fetch writes its map, opus_batch runs live; <code>NAS_AUDIOBOOKS</code> env override):</p>
+<pre>tools/audiobooks/cleanup.py       sweep: missing covers, AppleDouble, misnamed (--author, --apply)
+tools/audiobooks/fetch_covers.py  stage missing covers locally (Wikipedia -&gt; Open Library)
+tools/audiobooks/remux.py         lossless cover embed for AAC books (--author, --apply)
+tools/audiobooks/opus_batch.py    MP3 -&gt; Opus .m4b for the 4 queued books
+tools/audiobooks/verify.py        confirm embedded art per book (read-only)</pre>
+<p>Full read-only sweep first: <b>191 authors, 887 books, 65 missing covers,
+1,400 AppleDouble <code>._</code> files, 48 misnamed.</b> Report:
+<code>m4b_work/cleanup-report.json</code>. (~195 further books sit in the obsolete
+<code>M4B Forge Compact/compact-m4b-80k</code> wrapper — user's 1082 total.)</p>
+<p>Cover fetch: <b>23 staged</b> (<code>m4b_work/migration/covers/candidates/</code>,
+map in <code>fetch-results.json</code>), <b>41 no-match</b> (interviews, speeches,
+MP3-dupe folders — no official art exists), <b>1 error</b>.</p>
+</div>
+
+<div class="entry entry-2">
+<h2>Entry 2 — Where it stopped</h2>
+<p><b>Embedded + verified on the real share (13):</b></p>
+<pre>Jefferson Fisher / The Next Conversation
+Andrzej Sapkowski / Baptism of Fire
+Andrzej Sapkowski / Blood of Elves
+Andrzej Sapkowski / Lady of the Lake
+Andrzej Sapkowski / The Last Wish
+Andrzej Sapkowski / The Tower of the Swallow
+Blake Crouch / Dark Matter
+Carl Sagan / The Demon-Haunted World
+David Brooks / How to Know a Person
+Isaac Asimov / Foundation and Earth
+Isaac Asimov / The Naked Sun
+Isaac Asimov / The Robots of Dawn
+James S. A. Corey / Leviathan Wakes</pre>
+<p>(<code>m4b_work/verify.log</code>, bad=0. Log shows 14 OK lines — Jefferson verified twice.)</p>
+<p><b>Corrupt — need re-download, not conversion:</b></p>
+<pre>Larry Niven / Ringworld (.m4b) — truncated (ffmpeg "partial file")
+Matt Abrahams / Think Faster Talk Smarter (.m4b) — truncated ("partial file")</pre>
+<p><b>Pending:</b> 4 MP3&rarr;Opus conversions (Checklist Manifesto, Recursion, Death's End,
+We Are Legion — <code>opus_batch.py</code> never completed); sidecar pass for the fixed books;
+<code>._</code> + torrent-.txt cleanup (30&nbsp;s/op over NFS &asymp; 12&nbsp;h — run on the QNAP itself);
+review queue (The Road to Character 10 MP3s, The World's 100 Greatest Books 100 MP3s, Ringworld Engineers multi-file set,
+Kaban Project duplicate editions, 3 Ringworld folders below, 48 misnamed);
+Vanity Fair (BBC, staged cover ready, just needs its remux run).</p>
+<p><b>Blocker:</b> NFS mount kept dropping mid-job — <code>~/NAS</code> went stale-local
+(empty fallback looks exactly like mass deletion), <code>~/NAS2</code> worked then dropped too.
+<span class="bad">Trust no NAS path until <code>mount | grep 14tb</code> confirms it.</span></p>
+</div>
+
+<div class="entry entry-3">
+<h2>Entry 3 — How to resume</h2>
+<pre>1. Reboot Mac, mount share, confirm: mount | grep 14tb + authors under plex/Audiobooks
+2. Re-run verify.py (full) — confirm the 13 still good
+3. Run opus_batch.py — converts the 4 MP3s
+4. Remux Vanity Fair (BBC) with its staged cover
+5. Sidecar pass: cover.jpg / folder.jpg / poster.jpg into fixed book dirs (never overwrite)
+6. ._* cleanup + torrent-.txt litter — on the QNAP itself
+7. Review queue: multi-file joins, misnamed renames, wrapper retirement
+8. Re-download the 2 corrupt files:
+   - Larry Niven / Ringworld
+   - Larry Niven / Ringworld-Book-1-MP3
+   - Larry Niven / Ringworld-Book-1-MP3-ingest   (reconcile all three, keep one)
+9. Downscale Dark Matter's 8 MB PNG before any re-embed</pre>
+<p>Monitor batches: <code>watch -n 30 'grep -c ^OK m4b_work/verify.log; tail -1 m4b_work/verify.log'</code></p>
+</div>
+</body>
+</html>

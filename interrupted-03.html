@@ -1,0 +1,117 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Audiobook cleanup — interrupted status</title>
+<style>
+body{font-family:-apple-system,Helvetica,Arial,sans-serif;max-width:900px;margin:2em auto;padding:0 1em;line-height:1.5}
+h1{border-bottom:2px solid #333}h2{border-bottom:1px solid #ccc;margin-top:1.5em}
+code{background:#f4f4f4;padding:1px 5px;border-radius:3px}
+pre{background:#f4f4f4;padding:1em;overflow-x:auto}
+.ok{color:#137333}.bad{color:#b3261e}.warn{color:#b06000}
+table{border-collapse:collapse}td,th{border:1px solid #ccc;padding:4px 10px;text-align:left}
+</style>
+</head>
+<body>
+<h1>Audiobook cleanup — interrupted status</h1>
+<p>Date: 2026-09-22. Library: QNAP <code>NAS-02 (192.168.222.188:/volume2/14tb)</code>,
+<code>plex/Audiobooks</code> (NFS to Mac). Standard agreed: one <code>.m4b</code> per book,
+cover embedded, chapters intact; AAC sources remuxed losslessly, MP3 sources become
+Opus-in-MP4; sidecars <code>cover.jpg</code> + <code>folder.jpg</code> + <code>poster.jpg</code>
+for Audiobookshelf/Jellyfin/Plex.</p>
+
+<h2>Where it stopped</h2>
+<p>Remux batch finished: <b>13 books embedded + verified</b>. Opus batch (4 MP3 books) never
+completed — the NFS mount kept dropping mid-job (<code>~/NAS</code> went stale-local,
+<code>~/NAS2</code> worked then also dropped). Next step on record: reboot the Mac, remount,
+re-run verify, then the Opus batch. <span class="bad">Do not trust any NAS path until the
+mount is confirmed with <code>mount | grep 14tb</code>.</span></p>
+
+<h2>Done and verified (13 unique books)</h2>
+<pre>Jefferson Fisher / The Next Conversation
+Andrzej Sapkowski / Baptism of Fire
+Andrzej Sapkowski / Blood of Elves
+Andrzej Sapkowski / Lady of the Lake
+Andrzej Sapkowski / The Last Wish
+Andrzej Sapkowski / The Tower of the Swallow
+Blake Crouch / Dark Matter
+Carl Sagan / The Demon-Haunted World
+David Brooks / How to Know a Person
+Isaac Asimov / Foundation and Earth
+Isaac Asimov / The Naked Sun
+Isaac Asimov / The Robots of Dawn
+James S. A. Corey / Leviathan Wakes</pre>
+<p>Verified with <code>tools/audiobooks/verify.py</code> — all show attached cover art on the real share (<code>m4b_work/verify.log</code>, bad=0; the log shows 14 OK lines because Jefferson Fisher was verified twice).</p>
+
+<h2>Full sweep (dry-run, <code>m4b_work/cleanup-report.json</code>)</h2>
+<table>
+<tr><th>Metric</th><th>Count</th></tr>
+<tr><td>Authors</td><td>191</td></tr>
+<tr><td>Books</td><td>887</td></tr>
+<tr><td>Missing sidecar covers</td><td>65</td></tr>
+<tr><td>AppleDouble <code>._</code> files</td><td>1,400</td></tr>
+<tr><td>Misnamed (file stem != folder)</td><td>48</td></tr>
+</table>
+<p>Note: 887 books live under <code>Audiobooks/</code>; the user reports 1,082 total, leaving
+~195 presumably in the obsolete <code>M4B Forge Compact/compact-m4b-80k</code> wrapper
+(no report in this session counts the wrapper — sweep only flags <code>wrapper_present</code>).
+Wrapper still to be retired.</p>
+
+<h2>Covers: 23 staged, 41 no-match, 1 error</h2>
+<p>Staged in <code>m4b_work/migration/covers/candidates/</code>, map in
+<code>m4b_work/migration/covers/fetch-results.json</code> (Wikipedia then Open Library,
+title-overlap + author-surname checked, never invented).
+41 no-matches are interviews, speech compilations, MP3-dupe folders and story collections
+with no official art (e.g. AH Speeches, PKD interviews, Heinlein juveniles). Dark Matter's
+8&nbsp;MB PNG should be downscaled before embedding anywhere else.</p>
+
+<h2>Corrupt files found (need re-download, not conversion)</h2>
+<ul>
+<li><span class="bad">Larry Niven / Ringworld (.m4b)</span> — truncated, ffmpeg <code>partial file</code></li>
+<li><span class="bad">Matt Abrahams / Think Faster Talk Smarter (.m4b)</span> — truncated, <code>partial file</code></li>
+</ul>
+
+<h2>Review queue (do not auto-process)</h2>
+<ul>
+<li>David Brooks / The Road to Character — 10 MP3 parts, needs join order + chapter plan</li>
+<li>IntelliQuest / The World's 100 Greatest Books — 100 MP3s, needs splitting plan</li>
+<li>Larry Niven / Ringworld Engineers — multi-file MP3 set</li>
+<li>Black Library / Kaban Project — duplicate editions in one folder (<code>.wcqr1ulr.m4b</code>)</li>
+<li>William Makepeace Thackeray / Vanity Fair (BBC) — single m4b, staged cover ready, never remuxed (mount dropped first); just needs a remux run</li>
+<li>Larry Niven / Ringworld — m4b is truncated (<code>partial file</code>); re-download, do not convert</li>
+<li>Larry Niven / Ringworld-Book-1-MP3 — duplicate edition folder; reconcile against Ringworld after re-download</li>
+<li>Larry Niven / Ringworld-Book-1-MP3-ingest — second duplicate/partial salvage; reconcile, keep one</li>
+<li>48 misnamed entries total — full list in <code>cleanup-report.json</code> (mostly harmless
+<code>(Unabridged)</code> suffixes; Atul Gawande's 147-track Complications is the extreme case)</li>
+</ul>
+
+<h2>Opus batch (pending — 4 books)</h2>
+<p>Checklist Manifesto, Recursion, Death's End, We Are Legion: single MP3 each &rarr;
+<code>tools/audiobooks/opus_batch.py</code> (32k mono / 48k stereo via <code>convert.py</code>,
+cover embedded, chapters verified, MP3 retired only after verification). Never ran to completion.</p>
+
+<h2>Tools created (cleanup/remux dry-run by default; fetch writes its map, opus_batch runs live)</h2>
+<pre>tools/audiobooks/cleanup.py       sweep: missing covers, ._, misnamed (--author, --apply)
+tools/audiobooks/fetch_covers.py  stage missing covers locally (Wiki -&gt; Open Library)
+tools/audiobooks/remux.py         lossless cover embed for AAC books (--author, --apply)
+tools/audiobooks/opus_batch.py    MP3 -&gt; Opus .m4b for the 4 queued books
+tools/audiobooks/verify.py        confirm embedded art per book (read-only)</pre>
+<p>Scripts take <code>NAS_AUDIOBOOKS</code> / <code>NAS_STAGING</code> env vars (defaults now point at
+<code>~/NAS2</code>). Monitor any batch with e.g.
+<code>watch -n 30 'grep -c ^OK m4b_work/verify.log; tail -1 m4b_work/verify.log'</code>.</p>
+
+<h2>Resume checklist</h2>
+<ol>
+<li>Reboot Mac, mount share, confirm: <code>mount | grep 14tb</code> and authors list under <code>plex/Audiobooks</code>.</li>
+<li>Re-run <code>verify.py</code> (full) — confirm the 13 still good.</li>
+<li>Run <code>opus_batch.py</code> — converts the 4 MP3s.</li>
+<li>Sidecar pass: copy staged covers as <code>cover.jpg</code>/<code>folder.jpg</code>/<code>poster.jpg</code> into the 23 staged book dirs (13 embedded, 4 MP3&rarr;Opus pending, 2 corrupt, 4 skipped — never overwrite).</li>
+<li><code>._</code> cleanup + torrent-.txt litter — best run <b>on the QNAP itself</b> (30&nbsp;s/op over NFS&nbsp;&asymp;&nbsp;12&nbsp;h for 1,400 files).</li>
+<li>Review queue (multi-file joins), misnamed renames, wrapper retirement.</li>
+<li>Re-download the 2 corrupt files.</li>
+</ol>
+<p>Mount lesson learned the hard way: <code>ls -f</code>/scandir reads work over weak NFS but
+stat/write ops stall (~30&nbsp;s/op); a dropped mount silently shows an empty local fallback,
+which looks exactly like mass deletion. Always confirm the mount first.</p>
+</body>
+</html>

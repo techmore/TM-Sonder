@@ -134,6 +134,8 @@ struct ContentView: View {
             ContinueWatchingView(library: library, selectedItemID: $selectedItemID)
         case .collections:
             CollectionsView(library: library, selectedItemID: $selectedItemID)
+        case .lists:
+            BookListsView(library: library, selectedItemID: $selectedItemID)
         case .server:
             ServerDashboard(library: library)
         case .log:
@@ -185,6 +187,8 @@ struct Sidebar: View {
                 .tag(SonderSection.continueWatching)
             Label("Collections", systemImage: "folder")
                 .tag(SonderSection.collections)
+            Label("Lists", systemImage: "books.vertical")
+                .tag(SonderSection.lists)
             Label("Server", systemImage: "chart.bar.xaxis")
                 .tag(SonderSection.server)
             Label("Log", systemImage: "text.bubble")
