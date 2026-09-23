@@ -6,6 +6,18 @@ struct Status: Decodable {
     let itemCount: Int
 }
 
+private struct ServerConnection {
+    let baseURL: URL
+    let pairingToken: String?
+
+    func url(path: String) -> URL {
+        URLComponents(
+            url: baseURL.appendingPathComponent(path),
+            resolvingAgainstBaseURL: false
+        )!.url!
+    }
+}
+
 @MainActor
 final class StatusApp: NSObject, NSApplicationDelegate {
     private var item: NSStatusItem!
@@ -43,28 +55,49 @@ final class StatusApp: NSObject, NSApplicationDelegate {
         menu.addItem(entry)
     }
 
-    private func configuredURL() -> URL {
+    private func configuredServer() -> ServerConnection {
         let config = FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent(".config/sonder/server.json")
+        var port = 8797
+        var pairingToken: String?
         if let data = try? Data(contentsOf: config),
-           let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-           let port = object["port"] as? Int, (1...65535).contains(port),
-           let url = URL(string: "http://127.0.0.1:\(port)") { return url }
-        return URL(string: "http://127.0.0.1:8797")!
+           let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any] {
+            if let configuredPort = object["port"] as? Int, (1...65535).contains(configuredPort) {
+                port = configuredPort
+            }
+            if let configuredToken = object["pairingToken"] as? String, !configuredToken.isEmpty {
+                pairingToken = configuredToken
+            }
+        }
+        return ServerConnection(
+            baseURL: URL(string: "http://127.0.0.1:\(port)")!,
+            pairingToken: pairingToken
+        )
     }
 
     @objc private func refresh() {
         guard request == nil else { return }
-        baseURL = configuredURL()
-        let url = baseURL.appendingPathComponent("api/status")
+        let connection = configuredServer()
+        baseURL = connection.baseURL
         request = Task { [weak self] in
             guard let self else { return }
             defer { self.request = nil }
             do {
-                var query = URLRequest(url: url, cachePolicy: .reloadIgnoringLocalCacheData, timeoutInterval: 4)
+                var query = URLRequest(
+                    url: connection.url(path: "api/status"),
+                    cachePolicy: .reloadIgnoringLocalCacheData,
+                    timeoutInterval: 4
+                )
                 query.httpMethod = "GET"
+                if let pairingToken = connection.pairingToken {
+                    query.setValue("Bearer \(pairingToken)", forHTTPHeaderField: "Authorization")
+                }
                 let (data, response) = try await URLSession.shared.data(for: query)
-                guard (response as? HTTPURLResponse)?.statusCode == 200 else {
-                    self.display("Server needs attention", symbol: "exclamationmark.triangle", detail: "Unexpected response · \(self.baseURL.host ?? "localhost")")
+                let statusCode = (response as? HTTPURLResponse)?.statusCode ?? -1
+                guard statusCode == 200 else {
+                    let detail = statusCode == 401
+                        ? "Pairing token unavailable · \(self.baseURL.host ?? "localhost")"
+                        : "Unexpected response (\(statusCode)) · \(self.baseURL.host ?? "localhost")"
+                    self.display("Server needs attention", symbol: "exclamationmark.triangle", detail: detail)
                     return
                 }
                 let status = try JSONDecoder().decode(Status.self, from: data)
