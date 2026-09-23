@@ -1,0 +1,60 @@
+name: Release
+
+on:
+  push:
+    tags: ["v*.*.*"]
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    name: Build and publish release artifacts
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.25"
+
+      - name: Verify release version
+        run: |
+          expected="v$(tr -d '\n' < VERSION)"
+          test "$GITHUB_REF_NAME" = "$expected" || {
+            echo "tag $GITHUB_REF_NAME does not match VERSION ($expected)" >&2
+            exit 1
+          }
+
+      - name: Run release checks
+        run: |
+          node --test server/internal/httpapi/web/library.test.cjs
+          (cd server && gofmt -l . | tee /tmp/unformatted.txt && test ! -s /tmp/unformatted.txt)
+          (cd server && go vet ./...)
+          (cd server && go test -race -count=1 ./...)
+
+      - name: Build release archives
+        env:
+          RELEASE_VERSION: ${{ github.ref_name }}
+          RELEASE_BUILD: ${{ github.sha }}
+        run: |
+          version="${RELEASE_VERSION#v}"
+          mkdir -p dist/stage
+          ldflags="-s -w -X main.version=${version} -X tm-sonder/server/internal/httpapi.Version=${version} -X tm-sonder/server/internal/httpapi.Build=${RELEASE_BUILD}"
+          for target in "darwin arm64" "linux arm64"; do
+            set -- $target
+            os="$1"; arch="$2"
+            name="tm-sonder-${version}-${os}-${arch}"
+            mkdir -p "dist/stage/$name"
+            CGO_ENABLED=0 GOOS="$os" GOARCH="$arch" go build -trimpath -ldflags "$ldflags" -o "dist/stage/$name/sonder" ./server/cmd/sonder
+            cp README.md API.md VERSION "dist/stage/$name/"
+            tar -C dist/stage -czf "dist/$name.tar.gz" "$name"
+          done
+          shasum -a 256 dist/*.tar.gz > dist/SHA256SUMS
+
+      - name: Publish GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release create "$GITHUB_REF_NAME" --generate-notes dist/*.tar.gz dist/SHA256SUMS

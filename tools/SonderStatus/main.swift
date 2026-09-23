@@ -79,11 +79,18 @@ final class StatusApp: NSObject, NSApplicationDelegate {
     private func display(_ text: String, symbol: String, detail: String) {
         statusLine.title = "Sonder · \(text)"
         detailLine.title = detail
-        item.button?.title = " Sonder"
-        item.button?.image = NSImage(systemSymbolName: symbol, accessibilityDescription: text)
-        item.button?.image?.isTemplate = true
+        item.button?.title = ""
+        item.button?.image = menuIcon() ?? NSImage(systemSymbolName: symbol, accessibilityDescription: text)
+        item.button?.image?.isTemplate = false
         item.button?.toolTip = "Sonder: \(text). \(detail)"
         item.button?.setAccessibilityLabel("Sonder: \(text)")
+    }
+
+    private func menuIcon() -> NSImage? {
+        guard let path = Bundle.main.path(forResource: "TM-Sonder", ofType: "png"),
+              let image = NSImage(contentsOfFile: path) else { return nil }
+        image.size = NSSize(width: 18, height: 18)
+        return image
     }
 
     @objc private func openSonder() { NSWorkspace.shared.open(baseURL) }

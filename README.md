@@ -82,9 +82,18 @@ make container-build && make container-run
   The app container is named `tm-sonder` so it is easy to distinguish from
   Apple's internal `buildkit` builder helper in container-management UIs.
 
-The intended native Homebrew distribution is `brew install <tap>/sonder`
-followed by `brew services start sonder`. The Homebrew and container paths use
-the same configuration, API, and portable data bundle.
+### Releases and Homebrew
+
+`VERSION` is the source of truth for the server, container labels, and macOS
+app marketing version. Run `make release-check`, commit the result, and tag it
+as `vX.Y.Z`; `.github/workflows/release.yml` verifies the tag, runs the release
+checks, builds arm64 macOS/Linux archives, and publishes SHA256 checksums.
+
+The native Homebrew formula lives in [`Formula/tm-sonder.rb`](Formula/tm-sonder.rb)
+and can be tested as a local tap using the instructions in
+[`packaging/homebrew/README.md`](packaging/homebrew/README.md). It installs
+the same `sonder` binary and configuration model as the native and container
+paths; Homebrew is optional and Orchard is not required.
 
 For scripted backups or migrations, the server binary also supports catalog
 maintenance without starting the web service:

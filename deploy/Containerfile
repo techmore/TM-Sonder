@@ -4,18 +4,23 @@
 #          --volume /path/to/media:/media:ro --volume sonder-data:/data tm-sonder
 FROM golang:1.25 AS build
 WORKDIR /src
+ARG VERSION=0.2.0-dev
+ARG BUILD=container
 COPY server/go.mod ./
 RUN go mod download
 COPY server/ ./
 RUN CGO_ENABLED=0 GOOS=linux GOARCH=arm64 go build \
-      -trimpath -ldflags "-s -w" -o /out/sonder ./cmd/sonder
+      -trimpath -ldflags "-s -w -X main.version=${VERSION} -X tm-sonder/server/internal/httpapi.Version=${VERSION} -X tm-sonder/server/internal/httpapi.Build=${BUILD}" \
+      -o /out/sonder ./cmd/sonder
 
 FROM alpine:3.20
+ARG VERSION=0.2.0-dev
 RUN apk add --no-cache ffmpeg ca-certificates tzdata && \
     addgroup -S sonder && adduser -S -G sonder sonder && \
     mkdir -p /data /media && chown -R sonder:sonder /data
 LABEL org.opencontainers.image.title="TM-Sonder" \
-      org.opencontainers.image.description="TM Sonder audiobook and media server"
+      org.opencontainers.image.description="TM Sonder audiobook and media server" \
+      org.opencontainers.image.version="${VERSION}"
 COPY --from=build /out/sonder /sonder
 COPY deploy/container-server.json /etc/sonder/server.json
 COPY deploy/container-entrypoint.sh /entrypoint.sh

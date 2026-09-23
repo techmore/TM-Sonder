@@ -1,0 +1,30 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" role="img" aria-labelledby="title desc">
+  <title id="title">TM Sonder</title>
+  <desc id="desc">Olive play button over a film reel</desc>
+  <defs>
+    <linearGradient id="background" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#242a22"/>
+      <stop offset="1" stop-color="#0e120e"/>
+    </linearGradient>
+    <linearGradient id="olive" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#e4ef70"/>
+      <stop offset="1" stop-color="#8e9f1e"/>
+    </linearGradient>
+  </defs>
+  <rect x="2" y="2" width="60" height="60" rx="15" fill="url(#background)" stroke="#7d8a3b" stroke-width="1.5"/>
+  <g fill="none" stroke="#a9b83f" stroke-width="3" opacity=".92">
+    <circle cx="32" cy="32" r="22"/>
+    <circle cx="32" cy="32" r="15" stroke="#4e5a28"/>
+  </g>
+  <g fill="#151a12">
+    <rect x="29.5" y="9" width="5" height="7" rx="2"/>
+    <rect x="29.5" y="48" width="5" height="7" rx="2"/>
+    <rect x="9" y="29.5" width="7" height="5" rx="2"/>
+    <rect x="48" y="29.5" width="7" height="5" rx="2"/>
+    <rect x="14" y="14" width="6" height="5" rx="2" transform="rotate(45 17 16.5)"/>
+    <rect x="44" y="14" width="6" height="5" rx="2" transform="rotate(-45 47 16.5)"/>
+    <rect x="14" y="45" width="6" height="5" rx="2" transform="rotate(-45 17 47.5)"/>
+    <rect x="44" y="45" width="6" height="5" rx="2" transform="rotate(45 47 47.5)"/>
+  </g>
+  <path d="M27 21.5 45 32 27 42.5Z" fill="url(#olive)" stroke="#f4ff9a" stroke-width="1" stroke-linejoin="round"/>
+</svg>

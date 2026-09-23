@@ -433,6 +433,11 @@ func TestIndexPage(t *testing.T) {
 	if respCSS.StatusCode != 200 || !strings.Contains(bodyCSS, "grid") {
 		t.Errorf("library.css not served: %d %.120s", respCSS.StatusCode, bodyCSS)
 	}
+	respIcon, bodyIcon := get(t, f.ts.URL+"/favicon.svg")
+	if respIcon.StatusCode != 200 || respIcon.Header.Get("Content-Type") != "image/svg+xml" ||
+		!strings.Contains(bodyIcon, "TM Sonder") {
+		t.Errorf("favicon not served: %d %s %.120s", respIcon.StatusCode, respIcon.Header.Get("Content-Type"), bodyIcon)
+	}
 	// Audiobook browser page.
 	resp2, body2 := get(t, f.ts.URL+"/audiobooks")
 	if resp2.StatusCode != 200 || !strings.Contains(body2, "Audiobooks") ||

@@ -83,9 +83,13 @@ final class SonderAppDelegate: NSObject, NSApplicationDelegate {
     }
 
     private func statusIcon() -> NSImage {
-        let image = NSImage(systemSymbolName: "play.tv", accessibilityDescription: "TM Sonder") ?? NSImage(size: NSSize(width: 18, height: 18))
-        image.isTemplate = true
-        return image
+        if let image = NSApp.applicationIconImage.copy() as? NSImage {
+            image.size = NSSize(width: 18, height: 18)
+            return image
+        }
+        let fallback = NSImage(systemSymbolName: "play.tv", accessibilityDescription: "TM Sonder") ?? NSImage(size: NSSize(width: 18, height: 18))
+        fallback.isTemplate = true
+        return fallback
     }
 
     @objc private func openSonder() {

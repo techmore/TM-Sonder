@@ -1,0 +1,19 @@
+// Copy this file to ~/Library/Application Support/TM-Sonder-Server/server.json
+// or use it as a starting point for `brew services start tm-sonder`.
+{
+  "port": 8797,
+  "dataDir": "~/Library/Application Support/TM-Sonder-Server",
+  "libraries": [
+    { "id": "media", "name": "Media", "path": "/path/to/media", "kind": "all" }
+  ],
+  "allowLAN": false,
+  "pairingToken": "",
+  "safeScan": true,
+  "themePreset": "earthy",
+  "ffmpegPath": "ffmpeg",
+  "ffprobePath": "ffprobe",
+  "probeWorkers": 0,
+  "thumbWorkers": 0,
+  "transcode": { "maxConcurrent": 2, "hwaccel": "videotoolbox", "preset": "veryfast" },
+  "logDir": ""
+}

@@ -30,8 +30,13 @@ const (
 	AppName    = "TM Sonder"
 	ServerID   = "tm-sonder"
 	ServiceDNS = "_tmsonder._tcp"
-	Version    = "0.1.0"
-	Build      = "go-port"
+)
+
+// Version and Build are link-time stamped for release binaries. Keeping the
+// defaults useful makes `go run` and local tests self-describing too.
+var (
+	Version = "0.2.0-dev"
+	Build   = "local"
 )
 
 // TrackRefresher re-probes one item's tracks (refresh-tracks endpoint).
@@ -265,6 +270,7 @@ func (s *Server) routes() {
 	m.HandleFunc("GET /shared.js", s.handleSharedJS)
 	m.HandleFunc("GET /library.css", s.handleLibraryCSS)
 	m.HandleFunc("GET /library.js", s.handleLibraryJS)
+	m.HandleFunc("GET /favicon.svg", s.handleFavicon)
 }
 
 // Handler returns the fully wrapped HTTP handler.
@@ -308,7 +314,8 @@ func (s *Server) withGzip(next http.Handler) http.Handler {
 			strings.HasPrefix(path, "/subtitles/") ||
 			path == "/api/library" || path == "/library.json" ||
 			path == "/" || path == "/audiobooks" || path == "/ebooks" ||
-			path == "/shared.js" || path == "/library.css" || path == "/library.js" {
+			path == "/shared.js" || path == "/library.css" || path == "/library.js" ||
+			path == "/favicon.svg" {
 			// These routes manage their own cached gzip.
 			next.ServeHTTP(w, r)
 			return

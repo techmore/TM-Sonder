@@ -16,7 +16,7 @@ import (
 // JSON routes the iOS client uses. When opened with ?token= (LAN pairing),
 // the embedded JS propagates the token to every same-origin request.
 
-//go:embed web/library.html web/library.css web/library.js web/audiobooks.html web/ebooks.html web/shared.js
+//go:embed web/library.html web/library.css web/library.js web/audiobooks.html web/ebooks.html web/shared.js web/favicon.svg
 var webFS embed.FS
 
 func mustReadWeb(name string) []byte {
@@ -34,6 +34,7 @@ var (
 	audiobooksPage = newGzippedPage(func() []byte { return mustReadWeb("web/audiobooks.html") })
 	ebooksPage     = newGzippedPage(func() []byte { return mustReadWeb("web/ebooks.html") })
 	sharedJS       = newGzippedPage(func() []byte { return mustReadWeb("web/shared.js") })
+	faviconSVG     = newGzippedPage(func() []byte { return mustReadWeb("web/favicon.svg") })
 )
 
 // serveAsset writes an embedded, pre-gzipped asset with ETag/304 support.
@@ -75,6 +76,11 @@ func (s *Server) handleLibraryCSS(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) handleLibraryJS(w http.ResponseWriter, r *http.Request) {
 	serveAsset(w, r, libraryJS, "text/javascript; charset=utf-8")
+}
+
+// handleFavicon serves the shared TM Sonder brand mark used by the web UI.
+func (s *Server) handleFavicon(w http.ResponseWriter, r *http.Request) {
+	serveAsset(w, r, faviconSVG, "image/svg+xml")
 }
 
 // gzippedPage caches an embedded page's raw and gzip-encoded bytes so each
