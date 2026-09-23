@@ -9,7 +9,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     var statusLine: NSMenuItem?
     var isRunning = false
 
-    let base = "http://127.0.0.1:8797"
+    let base = "http://127.0.0.1:8096"
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         let menu = NSMenu()
@@ -64,7 +64,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 NSColor.systemGreen : NSColor.systemRed
         }
         statusLine?.title = running
-            ? "TM Sonder — running (port 8797)"
+            ? "TM Sonder — running (port 8096)"
             : "TM Sonder — not running"
     }
 

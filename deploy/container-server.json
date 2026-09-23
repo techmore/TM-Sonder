@@ -1,9 +1,9 @@
 // Copy or mount this example as the container's /data/server.json and adjust
 // the library list for the media mounted at /media.
 {
-  "port": 8797,
-  "webPort": 8797,
-  "apiPort": 8798,
+  "port": 8096,
+  "webPort": 8096,
+  "apiPort": 8097,
   "dataDir": "/data",
   "libraries": [
     { "id": "media", "name": "Media", "path": "/media", "kind": "all" }

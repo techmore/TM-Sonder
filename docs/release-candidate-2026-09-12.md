@@ -50,7 +50,7 @@ Reproduce the client acceptance tests:
 
 ```sh
 cd IOS_Client_Xcode/TM_Sonder_Client
-SONDER_TEST_URL=http://127.0.0.1:8797 \
+SONDER_TEST_URL=http://127.0.0.1:8096 \
 SONDER_TEST_EPUB='/Users/seandolbec/NAS/plex/ebook/dnsandbind_5thedition.epub' \
 swift test
 ```

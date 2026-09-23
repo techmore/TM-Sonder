@@ -5,7 +5,7 @@ import path from 'node:path';
 const [reviewDir,dataDir,...approved]=process.argv.slice(2);
 if(!reviewDir||!dataDir||!approved.length)throw new Error('Review directory, data directory and explicit approved titles required');
 const rows=JSON.parse(await fs.readFile(path.join(reviewDir,'report.json'),'utf8'));
-const response=await fetch('http://127.0.0.1:8797/api/library');
+const response=await fetch('http://127.0.0.1:8096/api/library');
 if(!response.ok)throw new Error('Catalog unavailable');
 const catalog=await response.json();
 const directory=path.join(dataDir,'curated-posters');await fs.mkdir(directory,{recursive:true});

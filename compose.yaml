@@ -12,7 +12,7 @@ services:
       org.opencontainers.image.title: TM-Sonder
       app.kubernetes.io/name: tm-sonder
     ports:
-      - "8797:8797"
+      - "8096:8096"
     environment:
       SONDER_DATA_DIR: /data
     volumes:

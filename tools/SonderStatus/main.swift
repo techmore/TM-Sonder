@@ -93,7 +93,7 @@ final class StatusApp: NSObject, NSApplicationDelegate {
     private let bindMenu = NSMenu()
     private var timer: Timer?
     private var request: Task<Void, Never>?
-    private var baseURL = URL(string: "http://127.0.0.1:8797")!
+    private var baseURL = URL(string: "http://127.0.0.1:8096")!
     private var currentNetwork: NetworkEnvelope?
     private var bindingInProgress = false
     private var lastAlertedError = ""
@@ -141,13 +141,13 @@ final class StatusApp: NSObject, NSApplicationDelegate {
 
     private func configuredServer() -> ServerConnection {
         let config = FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent(".config/sonder/server.json")
-        var port = 8798
+        var port = 8097
         var pairingToken: String?
         var dataDirectory = FileManager.default.homeDirectoryForCurrentUser
             .appendingPathComponent("Library/Application Support/TM-Sonder-Server")
         if let data = try? Data(contentsOf: config),
            let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any] {
-            let webPort = (object["webPort"] as? Int) ?? (object["port"] as? Int) ?? 8797
+            let webPort = (object["webPort"] as? Int) ?? (object["port"] as? Int) ?? 8096
             let configuredPort = (object["apiPort"] as? Int) ?? (webPort + 1)
             if (1...65535).contains(configuredPort) {
                 port = configuredPort
@@ -185,7 +185,7 @@ final class StatusApp: NSObject, NSApplicationDelegate {
                 let (serverStatus, networkStatus) = try await (server, network)
                 render(server: serverStatus, network: networkStatus)
             } catch {
-                display("Server unreachable", symbol: "exclamationmark.triangle", detail: "No response on port \(self.baseURL.port ?? 8797)")
+                display("Server unreachable", symbol: "exclamationmark.triangle", detail: "No response on port \(self.baseURL.port ?? 8096)")
                 resetDetails()
             }
         }
@@ -303,7 +303,7 @@ final class StatusApp: NSObject, NSApplicationDelegate {
         let alert = NSAlert()
         alert.messageText = title
         alert.informativeText = "Ports apply live after the listeners restart. The API remains loopback-only."
-        let field = NSTextField(string: String(current ?? (changingWebPort ? 8797 : 8798)))
+        let field = NSTextField(string: String(current ?? (changingWebPort ? 8096 : 8097)))
         field.frame = NSRect(x: 0, y: 0, width: 180, height: 24)
         alert.accessoryView = field
         alert.addButton(withTitle: "Apply")
@@ -429,7 +429,7 @@ final class StatusApp: NSObject, NSApplicationDelegate {
         var components = URLComponents()
         components.scheme = "http"
         components.host = host
-        components.port = state?.webPort ?? 8797
+        components.port = state?.webPort ?? 8096
         components.path = "/"
         if let pairingToken = connection.pairingToken, !pairingToken.isEmpty {
             components.queryItems = [URLQueryItem(name: "token", value: pairingToken)]

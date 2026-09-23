@@ -12,6 +12,11 @@ import (
 
 const RuntimeStateFilename = "runtime-state.json"
 
+const (
+	DefaultWebPort = 8096
+	DefaultAPIPort = 8097
+)
+
 // RuntimeState is intentionally separate from server.json. It changes as the
 // user switches adapters and as the process restarts, while library settings
 // and credentials remain in the existing config file.
@@ -84,10 +89,13 @@ func SaveState(path string, state RuntimeState) error {
 
 func DefaultState(webPort, apiPort int, allowLAN bool, interfaces []Interface) RuntimeState {
 	if webPort <= 0 {
-		webPort = 8797
+		webPort = DefaultWebPort
 	}
 	if apiPort <= 0 {
 		apiPort = webPort + 1
+		if webPort == DefaultWebPort {
+			apiPort = DefaultAPIPort
+		}
 	}
 	mode := ModeLoopback
 	if allowLAN {
@@ -128,13 +136,16 @@ func Normalize(state *RuntimeState, webPort, apiPort int) {
 		state.WebPort = webPort
 	}
 	if state.WebPort <= 0 {
-		state.WebPort = 8797
+		state.WebPort = DefaultWebPort
 	}
 	if state.APIPort <= 0 {
 		state.APIPort = apiPort
 	}
 	if state.APIPort <= 0 {
 		state.APIPort = state.WebPort + 1
+		if state.WebPort == DefaultWebPort {
+			state.APIPort = DefaultAPIPort
+		}
 	}
 	if state.APIPort == state.WebPort {
 		state.APIPort = state.WebPort + 1

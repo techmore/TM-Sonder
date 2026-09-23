@@ -57,7 +57,8 @@ web port changes.
 `publicHealthCheckURL`, and `caddyBindAddress`. It changes only the persisted
 proxy state and Caddy configuration. Caddy never configures DNS, router or
 firewall forwarding, or WireGuard routes. The API listener defaults to
-`127.0.0.1:8798`. The selected web listener is a pairing-protected frontend
+`127.0.0.1:8097`. The selected web listener defaults to Jellyfin's native
+HTTP port `8096` and is a pairing-protected frontend
 that proxies to that private listener, so browser and Jellyfin-compatible URLs
 remain usable over the LAN without exposing the API process or a database port
 directly. The catalog is a local JSON snapshot; no database port is opened by
@@ -271,7 +272,7 @@ Media items expose relative artwork URLs instead:
 {
   "isEnabled": true,
   "allowLAN": true,
-  "port": 8797,
+  "port": 8096,
   "themePreset": "earthy",
   "requiresPairing": true
 }

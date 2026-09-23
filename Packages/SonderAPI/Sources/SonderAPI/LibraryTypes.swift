@@ -189,7 +189,7 @@ public struct SonderPublicServerSettings: Codable, Sendable, Hashable {
         let container = try decoder.container(keyedBy: CodingKeys.self)
         isEnabled = try container.decodeIfPresent(Bool.self, forKey: .isEnabled) ?? true
         allowLAN = try container.decodeIfPresent(Bool.self, forKey: .allowLAN) ?? false
-        port = try container.decodeIfPresent(Int.self, forKey: .port) ?? 8797
+        port = try container.decodeIfPresent(Int.self, forKey: .port) ?? 8096
         themePreset = try container.decodeIfPresent(String.self, forKey: .themePreset) ?? "earthy"
         pairingToken = try container.decodeIfPresent(String.self, forKey: .pairingToken)
         if let requires = try container.decodeIfPresent(Bool.self, forKey: .requiresPairing) {

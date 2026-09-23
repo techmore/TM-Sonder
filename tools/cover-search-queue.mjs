@@ -3,7 +3,7 @@
 import fs from 'node:fs/promises';
 const [output,...audits]=process.argv.slice(2);
 if(!output)throw new Error('Output path required');
-const response=await fetch('http://127.0.0.1:8797/api/library');
+const response=await fetch('http://127.0.0.1:8096/api/library');
 if(!response.ok)throw new Error('Catalog unavailable');
 const {items}=await response.json();
 const flagged=new Map();

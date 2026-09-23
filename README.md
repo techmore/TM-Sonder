@@ -42,8 +42,8 @@ Requirements: `ffprobe` and `ffmpeg` on `PATH` (or configured paths) for track
 probing, thumbnails, chapters, and transcoding. The server runs fine without
 them, minus those features.
 
-The web listener defaults to `8797`; the private readiness/API listener uses
-`8798` on `127.0.0.1`. Local-only until LAN is enabled; enabling LAN
+The web listener defaults to Jellyfin's native HTTP port `8096`; the private
+readiness/API listener uses `8097` on `127.0.0.1`. Local-only until LAN is enabled; enabling LAN
 auto-generates a pairing token (persisted in `dataDir/pairing-token`). The
 active interface selection is stored separately in
 `<dataDir>/runtime-state.json`, so changing adapters does not rescan or alter

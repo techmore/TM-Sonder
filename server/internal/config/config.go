@@ -13,7 +13,9 @@ import (
 )
 
 const (
-	DefaultPort        = 8797
+	// DefaultPort matches Jellyfin's native HTTP listener so clients such as
+	// BookPlayer can connect with the standard host:8096 expectation.
+	DefaultPort        = 8096
 	DefaultThemePreset = "earthy"
 )
 
@@ -345,9 +347,9 @@ var templateBytes = []byte(`// TM Sonder Go server configuration.
 //   SONDER_TRANSCODE_MAX_CONCURRENT, SONDER_HWACCEL,
 //   SONDER_TRANSCODE_PRESET
 {
-  "port": 8797,
-  "webPort": 8797,
-  "apiPort": 8798,
+  "port": 8096,
+  "webPort": 8096,
+  "apiPort": 8097,
   "dataDir": "~/Library/Application Support/TM-Sonder-Server",
   "libraries": [
     { "id": "movies", "name": "Movies", "path": "/path/to/media", "kind": "movie" }

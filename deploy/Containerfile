@@ -1,6 +1,6 @@
 # TM Sonder Go server — Apple Containerization micro-VM image.
 # Build: container build -t tm-sonder   (from repo root)
-# Run:   container run --name tm-sonder -p 8797:8797 \
+# Run:   container run --name tm-sonder -p 8096:8096 \
 #          --volume /path/to/media:/media:ro --volume sonder-data:/data tm-sonder
 FROM golang:1.25 AS build
 WORKDIR /src
@@ -27,8 +27,8 @@ COPY deploy/container-entrypoint.sh /entrypoint.sh
 RUN chmod 0755 /entrypoint.sh
 USER sonder
 ENV SONDER_DATA_DIR=/data \
-    SONDER_PORT=8797 \
+    SONDER_PORT=8096 \
     SONDER_CONFIG=/data/server.json
-EXPOSE 8797
+EXPOSE 8096
 VOLUME ["/data", "/media"]
 ENTRYPOINT ["/entrypoint.sh"]

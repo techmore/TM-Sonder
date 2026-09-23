@@ -67,7 +67,7 @@ Staging (small local disk!): `~/Downloads/Torrents`. Client: Harbor 1.7.8
   mostly AAC ~80k mono (already compact). Staged pilots save 30-61% with
   chapters + art preserved (`m4b_work/migration/`). Do NOT bulk-rollout before
   acceptance; MP3 backlogs convert to compact M4B AAC 80k at ingest instead.
-- Ebooks/posters: TM Sonder server :8797 enrich fills summaries + Plex
+- Ebooks/posters: TM Sonder server :8096 enrich fills summaries + Plex
   `poster.jpg` for official art only; home-video `no match` gets frame-grab
   thumbnails. Rescan after every move batch.
 

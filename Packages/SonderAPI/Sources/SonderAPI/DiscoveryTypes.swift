@@ -244,7 +244,7 @@ public struct SonderDiscoveryResponse: Codable, Sendable, Hashable {
         } else if let intPort = try? container.decode(Int.self, forKey: .port) {
             port = UInt16(clamping: intPort)
         } else {
-            port = 8797
+            port = 8096
         }
         localURL = try container.decodeIfPresent(String.self, forKey: .localURL) ?? ""
         lanURL = try container.decodeIfPresent(String.self, forKey: .lanURL)

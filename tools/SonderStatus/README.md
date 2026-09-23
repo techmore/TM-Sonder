@@ -3,7 +3,8 @@
 Build with `make status-app`, then open `bin/Sonder Status.app`.
 The small accessory app polls the private local API every 30 seconds, with a
 four-second timeout and at most one request in flight. It reads the API port
-and pairing token from `~/.config/sonder/server.json` (default API port 8798).
+and pairing token from `~/.config/sonder/server.json` (default API port 8097;
+the web listener follows Jellyfin's native 8096 default).
 The token is used only for local status/rebind requests and is never displayed
 or logged. The app does not start another server or load the media catalog.
 

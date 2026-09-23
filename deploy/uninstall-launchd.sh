@@ -14,7 +14,7 @@ sudo rm -f "$PREFIX/bin/sonder"
 
 echo "==> Verifying shutdown"
 sleep 1
-if curl -fsS --max-time 2 "http://127.0.0.1:${SONDER_PORT:-8797}/api/health" >/dev/null 2>&1; then
+if curl -fsS --max-time 2 "http://127.0.0.1:${SONDER_PORT:-8096}/api/health" >/dev/null 2>&1; then
     echo "WARNING: something still answers on the port (another instance?)" >&2
 else
     echo "OK: service removed and port closed"

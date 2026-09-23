@@ -5,7 +5,7 @@
 // Two input modes:
 //
 //   - Live server (concurrent dry-run report):
-//     sonder-audit -api http://127.0.0.1:8797 -kind movie -limit 500
+//     sonder-audit -api http://127.0.0.1:8096 -kind movie -limit 500
 //
 //   - Snapshot file (supports -apply write-back; run with server stopped):
 //     sonder-audit -snapshot data/library.json -cache data/metadata-cache -apply
@@ -53,7 +53,7 @@ type indexedCand struct {
 
 func main() {
 	snapshot := flag.String("snapshot", "", "path to library.json snapshot (apply mode)")
-	apiBase := flag.String("api", "", "live server base URL, e.g. http://127.0.0.1:8797")
+	apiBase := flag.String("api", "", "live server base URL, e.g. http://127.0.0.1:8096")
 	cacheRoot := flag.String("cache", "", "enricher metadata-cache dir")
 	kind := flag.String("kind", "movie", "audit scope: movie|tvShow|all-media")
 	limit := flag.Int("limit", 25, "max items to audit")
