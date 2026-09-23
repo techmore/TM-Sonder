@@ -349,8 +349,8 @@ body.optimize-mode #backRow { display:none !important; }
 .reading-list-head h3 { margin:0; }
 .reading-list-head p { margin:5px 0; color:var(--muted); }
 .reading-list ol { margin:8px 0 0; padding-left:28px; }
-.reading-list li { display:flex; align-items:center; gap:8px; padding:8px 0; border-top:1px solid var(--line); }
-.list-entry-cover { width:34px; height:48px; flex:0 0 34px; object-fit:cover; border-radius:4px; background:var(--panel2); color:var(--muted); display:grid; place-items:center; font-size:16px; }
+.reading-list li { display:flex; align-items:center; gap:12px; padding:10px 0; border-top:1px solid var(--line); }
+.list-entry-cover { width:68px; height:96px; flex:0 0 68px; object-fit:cover; border-radius:6px; background:var(--panel2); color:var(--muted); display:grid; place-items:center; font-size:22px; }
 .list-entry-cover-empty { border:1px solid var(--line); }
 .list-position { color:var(--muted); min-width:20px; }
 .list-entry-title { border:0; padding:0; background:none; color:var(--accent); cursor:pointer; text-align:left; font:inherit; }
