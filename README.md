@@ -90,6 +90,11 @@ sonder app proxy enable --domain books.example.com --health https://books.exampl
   one operation and reports listener health while they reconnect. The
   `sonder app status --json` and `sonder app proxy status` commands expose the
   same state used by the menu-bar companion.
+- **Menu-bar updates:** `make install-status-app` installs the per-user status
+  companion. Its menu can check the `tm-sonder` Homebrew formula and install an
+  update with visible progress through download, restart, and version
+  verification. It only restarts a Homebrew-managed server; manually launched
+  instances are left safe and report when a manual restart is needed.
 - **Public exposure:** enabling Caddy only manages Sonder's reverse-proxy
   configuration. DNS records, router/firewall TCP 80/443 forwarding, and
   WireGuard routes remain explicit external prerequisites. The catalog is a

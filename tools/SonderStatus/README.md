@@ -16,6 +16,18 @@ Ethernet, VPN, public, and every active exact interface ID. **Change web port…
 and **Change API port…** submit the same atomic live exposure operation as the
 web Settings panel. Binding and port controls are disabled during a swap, and
 failed swaps produce a native alert.
+
+The menu also exposes **Check for Updates…** and **Install Update…** for the
+Homebrew `tm-sonder` formula. Checks refresh Homebrew metadata only when the
+user requests a check, with a quiet background check at launch and every ten
+minutes. An update displays each stage in the menu—metadata refresh, download,
+installation, service ownership, restart, and version verification—while
+disabling conflicting controls. The updater restarts Sonder only when
+`brew services` reports that the Homebrew instance is running. If the active
+server is manually launched or repository-built, it installs the formula
+update without starting a second server and explains that a manual restart is
+required. The catalog and media files are never modified by the update
+operation.
 Opening Sonder from the menu includes the local pairing token in the web URL;
 the status poll itself uses a Bearer header instead. Quitting the indicator does
 not stop the launchd server. It has no Dock icon.

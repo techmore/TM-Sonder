@@ -79,6 +79,35 @@ private struct ServerConnection {
     }
 }
 
+private struct BrewInfo {
+    let formula: String
+    let installedVersion: String?
+    let availableVersion: String?
+    let outdated: Bool
+}
+
+private struct BrewCommandResult {
+    let status: Int32
+    let output: String
+}
+
+private final class CommandOutputBuffer: @unchecked Sendable {
+    private let lock = NSLock()
+    private var data = Data()
+
+    func append(_ newData: Data) {
+        lock.lock()
+        data.append(newData)
+        lock.unlock()
+    }
+
+    func value() -> String {
+        lock.lock()
+        defer { lock.unlock() }
+        return String(data: data, encoding: .utf8) ?? ""
+    }
+}
+
 @MainActor
 final class StatusApp: NSObject, NSApplicationDelegate {
     private var item: NSStatusItem!
@@ -90,12 +119,22 @@ final class StatusApp: NSObject, NSApplicationDelegate {
     private let apiLine = NSMenuItem(title: "API: —", action: nil, keyEquivalent: "")
     private let uptimeLine = NSMenuItem(title: "Uptime: —", action: nil, keyEquivalent: "")
     private let publicLine = NSMenuItem(title: "Public pulse: —", action: nil, keyEquivalent: "")
+    private let updateLine = NSMenuItem(title: "Updates: Not checked", action: nil, keyEquivalent: "")
     private let bindMenu = NSMenu()
+    private var checkUpdatesItem: NSMenuItem!
+    private var installUpdateItem: NSMenuItem!
     private var timer: Timer?
     private var request: Task<Void, Never>?
+    private var updateCheckTask: Task<Void, Never>?
+    private var updateTask: Task<Void, Never>?
     private var baseURL = URL(string: "http://127.0.0.1:8096")!
     private var currentNetwork: NetworkEnvelope?
     private var bindingInProgress = false
+    private var updateCheckInProgress = false
+    private var updateInProgress = false
+    private var updateInfo: BrewInfo?
+    private var lastUpdateCheck: Date?
+    private var manualRestartVersion: String?
     private var lastAlertedError = ""
 
     func applicationDidFinishLaunching(_ notification: Notification) {
@@ -111,12 +150,17 @@ final class StatusApp: NSObject, NSApplicationDelegate {
         menu.addItem(apiLine)
         menu.addItem(uptimeLine)
         menu.addItem(publicLine)
+        menu.addItem(updateLine)
         let bindItem = NSMenuItem(title: "Bind interface", action: nil, keyEquivalent: "")
         bindItem.submenu = bindMenu
         menu.addItem(bindItem)
         menu.addItem(.separator())
         add("Change web port…", #selector(changeWebPort), to: menu)
         add("Change API port…", #selector(changeAPIPort), to: menu)
+        menu.addItem(.separator())
+        checkUpdatesItem = add("Check for Updates…", #selector(checkForUpdates), to: menu)
+        installUpdateItem = add("Install Update…", #selector(installUpdate), to: menu)
+        installUpdateItem.isEnabled = false
         menu.addItem(.separator())
         add("Open Sonder", #selector(openSonder), to: menu)
         add("Refresh Status", #selector(refresh), to: menu)
@@ -127,16 +171,27 @@ final class StatusApp: NSObject, NSApplicationDelegate {
         add("Quit Status Indicator", #selector(quit), to: menu)
         item.menu = menu
         display("Checking server…", symbol: "server.rack", detail: "")
+        updateLine.title = "Updates: Checking Homebrew…"
+        refreshMenuInteractivity()
         refresh()
+        beginUpdateCheck(refreshHomebrew: false, showFailureAlert: false)
         timer = Timer.scheduledTimer(withTimeInterval: 30, repeats: true) { [weak self] _ in
-            Task { @MainActor in self?.refresh() }
+            Task { @MainActor in
+                guard let self else { return }
+                self.refresh()
+                if self.lastUpdateCheck == nil || Date().timeIntervalSince(self.lastUpdateCheck!) > 600 {
+                    self.beginUpdateCheck(refreshHomebrew: false, showFailureAlert: false)
+                }
+            }
         }
     }
 
-    private func add(_ title: String, _ action: Selector, to menu: NSMenu) {
+    @discardableResult
+    private func add(_ title: String, _ action: Selector, to menu: NSMenu) -> NSMenuItem {
         let entry = NSMenuItem(title: title, action: action, keyEquivalent: "")
         entry.target = self
         menu.addItem(entry)
+        return entry
     }
 
     private func configuredServer() -> ServerConnection {
@@ -219,7 +274,9 @@ final class StatusApp: NSObject, NSApplicationDelegate {
         currentNetwork = envelope
         let label = server.scanning ? "Scanning library" : server.enriching ? "Updating metadata" : status.webHealthy ? "Server running" : "Server needs attention"
         let symbol = server.scanning || server.enriching ? "arrow.triangle.2.circlepath" : status.webHealthy ? "checkmark.circle" : "exclamationmark.triangle"
-        display(label, symbol: symbol, detail: "\(server.itemCount.formatted()) items")
+        if !updateInProgress {
+            display(label, symbol: symbol, detail: "\(server.itemCount.formatted()) items")
+        }
         versionLine.title = "Version: \(envelope.version) (\(envelope.build))"
         networkLine.title = "Network: \(status.state.selectedMode) · \(status.state.selectedInterface) · \(status.state.selectedIPv4)"
         webLine.title = "Web: \(status.state.webBindAddress):\(status.state.webPort) · \(status.webHealthy ? "up" : "down")"
@@ -237,6 +294,7 @@ final class StatusApp: NSObject, NSApplicationDelegate {
         }
         publicLine.title = "Public pulse: \(publicState)"
         rebuildBindingMenu(status: status)
+        refreshUpdateSummary()
         if let error = status.lastError, !error.isEmpty, error != lastAlertedError {
             lastAlertedError = error
             showAlert(title: "Sonder network operation failed", message: error)
@@ -264,8 +322,9 @@ final class StatusApp: NSObject, NSApplicationDelegate {
             addBindingItem(title: title, mode: "interface", interfaceID: interface.id, selected: status.state.selectedInterface == interface.id)
         }
         for item in bindMenu.items {
-            item.isEnabled = !bindingInProgress && !status.rebinding
+            item.isEnabled = !bindingInProgress && !updateCheckInProgress && !updateInProgress && !status.rebinding
         }
+        refreshMenuInteractivity()
     }
 
     private func addBindingItem(title: String, mode: String, interfaceID: String, selected: Bool) {
@@ -326,9 +385,10 @@ final class StatusApp: NSObject, NSApplicationDelegate {
     }
 
     private func startExposureChange(mode: String, interfaceID: String, webPort: Int, apiPort: Int, message: String, detail: String) {
-        guard !bindingInProgress else { return }
+        guard !bindingInProgress, !updateCheckInProgress, !updateInProgress else { return }
         bindingInProgress = true
         for item in bindMenu.items { item.isEnabled = false }
+        refreshMenuInteractivity()
         display(message, symbol: "arrow.triangle.2.circlepath", detail: detail)
         let connection = configuredServer()
         request = Task { [weak self] in
@@ -336,6 +396,7 @@ final class StatusApp: NSObject, NSApplicationDelegate {
             defer {
                 self.request = nil
                 self.bindingInProgress = false
+                self.refreshMenuInteractivity()
             }
             do {
                 var request = URLRequest(url: connection.url(path: "api/network/exposure"), timeoutInterval: 5)
@@ -356,7 +417,7 @@ final class StatusApp: NSObject, NSApplicationDelegate {
                     let message = (try? JSONDecoder().decode(APIError.self, from: data)).flatMap(\.error) ?? "Exposure change failed (HTTP \(statusCode))"
                     throw NSError(domain: "SonderStatus", code: statusCode, userInfo: [NSLocalizedDescriptionKey: message])
                 }
-                try await Task.sleep(for: .seconds(1))
+				try await Task.sleep(for: .seconds(1))
 				self.request = nil
 				self.bindingInProgress = false
 				self.refresh()
@@ -380,6 +441,282 @@ final class StatusApp: NSObject, NSApplicationDelegate {
         bindMenu.removeAllItems()
     }
 
+    private func refreshMenuInteractivity() {
+        let busy = bindingInProgress || updateCheckInProgress || updateInProgress
+        checkUpdatesItem?.isEnabled = !busy
+        installUpdateItem?.isEnabled = !busy && updateInfo?.outdated == true
+    }
+
+    @objc private func checkForUpdates() {
+        guard !bindingInProgress, !updateCheckInProgress, !updateInProgress else { return }
+        beginUpdateCheck(refreshHomebrew: true, showFailureAlert: true)
+    }
+
+    private func beginUpdateCheck(refreshHomebrew: Bool, showFailureAlert: Bool) {
+        guard updateCheckTask == nil, !updateInProgress else { return }
+        updateCheckInProgress = true
+        updateInfo = nil
+        updateLine.title = "Updates: Checking Homebrew…"
+        refreshMenuInteractivity()
+        updateCheckTask = Task { [weak self] in
+            guard let self else { return }
+            do {
+                let brewPath = try self.homebrewPath()
+                if refreshHomebrew {
+                    self.updateLine.title = "Updates: Refreshing Homebrew…"
+                    let result = try await self.runCommand(path: brewPath, arguments: ["update"])
+                    try self.requireSuccess(result, operation: "Homebrew metadata refresh")
+                }
+                self.updateLine.title = "Updates: Reading Sonder release…"
+                let result = try await self.runCommand(path: brewPath, arguments: ["info", "--json=v2", "tm-sonder"])
+                try self.requireSuccess(result, operation: "Homebrew update check")
+                guard let info = self.parseBrewInfo(result.output) else {
+                    throw self.updateError("Homebrew returned an unreadable tm-sonder formula record.")
+                }
+                self.updateInfo = info
+                self.lastUpdateCheck = Date()
+                self.updateCheckInProgress = false
+                self.updateCheckTask = nil
+                self.refreshUpdateSummary()
+                self.refreshMenuInteractivity()
+            } catch is CancellationError {
+                self.updateCheckInProgress = false
+                self.updateCheckTask = nil
+                self.refreshMenuInteractivity()
+            } catch {
+                self.updateCheckInProgress = false
+                self.updateCheckTask = nil
+                self.lastUpdateCheck = Date()
+                self.updateInfo = nil
+                self.updateLine.title = "Updates: Check failed"
+                self.refreshMenuInteractivity()
+                if showFailureAlert {
+                    self.showAlert(title: "Sonder could not check for updates", message: error.localizedDescription)
+                }
+            }
+        }
+    }
+
+    @objc private func installUpdate() {
+        guard !bindingInProgress, !updateCheckInProgress, !updateInProgress,
+              let info = updateInfo, info.outdated,
+              let availableVersion = info.availableVersion else { return }
+        let alert = NSAlert()
+        alert.messageText = "Install Sonder \(availableVersion)?"
+        let installedText = info.installedVersion.map { "Current Homebrew version: \($0)." } ?? ""
+        alert.informativeText = "Homebrew will download and install the update. The catalog and media files are not modified. \(installedText)"
+        alert.addButton(withTitle: "Install Update")
+        alert.addButton(withTitle: "Cancel")
+        guard alert.runModal() == .alertFirstButtonReturn else { return }
+
+        updateInProgress = true
+        updateInfo = nil
+        refreshMenuInteractivity()
+        updateTask = Task { [weak self] in
+            guard let self else { return }
+            do {
+                let brewPath = try self.homebrewPath()
+                self.setUpdateStage("Preparing update…", detail: "Refreshing Homebrew metadata")
+                let metadata = try await self.runCommand(path: brewPath, arguments: ["update"])
+                try self.requireSuccess(metadata, operation: "Homebrew metadata refresh")
+
+                self.setUpdateStage("Downloading update…", detail: "Homebrew is fetching Sonder \(availableVersion)")
+                let upgrade = try await self.runCommand(path: brewPath, arguments: ["upgrade", info.formula])
+                try self.requireSuccess(upgrade, operation: "Sonder upgrade")
+
+                self.setUpdateStage("Checking server ownership…", detail: "Confirming which instance can be restarted safely")
+                let services = try await self.runCommand(path: brewPath, arguments: ["services", "list", "--json"])
+                try self.requireSuccess(services, operation: "Homebrew service check")
+                let serviceRunning = self.homebrewServiceIsRunning(services.output, formula: info.formula)
+
+                if serviceRunning {
+                    self.setUpdateStage("Restarting Sonder…", detail: "Restarting the Homebrew-managed server")
+                    let restart = try await self.runCommand(path: brewPath, arguments: ["services", "restart", info.formula])
+                    try self.requireSuccess(restart, operation: "Sonder service restart")
+                    self.setUpdateStage("Verifying new version…", detail: "Waiting for the API and web server to return")
+                    guard let verified = await self.waitForServerVersion(availableVersion, timeout: 30) else {
+                        throw self.updateError("The Homebrew service restarted, but Sonder did not report version \(availableVersion) within 30 seconds.")
+                    }
+                    self.finishUpdate(success: true, message: "Sonder \(verified) is running.", updatedVersion: verified)
+                } else {
+                    self.setUpdateStage("Verifying installation…", detail: "Homebrew installed the update; the active server was not restarted")
+                    let installed = try await self.runCommand(path: brewPath, arguments: ["info", "--json=v2", info.formula])
+                    try self.requireSuccess(installed, operation: "Installed version check")
+                    guard let installedInfo = self.parseBrewInfo(installed.output), installedInfo.installedVersion == availableVersion else {
+                        throw self.updateError("Homebrew finished without reporting Sonder \(availableVersion) as installed.")
+                    }
+                    self.finishUpdate(success: true, message: "Sonder \(availableVersion) is installed. The active server is not a Homebrew service, so it was left running safely; restart that instance to load the update.", updatedVersion: availableVersion, needsManualRestart: true)
+                }
+            } catch is CancellationError {
+                self.finishUpdate(success: false, message: "The update was cancelled.")
+            } catch {
+                self.finishUpdate(success: false, message: error.localizedDescription)
+            }
+        }
+    }
+
+    private func setUpdateStage(_ stage: String, detail: String) {
+        updateLine.title = "Updates: \(stage)"
+        display(stage, symbol: "arrow.down.circle", detail: detail)
+    }
+
+    private func finishUpdate(success: Bool, message: String, updatedVersion: String? = nil, needsManualRestart: Bool = false) {
+        updateInProgress = false
+        updateTask = nil
+        refreshMenuInteractivity()
+        if success {
+            manualRestartVersion = needsManualRestart ? updatedVersion : nil
+            updateLine.title = needsManualRestart ? "Updates: Installed · restart needed" : "Updates: Complete"
+            display(needsManualRestart ? "Update installed" : "Update complete", symbol: needsManualRestart ? "exclamationmark.triangle" : "checkmark.circle", detail: message)
+            showAlert(title: needsManualRestart ? "Sonder update installed" : "Sonder updated", message: message, style: needsManualRestart ? .warning : .informational)
+            if !needsManualRestart {
+                beginUpdateCheck(refreshHomebrew: false, showFailureAlert: false)
+            }
+            refresh()
+        } else {
+            updateLine.title = "Updates: Failed"
+            display("Update failed", symbol: "exclamationmark.triangle", detail: message)
+            showAlert(title: "Sonder update failed", message: message, style: .critical)
+            refresh()
+        }
+    }
+
+    private func refreshUpdateSummary() {
+        guard !updateCheckInProgress, !updateInProgress else { return }
+        if let manualRestartVersion {
+            if currentNetwork?.version != manualRestartVersion {
+                updateLine.title = "Updates: Installed \(manualRestartVersion) · restart needed"
+                return
+            }
+            self.manualRestartVersion = nil
+        }
+        guard let info = updateInfo else { return }
+        if info.outdated, let availableVersion = info.availableVersion {
+            let installed = info.installedVersion.map { " from \($0)" } ?? ""
+            updateLine.title = "Updates: \(availableVersion) available\(installed)"
+        } else if let installedVersion = info.installedVersion {
+            updateLine.title = "Updates: Up to date (\(installedVersion))"
+        } else {
+            updateLine.title = "Updates: Homebrew formula not installed"
+        }
+    }
+
+    private func homebrewPath() throws -> String {
+        let candidates = [
+            "/opt/homebrew/bin/brew",
+            "/usr/local/bin/brew",
+            "/usr/bin/brew",
+        ]
+        if let path = candidates.first(where: { FileManager.default.isExecutableFile(atPath: $0) }) {
+            return path
+        }
+        throw updateError("Homebrew was not found. Install tm-sonder with the project tap to enable menu-bar updates.")
+    }
+
+    private func runCommand(path: String, arguments: [String]) async throws -> BrewCommandResult {
+        try await withCheckedThrowingContinuation { continuation in
+            let process = Process()
+            let pipe = Pipe()
+            let output = CommandOutputBuffer()
+            process.executableURL = URL(fileURLWithPath: path)
+            process.arguments = arguments
+            process.standardOutput = pipe
+            process.standardError = pipe
+            pipe.fileHandleForReading.readabilityHandler = { [weak self] handle in
+                let data = handle.availableData
+                guard !data.isEmpty else { return }
+                output.append(data)
+                guard let text = String(data: data, encoding: .utf8), !text.isEmpty else { return }
+                DispatchQueue.main.async {
+                    self?.showCommandProgress(text)
+                }
+            }
+            process.terminationHandler = { process in
+                pipe.fileHandleForReading.readabilityHandler = nil
+                let remaining = pipe.fileHandleForReading.readDataToEndOfFile()
+                output.append(remaining)
+                let result = BrewCommandResult(status: process.terminationStatus, output: output.value())
+                DispatchQueue.main.async {
+                    continuation.resume(returning: result)
+                }
+            }
+            do {
+                try process.run()
+            } catch {
+                pipe.fileHandleForReading.readabilityHandler = nil
+                continuation.resume(throwing: error)
+            }
+        }
+    }
+
+    private func showCommandProgress(_ text: String) {
+        guard updateInProgress else { return }
+        let line = text
+            .split(whereSeparator: \.isNewline)
+            .map(String.init)
+            .last(where: { !$0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }) ?? ""
+        if !line.isEmpty {
+            detailLine.title = String(line.prefix(120))
+        }
+    }
+
+    private func requireSuccess(_ result: BrewCommandResult, operation: String) throws {
+        guard result.status == 0 else {
+            let detail = result.output
+                .split(whereSeparator: \.isNewline)
+                .map(String.init)
+                .last(where: { !$0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty })
+            let suffix = detail.map { " \($0)" } ?? ""
+            throw updateError("\(operation) failed (exit \(result.status)).\(suffix)")
+        }
+    }
+
+    private func parseBrewInfo(_ output: String) -> BrewInfo? {
+        guard let start = output.firstIndex(of: "{"),
+              let data = String(output[start...]).data(using: .utf8),
+              let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+              let formula = (object["formulae"] as? [[String: Any]])?.first else { return nil }
+        let formulaName = (formula["full_name"] as? String) ?? (formula["name"] as? String) ?? "tm-sonder"
+        let versions = formula["versions"] as? [String: Any]
+        let availableVersion = versions?["stable"] as? String
+        let installedVersion = (formula["installed"] as? [[String: Any]])?.first?["version"] as? String
+        let outdated = formula["outdated"] as? Bool ?? false
+        return BrewInfo(formula: formulaName, installedVersion: installedVersion, availableVersion: availableVersion, outdated: outdated)
+    }
+
+    private func homebrewServiceIsRunning(_ output: String, formula: String) -> Bool {
+        guard let data = output.data(using: .utf8),
+              let services = try? JSONSerialization.jsonObject(with: data) as? [[String: Any]] else { return false }
+        let shortName = formula.split(separator: "/").last.map(String.init) ?? formula
+        return services.contains { service in
+            let name = service["name"] as? String
+            let status = service["status"] as? String
+            return (name == formula || name == shortName) && (status == "started" || status == "running")
+        }
+    }
+
+    private func waitForServerVersion(_ expectedVersion: String, timeout: TimeInterval) async -> String? {
+        let deadline = Date().addingTimeInterval(timeout)
+        while Date() < deadline {
+            do {
+                let connection = configuredServer()
+                let network: NetworkEnvelope = try await fetch(connection: connection, path: "api/network/status")
+                currentNetwork = network
+                if network.version == expectedVersion {
+                    return network.version
+                }
+            } catch {
+                // The service may be between processes; keep waiting until the deadline.
+            }
+            try? await Task.sleep(for: .seconds(1))
+        }
+        return nil
+    }
+
+    private func updateError(_ message: String) -> NSError {
+        NSError(domain: "SonderStatus.Update", code: 1, userInfo: [NSLocalizedDescriptionKey: message])
+    }
+
     private func formatUptime(_ seconds: Int64) -> String {
         guard seconds > 0 else { return "—" }
         let days = seconds / 86_400
@@ -400,9 +737,9 @@ final class StatusApp: NSObject, NSApplicationDelegate {
         item.button?.setAccessibilityLabel("Sonder: \(text)")
     }
 
-    private func showAlert(title: String, message: String) {
+    private func showAlert(title: String, message: String, style: NSAlert.Style = .warning) {
         let alert = NSAlert()
-        alert.alertStyle = .warning
+        alert.alertStyle = style
         alert.messageText = title
         alert.informativeText = message
         alert.addButton(withTitle: "OK")
