@@ -28,6 +28,7 @@ import (
 	"tm-sonder/server/internal/enrich"
 	"tm-sonder/server/internal/httpapi"
 	"tm-sonder/server/internal/library"
+	"tm-sonder/server/internal/mediacache"
 	"tm-sonder/server/internal/network"
 	"tm-sonder/server/internal/probe"
 	"tm-sonder/server/internal/proxy"
@@ -306,6 +307,25 @@ func run(configFlag, plexDB, exportPath, importPath, importMode, importPathMap s
 	srv.SetTrackRefresher(scanner)
 	srv.SetConfigPath(path)
 	srv.SetSnapshotPath(snapshotPath)
+	cacheDir := cfg.MediaCache.Dir
+	if cacheDir == "" {
+		cacheDir = filepath.Join(cfg.DataDir, "media-cache")
+	}
+	mediaCache, cacheErr := mediacache.New(mediacache.Config{
+		Enabled:      cfg.MediaCache.Enabled,
+		Dir:          cacheDir,
+		MaxBytes:     cfg.MediaCache.MaxBytes,
+		MinFreeBytes: cfg.MediaCache.MinFreeBytes,
+	})
+	if cacheErr != nil {
+		logger.Printf("media cache unavailable: %v", cacheErr)
+	} else {
+		srv.SetMediaCache(mediaCache)
+		defer mediaCache.Close()
+		cacheStatus := mediaCache.Status()
+		logger.Printf("media cache: enabled=%t dir=%s max=%d bytes cached=%d free=%d",
+			cacheStatus.Enabled, cacheDir, cacheStatus.MaxBytes, cacheStatus.CachedBytes, cacheStatus.FreeBytes)
+	}
 	var audiobookOptimizer *audiobookopt.Manager
 	ffmpegForJobs, ffmpegErr := lookPath(cfg.FFmpegPath)
 	ffprobeForJobs, ffprobeErr := lookPath(cfg.FFprobePath)

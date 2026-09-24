@@ -35,7 +35,7 @@ make mac                    # → bin/sonder-darwin-arm64
 On first run the server writes a commented config template. Edit `libraries`
 to point at your media roots, then restart. Key config fields:
 `port`/`webPort`, `apiPort`, `dataDir`, `libraries[]`, `allowLAN`, `safeScan`,
-`probeWorkers`, `thumbWorkers`, `transcode`, and optional Caddy paths. Every
+`probeWorkers`, `thumbWorkers`, `transcode`, `mediaCache`, and optional Caddy paths. Every
 field also has a `SONDER_*` environment override (see the generated template).
 
 Requirements: the FFmpeg package, which provides both `ffmpeg` and `ffprobe`,
@@ -58,6 +58,13 @@ Sonder stays on a private local web port; the API and catalog storage remain
 private. The active interface selection is stored separately in
 `<dataDir>/runtime-state.json`, so changing adapters does not rescan or alter
 the catalog.
+The local media cache is enabled by default at `<dataDir>/media-cache` with a
+100 GiB cap and a 20 GiB free-space reserve. It fills on demand, keeps ebooks
+and audiobooks ahead of other media, and retains newer movies ahead of older
+movies when the cap is reached.
+The first request still streams from the NAS while a complete local copy is
+made in the background; a completed cache entry can continue serving if the
+NAS mount briefly disappears.
 The LAN-facing web listener is a pairing-protected frontend over the private
 API listener, so existing browser and Jellyfin-compatible routes keep working
 without binding the API process or catalog storage to the network. The first

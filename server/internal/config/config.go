@@ -17,6 +17,12 @@ const (
 	// BookPlayer can connect with the standard host:8096 expectation.
 	DefaultPort        = 8096
 	DefaultThemePreset = "earthy"
+	// DefaultMediaCacheMaxBytes keeps frequently used media local without
+	// allowing a cache to consume an entire system volume.
+	DefaultMediaCacheMaxBytes int64 = 100 * 1024 * 1024 * 1024
+	// DefaultMediaCacheMinFreeBytes leaves room for the OS and the rest of the
+	// application even when the cache reaches its configured cap.
+	DefaultMediaCacheMinFreeBytes int64 = 20 * 1024 * 1024 * 1024
 
 	// DefaultLibraryLayout is the shared web browser layout. Rails is the
 	// shelf-based experience; Classic keeps the existing full-grid browser.
@@ -64,6 +70,13 @@ type Transcode struct {
 	Preset        string `json:"preset"`
 }
 
+type MediaCache struct {
+	Enabled      bool   `json:"enabled"`
+	Dir          string `json:"dir,omitempty"`
+	MaxBytes     int64  `json:"maxBytes"`
+	MinFreeBytes int64  `json:"minFreeBytes"`
+}
+
 type Config struct {
 	// Port is retained as the backwards-compatible web port key. WebPort is
 	// the preferred name for new installs; Load normalizes the two so the
@@ -78,24 +91,25 @@ type Config struct {
 	// CompatibilityUsername and CompatibilityPassword are intentionally
 	// environment-only. They provide a stable login pair for media clients
 	// such as BookPlayer without writing a plaintext password to server.json.
-	CompatibilityUsername string    `json:"-"`
-	CompatibilityPassword string    `json:"-"`
-	ThemePreset           string    `json:"themePreset"`
-	LibraryLayout         string    `json:"libraryLayout"`
-	HideEmptyLibraries    bool      `json:"hideEmptyLibraries"`
-	AudiobookLayout       string    `json:"audiobookLayout"`
-	MoviesLayout          string    `json:"moviesLayout"`
-	TVLayout              string    `json:"tvLayout"`
-	FFmpegPath            string    `json:"ffmpegPath"`
-	FFprobePath           string    `json:"ffprobePath"`
-	ProbeWorkers          int       `json:"probeWorkers,omitempty"`
-	ThumbWorkers          int       `json:"thumbWorkers,omitempty"`
-	SafeScan              bool      `json:"safeScan"`
-	Transcode             Transcode `json:"transcode"`
-	LogDir                string    `json:"logDir"`
-	CaddyPath             string    `json:"caddyPath,omitempty"`
-	CaddyConfigPath       string    `json:"caddyConfigPath,omitempty"`
-	CaddyLaunchdLabel     string    `json:"caddyLaunchdLabel,omitempty"`
+	CompatibilityUsername string     `json:"-"`
+	CompatibilityPassword string     `json:"-"`
+	MediaCache            MediaCache `json:"mediaCache"`
+	ThemePreset           string     `json:"themePreset"`
+	LibraryLayout         string     `json:"libraryLayout"`
+	HideEmptyLibraries    bool       `json:"hideEmptyLibraries"`
+	AudiobookLayout       string     `json:"audiobookLayout"`
+	MoviesLayout          string     `json:"moviesLayout"`
+	TVLayout              string     `json:"tvLayout"`
+	FFmpegPath            string     `json:"ffmpegPath"`
+	FFprobePath           string     `json:"ffprobePath"`
+	ProbeWorkers          int        `json:"probeWorkers,omitempty"`
+	ThumbWorkers          int        `json:"thumbWorkers,omitempty"`
+	SafeScan              bool       `json:"safeScan"`
+	Transcode             Transcode  `json:"transcode"`
+	LogDir                string     `json:"logDir"`
+	CaddyPath             string     `json:"caddyPath,omitempty"`
+	CaddyConfigPath       string     `json:"caddyConfigPath,omitempty"`
+	CaddyLaunchdLabel     string     `json:"caddyLaunchdLabel,omitempty"`
 }
 
 func Default() Config {
@@ -118,6 +132,7 @@ func Default() Config {
 		FFprobePath:        "ffprobe",
 		SafeScan:           true,
 		Transcode:          Transcode{MaxConcurrent: 2, HWAccel: "videotoolbox", Preset: "veryfast"},
+		MediaCache:         MediaCache{Enabled: true, MaxBytes: DefaultMediaCacheMaxBytes, MinFreeBytes: DefaultMediaCacheMinFreeBytes},
 		LogDir:             filepath.Join(dataDir, "logs"),
 	}
 }
@@ -158,6 +173,7 @@ func Load(path string) (*Config, error) {
 		cfg.DataDir = expandHome(cfg.DataDir)
 		cfg.LogDir = expandHome(cfg.LogDir)
 		cfg.CaddyConfigPath = expandHome(cfg.CaddyConfigPath)
+		cfg.MediaCache.Dir = expandHome(cfg.MediaCache.Dir)
 		for i := range cfg.Libraries {
 			cfg.Libraries[i].Path = expandHome(cfg.Libraries[i].Path)
 		}
@@ -262,6 +278,22 @@ func (c *Config) applyEnv() {
 	}
 	if v := os.Getenv("SONDER_COMPAT_PASSWORD"); v != "" {
 		c.CompatibilityPassword = v
+	}
+	if v := os.Getenv("SONDER_MEDIA_CACHE_ENABLED"); v != "" {
+		c.MediaCache.Enabled = parseBool(v)
+	}
+	if v := os.Getenv("SONDER_MEDIA_CACHE_DIR"); v != "" {
+		c.MediaCache.Dir = v
+	}
+	if v := os.Getenv("SONDER_MEDIA_CACHE_MAX_BYTES"); v != "" {
+		if n, err := strconv.ParseInt(v, 10, 64); err == nil {
+			c.MediaCache.MaxBytes = n
+		}
+	}
+	if v := os.Getenv("SONDER_MEDIA_CACHE_MIN_FREE_BYTES"); v != "" {
+		if n, err := strconv.ParseInt(v, 10, 64); err == nil {
+			c.MediaCache.MinFreeBytes = n
+		}
 	}
 	if v := os.Getenv("SONDER_THEME_PRESET"); v != "" {
 		c.ThemePreset = v
@@ -374,6 +406,15 @@ func (c *Config) validate() error {
 	if (c.CompatibilityUsername == "") != (c.CompatibilityPassword == "") {
 		return fmt.Errorf("config: SONDER_COMPAT_USERNAME and SONDER_COMPAT_PASSWORD must be set together")
 	}
+	if c.MediaCache.MaxBytes < 0 {
+		return fmt.Errorf("config: mediaCache.maxBytes cannot be negative")
+	}
+	if c.MediaCache.MinFreeBytes < 0 {
+		return fmt.Errorf("config: mediaCache.minFreeBytes cannot be negative")
+	}
+	if c.MediaCache.Enabled && c.MediaCache.MaxBytes == 0 {
+		c.MediaCache.MaxBytes = DefaultMediaCacheMaxBytes
+	}
 	for i, lib := range c.Libraries {
 		if !validKinds[lib.Kind] {
 			return fmt.Errorf("config: libraries[%d] (%q) has invalid kind %q", i, lib.Name, lib.Kind)
@@ -420,6 +461,8 @@ var templateBytes = []byte(`// TM Sonder Go server configuration.
 // Environment overrides (highest precedence):
 //   SONDER_PORT, SONDER_DATA_DIR, SONDER_ALLOW_LAN, SONDER_TOKEN,
 //   SONDER_COMPAT_USERNAME, SONDER_COMPAT_PASSWORD,
+//   SONDER_MEDIA_CACHE_ENABLED, SONDER_MEDIA_CACHE_DIR,
+//   SONDER_MEDIA_CACHE_MAX_BYTES, SONDER_MEDIA_CACHE_MIN_FREE_BYTES,
 //   SONDER_WEB_PORT, SONDER_API_PORT, SONDER_CADDY_PATH,
 //   SONDER_CADDY_CONFIG, SONDER_CADDY_LAUNCHD_LABEL,
 //   SONDER_SAFE_SCAN, SONDER_THEME_PRESET, SONDER_FFMPEG_PATH,
@@ -438,6 +481,7 @@ var templateBytes = []byte(`// TM Sonder Go server configuration.
   ],
   "allowLAN": false,
   "pairingToken": "",
+  "mediaCache": { "enabled": true, "maxBytes": 107374182400, "minFreeBytes": 21474836480, "dir": "" },
   "safeScan": true,
   "themePreset": "earthy",
   "libraryLayout": "rails",

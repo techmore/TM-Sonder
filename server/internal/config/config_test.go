@@ -30,6 +30,10 @@ func TestDefaults(t *testing.T) {
 	if cfg.Transcode.MaxConcurrent != 2 || cfg.Transcode.HWAccel != "videotoolbox" {
 		t.Errorf("transcode defaults wrong: %+v", cfg.Transcode)
 	}
+	if !cfg.MediaCache.Enabled || cfg.MediaCache.MaxBytes != DefaultMediaCacheMaxBytes ||
+		cfg.MediaCache.MinFreeBytes != DefaultMediaCacheMinFreeBytes {
+		t.Errorf("media cache defaults wrong: %+v", cfg.MediaCache)
+	}
 }
 
 func write(t *testing.T, content string) string {
@@ -130,6 +134,20 @@ func TestEnvOverridesBeatFile(t *testing.T) {
 	if cfg.Port != 9100 || cfg.DataDir != "/tmp/fromenv" || !cfg.AllowLAN ||
 		cfg.PairingToken != "sekrit" || cfg.Transcode.HWAccel != "none" {
 		t.Errorf("env overrides failed: %+v", cfg)
+	}
+}
+
+func TestMediaCacheEnvironmentOverrides(t *testing.T) {
+	setenv(t, "SONDER_MEDIA_CACHE_ENABLED", "false")
+	setenv(t, "SONDER_MEDIA_CACHE_DIR", "~/sonder-cache")
+	setenv(t, "SONDER_MEDIA_CACHE_MAX_BYTES", "123456")
+	setenv(t, "SONDER_MEDIA_CACHE_MIN_FREE_BYTES", "789")
+	cfg, err := Load("")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.MediaCache.Enabled || cfg.MediaCache.MaxBytes != 123456 || cfg.MediaCache.MinFreeBytes != 789 || cfg.MediaCache.Dir != "~/sonder-cache" {
+		t.Fatalf("media cache env overrides failed: %+v", cfg.MediaCache)
 	}
 }
 

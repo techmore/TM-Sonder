@@ -27,6 +27,7 @@ import (
 	"tm-sonder/server/internal/config"
 	"tm-sonder/server/internal/enrich"
 	"tm-sonder/server/internal/library"
+	"tm-sonder/server/internal/mediacache"
 	"tm-sonder/server/internal/runtimecontrol"
 	"tm-sonder/server/internal/transcode"
 )
@@ -66,6 +67,7 @@ type Server struct {
 	movieMetadata      *enrich.Enricher
 	audiobookOptimizer *audiobookopt.Manager
 	runtimeControl     *runtimecontrol.Controller
+	mediaCache         *mediacache.Manager
 	accounts           *auth.Store
 	authLoadErr        error
 	onMutation         func()
@@ -170,6 +172,11 @@ func (s *Server) SetRuntimeControl(controller *runtimecontrol.Controller) {
 	s.runtimeControl = controller
 }
 
+// SetMediaCache wires the optional local read-through cache. The cache is
+// owned by main and closed with the process; handlers only acquire/release
+// entries while serving media.
+func (s *Server) SetMediaCache(cache *mediacache.Manager) { s.mediaCache = cache }
+
 // persistConfig atomically writes the current in-memory config to the config
 // file. Note: // comments from a hand-edited file are lost on save.
 func (s *Server) persistConfig() error {
@@ -252,6 +259,7 @@ func (s *Server) routes() {
 	m.HandleFunc("GET /library.json", s.handleLibrary)
 	m.HandleFunc("GET /api/movies/{id}/metadata", s.handleMovieMetadata)
 	m.HandleFunc("GET /api/status", s.handleStatus)
+	m.HandleFunc("GET /api/cache/status", s.handleCacheStatus)
 	m.HandleFunc("GET /api/network/interfaces", s.handleNetworkInterfaces)
 	m.HandleFunc("GET /api/network/status", s.handleNetworkStatus)
 	m.HandleFunc("POST /api/network/rebind", s.handleNetworkRebind)

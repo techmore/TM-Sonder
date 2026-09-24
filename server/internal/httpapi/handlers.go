@@ -129,6 +129,7 @@ func (s *Server) handleDiscovery(w http.ResponseWriter, r *http.Request) {
 			NetworkStatus:        strPtr("/api/network/status"),
 			NetworkRebind:        strPtr("/api/network/rebind"),
 			NetworkExposure:      strPtr("/api/network/exposure"),
+			CacheStatus:          strPtr("/api/cache/status"),
 		},
 		Theme: themeFor(s.cfg().ThemePreset),
 	}
@@ -295,6 +296,23 @@ func (s *Server) handleStatus(w http.ResponseWriter, r *http.Request) {
 		"itemCount": s.store.Count(),
 		"version":   Version,
 	})
+}
+
+func (s *Server) handleCacheStatus(w http.ResponseWriter, r *http.Request) {
+	if s.mediaCache == nil {
+		writeJSON(w, http.StatusOK, map[string]any{
+			"enabled": false,
+			"policy": map[string]string{
+				"ebook":       "highest priority",
+				"audiobook":   "high priority",
+				"movie":       "medium priority; newer release years retained first",
+				"documentary": "medium-low priority; newer release years retained first",
+				"tvShow":      "low priority",
+			},
+		})
+		return
+	}
+	writeJSON(w, http.StatusOK, s.mediaCache.Status())
 }
 
 func (s *Server) handleLibraryHealth(w http.ResponseWriter, r *http.Request) {

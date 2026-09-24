@@ -78,6 +78,25 @@ remain usable over the LAN without exposing the API process or a database port
 directly. The catalog is a local JSON snapshot; no database port is opened by
 the server.
 
+## Local media cache
+
+The server has a bounded read-through media cache. It is enabled by default at
+`<dataDir>/media-cache` with a 100 GiB limit (`mediaCache.maxBytes`) and a
+20 GiB free-space reserve (`mediaCache.minFreeBytes`). A request
+that misses the cache continues streaming from the NAS while a complete copy is
+created in the background and atomically promoted. Completed entries survive
+service restarts. If the NAS is temporarily unavailable, the last completed
+local copy can still serve when the catalog has its last-known file size and
+modification time.
+
+Eviction is priority-aware: ebooks are highest priority, audiobooks are next,
+newer movies are preferred over older movies, and TV/documentary files are
+lower priority. The cache is on-demand; it does not silently copy the entire
+library at startup. Set `mediaCache.enabled` to `false`, or override
+`SONDER_MEDIA_CACHE_ENABLED`, `SONDER_MEDIA_CACHE_DIR`, and
+`SONDER_MEDIA_CACHE_MAX_BYTES`/`SONDER_MEDIA_CACHE_MIN_FREE_BYTES` for
+host-specific policy.
+
 ## Discovery
 
 | Method | Path | Purpose |
@@ -143,6 +162,7 @@ Includes:
 | `poster` | `/artwork/poster/{id}` |
 | `backdrop` | `/artwork/backdrop/{id}` |
 | `movieMetadata` | `/api/movies/{id}/metadata` |
+| `cacheStatus` | `/api/cache/status` |
 
 ## Library
 
@@ -154,6 +174,7 @@ Includes:
 | GET | `/api/data/export` | Download a versioned, media-independent Sonder data bundle containing catalog metadata, lists, tags, order, and progress. |
 | POST | `/api/data/import` | Restore or merge a data bundle. Accepts `mode` (`replace` or `merge`) and optional `pathMappings`; never starts a scan. |
 | GET | `/api/status` | Server/library scan status. |
+| GET | `/api/cache/status` | Local media-cache size, queue, and priority policy. |
 | GET | `/api/network/interfaces` | Active IPv4-only interface inventory. |
 | GET | `/api/network/status` | Runtime bind/API/Caddy health and public prerequisites. |
 | POST | `/api/network/rebind` | Validate and asynchronously switch the web interface. |

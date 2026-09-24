@@ -15,6 +15,7 @@ import (
 	"tm-sonder/server/internal/api"
 	"tm-sonder/server/internal/config"
 	"tm-sonder/server/internal/library"
+	"tm-sonder/server/internal/mediacache"
 )
 
 type fixture struct {
@@ -265,6 +266,71 @@ func TestStreamMissingItem404(t *testing.T) {
 	if resp.StatusCode != 404 {
 		t.Errorf("status = %d", resp.StatusCode)
 	}
+}
+
+func TestStreamFallsBackToCompletedLocalCacheWhenNASIsUnavailable(t *testing.T) {
+	f := newFixture(t, nil)
+	cache, err := mediacache.New(mediacache.Config{
+		Enabled: true, Dir: filepath.Join(t.TempDir(), "media-cache"), MaxBytes: 1 << 20,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	f.s.SetMediaCache(cache)
+	defer cache.Close()
+
+	it := f.addItem(t, "cached", "Cached audiobook")
+	st, err := os.Stat(it.FilePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !f.store.Update(it.ID, func(cur *library.Item) bool {
+		cur.SizeBytes = st.Size()
+		cur.ModTime = st.ModTime()
+		cur.Kind = api.KindAudiobook
+		cur.Format = api.FormatM4B
+		return true
+	}) {
+		t.Fatal("could not record source metadata")
+	}
+
+	first, err := http.Get(f.ts.URL + "/stream/cached")
+	if err != nil {
+		t.Fatal(err)
+	}
+	firstBody := readAll(t, first)
+	if first.StatusCode != http.StatusOK || firstBody != "0123456789abcdef" {
+		t.Fatalf("first stream status=%d body=%q", first.StatusCode, firstBody)
+	}
+	waitForCache(t, func() bool { return cache.Status().CachedFiles == 1 })
+	if err := os.Remove(it.FilePath); err != nil {
+		t.Fatal(err)
+	}
+
+	second, err := http.Get(f.ts.URL + "/stream/cached")
+	if err != nil {
+		t.Fatal(err)
+	}
+	secondBody := readAll(t, second)
+	if second.StatusCode != http.StatusOK || secondBody != firstBody {
+		t.Fatalf("cached stream status=%d body=%q", second.StatusCode, secondBody)
+	}
+	cacheStatus, statusBody := get(t, f.ts.URL+"/api/cache/status")
+	if cacheStatus.StatusCode != http.StatusOK || !strings.Contains(statusBody, `"cachedFiles":1`) {
+		t.Fatalf("cache status = %d %s", cacheStatus.StatusCode, statusBody)
+	}
+}
+
+func waitForCache(t *testing.T, condition func() bool) {
+	t.Helper()
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		if condition() {
+			return
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	t.Fatal("timed out waiting for media cache")
 }
 
 func TestSubtitleAndArtworkRoutes(t *testing.T) {

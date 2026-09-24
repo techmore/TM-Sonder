@@ -236,18 +236,23 @@ func (s *Server) handleJellyfinDownload(w http.ResponseWriter, r *http.Request) 
 		writeError(w, http.StatusNotFound, "Item not found")
 		return
 	}
-	st, err := os.Stat(item.FilePath)
+	st, err := mediaInfo(item)
 	if err != nil {
 		writeError(w, http.StatusNotFound, "Media file missing")
 		return
 	}
-	f, err := os.Open(item.FilePath)
+	f, sourceInfo, release, err := s.openMedia(item, st)
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, "Cannot open media")
+		if os.IsNotExist(err) {
+			writeError(w, http.StatusNotFound, "Media file missing")
+		} else {
+			writeError(w, http.StatusInternalServerError, "Cannot open media")
+		}
 		return
 	}
+	defer release()
 	defer f.Close()
 	w.Header().Set("Content-Type", item.Format.ContentType())
 	w.Header().Set("Accept-Ranges", "bytes")
-	http.ServeContent(w, r, filepath.Base(item.FilePath), st.ModTime(), f)
+	http.ServeContent(w, r, filepath.Base(item.FilePath), sourceInfo.ModTime(), f)
 }

@@ -7,8 +7,10 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"time"
 
 	"tm-sonder/server/internal/library"
+	"tm-sonder/server/internal/mediacache"
 	"tm-sonder/server/internal/transcode"
 )
 
@@ -20,31 +22,36 @@ func (s *Server) handleStream(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusNotFound, "Item not found")
 		return
 	}
-	st, err := os.Stat(item.FilePath)
+	st, err := mediaInfo(item)
 	if err != nil {
 		writeError(w, http.StatusNotFound, "Media file missing")
 		return
 	}
 
 	if r.URL.Query().Get("transcode") == "1" {
-		s.streamTranscode(w, r, item)
+		s.streamTranscode(w, r, item, st)
 		return
 	}
 
-	f, err := os.Open(item.FilePath)
+	f, sourceInfo, release, err := s.openMedia(item, st)
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, "Cannot open media")
+		if os.IsNotExist(err) {
+			writeError(w, http.StatusNotFound, "Media file missing")
+		} else {
+			writeError(w, http.StatusInternalServerError, "Cannot open media")
+		}
 		return
 	}
+	defer release()
 	defer f.Close()
 	w.Header().Set("Content-Type", item.Format.ContentType())
 	w.Header().Set("Accept-Ranges", "bytes")
-	http.ServeContent(w, r, filepath.Base(item.FilePath), st.ModTime(), f)
+	http.ServeContent(w, r, filepath.Base(item.FilePath), sourceInfo.ModTime(), f)
 }
 
 // streamTranscode pipes a live fMP4 session to the client. Range semantics
 // do not apply; the fragmented container supports player-side seeking.
-func (s *Server) streamTranscode(w http.ResponseWriter, r *http.Request, item *library.Item) {
+func (s *Server) streamTranscode(w http.ResponseWriter, r *http.Request, item *library.Item, st os.FileInfo) {
 	q := r.URL.Query()
 	mode := transcode.Mode(q.Get("mode"))
 	if mode == "" {
@@ -69,7 +76,9 @@ func (s *Server) streamTranscode(w http.ResponseWriter, r *http.Request, item *l
 		}
 	}
 
-	reader, cleanup, err := s.tm.Attach(r.Context(), item, mode, start, burnSub, audioTrack)
+	streamItem, release := s.cacheItem(item, st)
+	defer release()
+	reader, cleanup, err := s.tm.Attach(r.Context(), streamItem, mode, start, burnSub, audioTrack)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "Transcode failed to start")
 		return
@@ -81,6 +90,75 @@ func (s *Server) streamTranscode(w http.ResponseWriter, r *http.Request, item *l
 	w.WriteHeader(http.StatusOK)
 	_, _ = io.Copy(w, reader)
 }
+
+func (s *Server) cacheMedia(item *library.Item, st os.FileInfo) (string, func(), bool) {
+	if s.mediaCache == nil {
+		return item.FilePath, func() {}, false
+	}
+	return s.mediaCache.Acquire(mediacache.Media{
+		ID:         item.ID,
+		SourcePath: item.FilePath,
+		Kind:       item.Kind,
+		Year:       item.Year,
+		Size:       st.Size(),
+		ModTime:    st.ModTime(),
+	})
+}
+
+func (s *Server) cacheItem(item *library.Item, st os.FileInfo) (*library.Item, func()) {
+	path, release, hit := s.cacheMedia(item, st)
+	if !hit {
+		return item, release
+	}
+	copy := *item
+	copy.FilePath = path
+	return &copy, release
+}
+
+func (s *Server) openMedia(item *library.Item, st os.FileInfo) (*os.File, os.FileInfo, func(), error) {
+	path, release, hit := s.cacheMedia(item, st)
+	f, err := os.Open(path)
+	if err == nil {
+		return f, st, release, nil
+	}
+	if hit {
+		// A cache file can disappear between Acquire and Open (manual cleanup,
+		// disk pressure, or a partial filesystem failure). Fall back to the NAS
+		// source for this request rather than turning a valid item into a 500.
+		release()
+		f, err = os.Open(item.FilePath)
+		if err == nil {
+			return f, st, func() {}, nil
+		}
+	}
+	return nil, st, func() {}, err
+}
+
+// mediaInfo prefers the current source stat, but falls back to the catalog's
+// last known size and modification time. That lets a completed local cache
+// continue serving while a NAS mount is temporarily unavailable.
+func mediaInfo(item *library.Item) (os.FileInfo, error) {
+	if st, err := os.Stat(item.FilePath); err == nil {
+		return st, nil
+	}
+	if item.SizeBytes <= 0 || item.ModTime.IsZero() {
+		return nil, os.ErrNotExist
+	}
+	return catalogFileInfo{name: filepath.Base(item.FilePath), size: item.SizeBytes, modTime: item.ModTime}, nil
+}
+
+type catalogFileInfo struct {
+	name    string
+	size    int64
+	modTime time.Time
+}
+
+func (i catalogFileInfo) Name() string       { return i.name }
+func (i catalogFileInfo) Size() int64        { return i.size }
+func (i catalogFileInfo) Mode() os.FileMode  { return 0o600 }
+func (i catalogFileInfo) ModTime() time.Time { return i.modTime }
+func (i catalogFileInfo) IsDir() bool        { return false }
+func (i catalogFileInfo) Sys() any           { return nil }
 
 // handleSubtitle serves GET /subtitles/{id}/{index} from sidecar paths,
 // matching the Swift server's content types.
