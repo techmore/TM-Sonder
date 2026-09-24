@@ -1,9 +1,9 @@
 class TmSonder < Formula
   desc "Personal media and audiobook server"
   homepage "https://github.com/techmore/TM-Sonder"
-  url "https://github.com/techmore/TM-Sonder/archive/refs/tags/v0.2.5.tar.gz"
-  version "0.2.5"
-  sha256 "77b1be5ae1d6306577390370bda571fe5d8ac6788583d9bb476e73d053d9ca5d"
+  url "https://github.com/techmore/TM-Sonder/archive/refs/tags/v0.2.6.tar.gz"
+  version "0.2.6"
+  sha256 "6c3e3d8a111d3376268e040254dfcfeca070d2761607b47fbb90bab1e76f3f94"
 
   depends_on "go" => :build
   depends_on "ffmpeg"
