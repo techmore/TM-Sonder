@@ -137,7 +137,10 @@
       box-shadow:0 2px 10px rgba(0,0,0,.45); transition:transform .15s ease, box-shadow .15s ease;
     }
     .card:hover .frame, .card:focus-visible .frame { transform:translateY(-3px); box-shadow:0 8px 22px rgba(0,0,0,.55); }
-    .card img.poster { width:100%; height:100%; object-fit:contain; display:block; }
+    /* Card tiles have one consistent poster shape. Source art can be square,
+       landscape, or portrait; crop it to the shared 2:3 shelf frame instead
+       of letting each source create a different visual height. */
+    .card img.poster { width:100%; height:100%; object-fit:cover; object-position:center; display:block; }
     .card .play-glyph {
       position:absolute; inset:0; display:grid; place-items:center; font-size:44px;
       color:var(--accent); opacity:0; transition:opacity .15s ease; background:rgba(8,10,6,.35);
