@@ -24,6 +24,8 @@ const libraryHTML = fs.readFileSync(`${__dirname}/library.html`, 'utf8');
 test('library shows its version and keeps audiobook layout in Settings', () => {
   assert.match(libraryHTML, /id="appVersion"/);
   assert.match(libraryHTML, /id="audiobookLayoutSel"/);
+  assert.match(libraryHTML, /href="https:\/\/stoverparc\.org:8096\/#audiobooks"/);
+  assert.match(libraryHTML, /<svg[^>]+class="size-6"/);
   assert.doesNotMatch(libraryHTML, /id="audiobookPlayerLink"/);
   assert.match(librarySource, /body\.audiobookLayout = document\.querySelector\("#audiobookLayoutSel"\)\.value/);
 });
