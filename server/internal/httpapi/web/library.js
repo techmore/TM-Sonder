@@ -99,8 +99,6 @@
       if (typeof document === "undefined") return;
       if (document.documentElement) document.documentElement.dataset.libraryLayout = libraryLayout;
       if (document.body) document.body.dataset.libraryLayout = libraryLayout;
-      const badge = document.querySelector("#layoutBadge");
-      if (badge) badge.textContent = libraryLayout.toUpperCase();
     }
 
     function applyTheme(preset) {

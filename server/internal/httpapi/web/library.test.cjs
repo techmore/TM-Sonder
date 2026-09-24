@@ -26,6 +26,7 @@ test('library shows its version and keeps audiobook layout in Settings', () => {
   assert.match(libraryHTML, /id="audiobookLayoutSel"/);
   assert.match(libraryHTML, /href="https:\/\/stoverparc\.org:8096\/#audiobooks"/);
   assert.match(libraryHTML, /<svg[^>]+class="size-6"/);
+  assert.doesNotMatch(libraryHTML, /id="layoutBadge"|class="layout-badge"/);
   assert.doesNotMatch(libraryHTML, /data-tab="lists"/);
   assert.match(libraryHTML, /id="pager"[\s\S]*id="listsPanel"/);
   assert.doesNotMatch(libraryHTML, /id="audiobookPlayerLink"/);

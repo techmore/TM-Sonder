@@ -8,7 +8,6 @@
     body { margin:0; font:14px -apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif; background:var(--bg); color:var(--text); }
     .brand-lockup { display:inline-flex; align-items:center; gap:8px; }
     .brand-lockup img { width:28px; height:28px; border-radius:7px; box-shadow:0 0 0 1px rgba(182,213,109,.32); }
-    .layout-badge { display:inline-flex; align-items:center; border:1px solid var(--line); border-radius:5px; padding:2px 7px; color:var(--muted); font-size:10px; font-weight:800; letter-spacing:.7px; }
     .app-version { color:var(--muted); font-size:11px; font-variant-numeric:tabular-nums; white-space:nowrap; }
     .header-book-link { display:inline-flex; align-items:center; justify-content:center; width:34px; height:34px; flex:0 0 auto; border:1px solid var(--line); border-radius:8px; color:var(--muted); text-decoration:none; }
     .header-book-link:hover, .header-book-link:focus-visible { color:var(--accent); border-color:var(--accent); }
@@ -603,9 +602,6 @@ body[data-library-layout="rails"] {
 }
 body[data-library-layout="rails"] header {
   padding:14px 20px; background:rgba(16,19,15,.96); border-bottom-color:var(--line);
-}
-body[data-library-layout="rails"] .layout-badge {
-  border-color:var(--accent); background:var(--accent); color:var(--accent-dark);
 }
 body[data-library-layout="rails"] input[type="search"],
 body[data-library-layout="rails"] select {
