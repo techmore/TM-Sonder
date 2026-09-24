@@ -348,7 +348,7 @@ func (s *Server) WebHandler(privateAPIAddress string) http.Handler {
 		// pairing/LAN policy before this proxy hop.
 		r.Host = target.Host
 	}
-	return s.withIdentity(s.withAccessLog(s.withAuth(s.withRecovery(proxy))))
+	return s.withAccessLog(s.withAuth(s.withRecovery(proxy)))
 }
 
 // withIdentity adds a stable product identity to every response. The standard
@@ -356,10 +356,14 @@ func (s *Server) WebHandler(privateAPIAddress string) http.Handler {
 // names remain available to clients even when Caddy is in front of Sonder.
 func (s *Server) withIdentity(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("X-Sonder-Server", ServerID)
-		w.Header().Set("X-Sonder-Name", AppName)
+		setIdentityHeaders(w)
 		next.ServeHTTP(w, r)
 	})
+}
+
+func setIdentityHeaders(w http.ResponseWriter) {
+	w.Header().Set("X-Sonder-Server", ServerID)
+	w.Header().Set("X-Sonder-Name", AppName)
 }
 
 // withRecovery converts a handler panic into a 500 instead of dropping the
@@ -590,6 +594,7 @@ func (s *Server) withAuth(next http.Handler) http.Handler {
 		}
 		if r.Method == http.MethodGet && strings.Contains(strings.ToLower(r.Header.Get("Accept")), "text/html") && isBrowserPage(r.URL.Path) {
 			location := "/account/login?next=" + url.QueryEscape(r.URL.RequestURI())
+			setIdentityHeaders(w)
 			http.Redirect(w, r, location, http.StatusSeeOther)
 			return
 		}
@@ -695,6 +700,7 @@ func writeJSON(w http.ResponseWriter, status int, v any) {
 }
 
 func writeError(w http.ResponseWriter, status int, msg string) {
+	setIdentityHeaders(w)
 	writeJSON(w, status, map[string]string{"error": msg})
 }
 

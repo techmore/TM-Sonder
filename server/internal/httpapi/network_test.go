@@ -84,6 +84,9 @@ func TestWebHandlerProxiesThroughPrivateAPIListener(t *testing.T) {
 	if resp.StatusCode != http.StatusOK || !strings.Contains(body, `"id":"tm-sonder"`) {
 		t.Fatalf("frontend proxy response = %d %s", resp.StatusCode, body)
 	}
+	if got := len(resp.Header.Values("X-Sonder-Server")); got != 1 || len(resp.Header.Values("X-Sonder-Name")) != 1 {
+		t.Fatalf("frontend identity headers duplicated: server=%d name=%d", got, len(resp.Header.Values("X-Sonder-Name")))
+	}
 
 	req := httptest.NewRequest(http.MethodGet, "/api/health", nil)
 	req.RemoteAddr = "192.168.1.50:1234"
@@ -92,6 +95,9 @@ func TestWebHandlerProxiesThroughPrivateAPIListener(t *testing.T) {
 	f.s.WebHandler(target.Host).ServeHTTP(rec, req)
 	if rec.Code != http.StatusForbidden {
 		t.Fatalf("remote frontend status = %d, want 403", rec.Code)
+	}
+	if got := rec.Header().Get("X-Sonder-Server"); got != ServerID || rec.Header().Get("X-Sonder-Name") != AppName {
+		t.Fatalf("frontend error identity = (%q, %q)", got, rec.Header().Get("X-Sonder-Name"))
 	}
 }
 
