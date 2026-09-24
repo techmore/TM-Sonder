@@ -18,6 +18,9 @@ func TestDefaults(t *testing.T) {
 	if cfg.ThemePreset != DefaultThemePreset {
 		t.Errorf("themePreset = %q", cfg.ThemePreset)
 	}
+	if cfg.LibraryLayout != DefaultLibraryLayout {
+		t.Errorf("libraryLayout = %q, want %q", cfg.LibraryLayout, DefaultLibraryLayout)
+	}
 	if cfg.AudiobookLayout != DefaultAudiobookLayout {
 		t.Errorf("audiobookLayout = %q, want %q", cfg.AudiobookLayout, DefaultAudiobookLayout)
 	}

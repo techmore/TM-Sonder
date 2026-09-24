@@ -42,6 +42,9 @@ func TestSettingsGetLoopbackIncludesToken(t *testing.T) {
 	if _, ok := p["suggestedMounts"]; !ok {
 		t.Error("suggestedMounts missing")
 	}
+	if p["libraryLayout"] != "rails" {
+		t.Errorf("default library layout = %v, want rails", p["libraryLayout"])
+	}
 }
 
 func TestSettingsPutAddsLibraryAndRescans(t *testing.T) {
@@ -80,6 +83,36 @@ func TestSettingsPutAddsLibraryAndRescans(t *testing.T) {
 	}
 	if !found {
 		t.Error("library was not rescanned after add")
+	}
+}
+
+func TestSettingsPutPersistsLibraryLayout(t *testing.T) {
+	f := newFixture(t, nil)
+	path := filepath.Join(t.TempDir(), "server.json")
+	f.s.SetConfigPath(path)
+
+	req := httptest.NewRequest("PUT", "/api/settings", strings.NewReader(`{"libraryLayout":"classic"}`))
+	req.RemoteAddr = "127.0.0.1:1111"
+	req.Host = "127.0.0.1:8797"
+	rec := httptest.NewRecorder()
+	f.s.Handler().ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status %d: %s", rec.Code, rec.Body.String())
+	}
+	if got := f.s.cfg().LibraryLayout; got != "classic" {
+		t.Fatalf("in-memory library layout = %q, want classic", got)
+	}
+	data, err := os.ReadFile(path)
+	if err != nil || !strings.Contains(string(data), `"libraryLayout": "classic"`) {
+		t.Fatalf("library layout not persisted: %v %s", err, data)
+	}
+
+	var payload map[string]any
+	if err := json.Unmarshal(rec.Body.Bytes(), &payload); err != nil {
+		t.Fatal(err)
+	}
+	if payload["libraryLayout"] != "classic" {
+		t.Errorf("response library layout = %v, want classic", payload["libraryLayout"])
 	}
 }
 

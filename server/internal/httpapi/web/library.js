@@ -98,6 +98,16 @@
       audiobookPlayerLink.href = api("/audiobooks");
     }
 
+    let libraryLayout = "rails";
+    function applyLibraryLayout(value) {
+      libraryLayout = String(value || "rails").toLowerCase() === "classic" ? "classic" : "rails";
+      if (typeof document === "undefined") return;
+      if (document.documentElement) document.documentElement.dataset.libraryLayout = libraryLayout;
+      if (document.body) document.body.dataset.libraryLayout = libraryLayout;
+      const badge = document.querySelector("#layoutBadge");
+      if (badge) badge.textContent = libraryLayout.toUpperCase();
+    }
+
     function applyTheme(preset) {
       const theme = preset || "earthy";
       document.documentElement.dataset.theme = theme;
@@ -1652,16 +1662,12 @@
 
       const visible = visibleItems();
       const list = activeTab === "all" ? mainPageEntries(visible) : visible;
-      // Rails view (movies/tvshows tabs): Continue strip + picks strip above
-      // the full grid. Active only with no search/facet filtering; otherwise
-      // the grid below is the result list. Classic grid mode skips strips.
-      const tabLayoutPref = activeTab === "movies"
-        ? (settingsData?.moviesLayout || "rails")
-        : activeTab === "tvshows"
-        ? (settingsData?.tvLayout || "rails")
-        : "grid";
-      const railsActive = (activeTab === "movies" || activeTab === "tvshows") &&
-        tabLayoutPref === "rails" &&
+      // Rails is the shared home/library experience. Search, facets, and
+      // watched filters intentionally fall back to the complete result grid
+      // so every matching item remains easy to inspect. Classic skips the
+      // shelf rows and keeps the original grid-first browser.
+      const railsActive = libraryLayout === "rails" &&
+        ["all", "movies", "tvshows", "documentaries", "audiobooks", "books"].includes(activeTab) &&
         $("#q").value.trim() === "" && selectedFacetValues.size === 0 &&
         $("#watched").value === "all" && !openShow;
       const railsRow = $("#railsRow");
@@ -1670,17 +1676,26 @@
         const byUpdated = (a, b) => (progressByID.get(b.id)?.updatedAt || "")
           .localeCompare(progressByID.get(a.id)?.updatedAt || "");
         const railStrip = (title, sub, cards) => cards.length ? `
-          <h2>${escapeHTML(title)}</h2><p class="sub" style="color:var(--muted);font-size:12.5px;margin:0 0 12px">${escapeHTML(sub)}</p>
-          <main class="grid rail-mode" style="margin-bottom:26px">${cards.join("")}</main>` : "";
+          <section class="web-rail"><h2>${escapeHTML(title)}</h2><p class="sub">${escapeHTML(sub)}</p>
+          <div class="grid rail-mode">${cards.join("")}</div></section>` : "";
+        const fresh = source => source
+          .filter(i => !isWatched(progressFor(i.id), i) && !inProgress(progressFor(i.id), i))
+          .sort((a, b) => (b.year || 0) - (a.year || 0) || (a.title || "").localeCompare(b.title || ""));
+        const showGroups = source => buildShowGroups(new Set(source.filter(i => i.kind === "tvShow").map(i => i.id)));
         let blocks = "";
-        if (activeTab === "movies") {
-          const cont = visible.filter(i => inProgress(progressFor(i.id), i)).sort(byUpdated).slice(0, 10);
-          const fresh = visible.filter(i => !isWatched(progressFor(i.id), i) && !inProgress(progressFor(i.id), i))
-            .sort((a, b) => (b.year || 0) - (a.year || 0)).slice(0, 12);
-          blocks = railStrip("Continue Watching", `${cont.length} in progress`, cont.map(i => cardHTML(i))) +
-                   railStrip("Unwatched picks", "newest unwatched", fresh.map(i => cardHTML(i)));
-        } else {
-          const shows = buildShowGroups();
+        if (activeTab === "all") {
+          const cont = visible.filter(i => inProgress(progressFor(i.id), i)).sort(byUpdated).slice(0, 12);
+          const movies = visible.filter(i => i.kind === "movie").slice(0, 12);
+          const shows = showGroups(visible).slice(0, 12);
+          const audiobooks = visible.filter(i => i.kind === "audiobook").slice(0, 12);
+          const books = visible.filter(i => i.kind === "ebook").slice(0, 12);
+          blocks = railStrip("Continue Watching", `${cont.length} in progress`, cont.map(cardHTML)) +
+                   railStrip("Movies", `${movies.length} in the shelf`, movies.map(cardHTML)) +
+                   railStrip("TV Shows", `${shows.length} shows in the shelf`, shows.map(showCardHTML)) +
+                   railStrip("Audiobooks", `${audiobooks.length} titles in the shelf`, audiobooks.map(cardHTML)) +
+                   railStrip("Books", `${books.length} titles in the shelf`, books.map(cardHTML));
+        } else if (activeTab === "tvshows") {
+          const shows = showGroups(visible);
           const showProg = s => {
             let prog = null, started = false;
             for (const eps of s.seasons.values()) for (const e of eps) {
@@ -1691,14 +1706,17 @@
           };
           const cont = shows.filter(s => showProg(s).started)
             .sort((a, b) => (showProg(b).prog?.updatedAt || "").localeCompare(showProg(a).prog?.updatedAt || "")).slice(0, 10);
-          const fresh = shows.filter(s => {
-            for (const eps of s.seasons.values()) for (const e of eps) {
-              if (isWatched(progressFor(e.id), e) || inProgress(progressFor(e.id), e)) return false;
-            }
-            return true;
-          }).slice(0, 12);
+          const unstarted = shows.filter(s => !showProg(s).started).slice(0, 12);
           blocks = railStrip("Continue Watching", `${cont.length} shows in progress`, cont.map(showCardHTML)) +
-                   railStrip("Unstarted", "nothing played yet", fresh.map(showCardHTML));
+                   railStrip("Unstarted", "nothing played yet", unstarted.map(showCardHTML));
+        } else {
+          const cont = visible.filter(i => inProgress(progressFor(i.id), i)).sort(byUpdated).slice(0, 10);
+          const picks = fresh(visible).slice(0, 12);
+          const continueLabel = activeTab === "audiobooks" ? "Continue Listening" : "Continue Watching";
+          blocks = railStrip(continueLabel, `${cont.length} in progress`, cont.map(cardHTML)) +
+                   railStrip(activeTab === "audiobooks" ? "Up Next" : "Unwatched Picks",
+                     activeTab === "audiobooks" ? "unstarted titles from your shelves" : "newest unwatched titles",
+                     picks.map(cardHTML));
         }
         if (blocks) {
           document.querySelector("#railsBlocks").innerHTML = blocks;
@@ -1711,7 +1729,7 @@
         .sort((a,b)=>(progressByID.get(b.id)?.updatedAt || "").localeCompare(
                       progressByID.get(a.id)?.updatedAt || ""));
 
-      $("#continueRow").hidden = continuing.length === 0 || activeTab !== "all";
+      $("#continueRow").hidden = libraryLayout === "rails" || continuing.length === 0 || activeTab !== "all";
       if (!$("#continueRow").hidden) {
         $("#continueGrid").innerHTML = continuing.map(i => cardHTML(i)).join("");
       }
@@ -2081,6 +2099,7 @@
       const etag = response.headers.get("ETag") || "";
       return { etag, data: await response.json() };
     }).then(({ etag, data }) => {
+      applyLibraryLayout(data.serverSettings?.libraryLayout || "rails");
       applyTheme(data.theme?.preset || "earthy");
       items = data.items ?? [];
       (data.progress ?? []).forEach(pr => progressByID.set(pr.itemID, pr));
@@ -2110,6 +2129,10 @@
       if (event.target.value !== "interface") document.querySelector("#networkInterface").value = "";
     });
     on("#themeSel", "change", event => applyTheme(event.target.value));
+    on("#libraryLayoutSel", "change", event => {
+      applyLibraryLayout(event.target.value);
+      render();
+    });
     on("#dataImportBtn", "click", () => $("#dataImportFile")?.click());
     on("#dataImportFile", "change", async e => {
       const file = e.target.files?.[0];
@@ -2153,6 +2176,7 @@
       status.textContent = "Loading…";
       try {
         settingsData = await (await fetch(api("/api/settings"))).json();
+        applyLibraryLayout(settingsData.libraryLayout || "rails");
         applyTheme(settingsData.themePreset || "earthy");
         pendingLibs = null; // fresh server state wins over stale edits
       } catch { settingsData = null; }
@@ -2175,9 +2199,7 @@
 
       document.querySelector("#allowLAN").checked = !!settingsData.allowLAN;
       document.querySelector("#themeSel").value = settingsData.themePreset || "earthy";
-      document.querySelector("#layoutSel").value = settingsData.audiobookLayout || "rails";
-      document.querySelector("#moviesLayoutSel").value = settingsData.moviesLayout || "rails";
-      document.querySelector("#tvLayoutSel").value = settingsData.tvLayout || "rails";
+      document.querySelector("#libraryLayoutSel").value = settingsData.libraryLayout || "rails";
       document.querySelector("#mounts").innerHTML =
         (settingsData.suggestedMounts ?? []).map(m => `<option value="${escapeHTML(m)}">`).join("");
 
@@ -2348,9 +2370,12 @@
       if (pendingLibs) body.libraries = currentLibraries().map(({ id, name, path, kind }) => ({ id, name, path, kind }));
       body.allowLAN = document.querySelector("#allowLAN").checked;
       body.themePreset = document.querySelector("#themeSel").value;
-      body.audiobookLayout = document.querySelector("#layoutSel").value;
-      body.moviesLayout = document.querySelector("#moviesLayoutSel").value;
-      body.tvLayout = document.querySelector("#tvLayoutSel").value;
+      body.libraryLayout = document.querySelector("#libraryLayoutSel").value;
+      // Keep the older per-media keys synchronized for older clients and
+      // standalone routes while the shared layout is the source of truth.
+      body.audiobookLayout = body.libraryLayout;
+      body.moviesLayout = body.libraryLayout === "classic" ? "grid" : "rails";
+      body.tvLayout = body.moviesLayout;
       await putSettings(body);
       pendingLibs = null;
       // library table may have changed -> refresh catalog behind the dialog
@@ -2865,6 +2890,8 @@
           return false;
         }
         settingsData = await r.json();
+        applyLibraryLayout(settingsData.libraryLayout || "rails");
+        applyTheme(settingsData.themePreset || "earthy");
         renderSettings();
         status.textContent = "Saved ✓";
         setTimeout(() => status.textContent = "", 2500);

@@ -1,5 +1,5 @@
 <!doctype html>
-<html lang="en" data-theme="earthy">
+<html lang="en" data-theme="earthy" data-library-layout="rails">
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
@@ -9,9 +9,10 @@
   <link rel="stylesheet" href="/library.css?v=asset">
   <script src="/shared.js?v=asset"></script>
 </head>
-<body data-theme="earthy">
+<body data-theme="earthy" data-library-layout="rails">
   <header>
     <h1 class="brand-lockup"><img src="/favicon.png?v=asset" alt="" aria-hidden="true"> TM <span>Sonder</span></h1>
+    <span class="layout-badge" id="layoutBadge">RAILS</span>
     <nav class="tabs" id="tabs" aria-label="Library sections">
       <button data-tab="all" class="active">All</button>
       <button data-tab="movies">🎬 Movies</button>
@@ -235,27 +236,15 @@
 
       <h3 style="margin:18px 0 8px">Appearance</h3>
       <label style="display:flex;gap:8px;align-items:center;margin-bottom:6px">
-        Theme:
+        Color palette:
         <select id="themeSel" style="background:var(--panel2);border:1px solid var(--line);color:var(--text);border-radius:8px;padding:6px 10px">
           <option value="earthy">Earthy</option><option value="dark">Dark</option><option value="techmore">Techmore Olive</option>
         </select>
       </label>
       <label style="display:flex;gap:8px;align-items:center;margin-bottom:6px">
-        Audiobooks layout:
-        <select id="layoutSel" style="background:var(--panel2);border:1px solid var(--line);color:var(--text);border-radius:8px;padding:6px 10px">
-          <option value="rails">Rails (Continue, Up next, shelves)</option><option value="classic">Classic (list)</option>
-        </select>
-      </label>
-      <label style="display:flex;gap:8px;align-items:center;margin-bottom:6px">
-        Movies layout:
-        <select id="moviesLayoutSel" style="background:var(--panel2);border:1px solid var(--line);color:var(--text);border-radius:8px;padding:6px 10px">
-          <option value="rails">Rails (Continue, picks, grid)</option><option value="grid">Grid (classic)</option>
-        </select>
-      </label>
-      <label style="display:flex;gap:8px;align-items:center;margin-bottom:6px">
-        TV layout:
-        <select id="tvLayoutSel" style="background:var(--panel2);border:1px solid var(--line);color:var(--text);border-radius:8px;padding:6px 10px">
-          <option value="rails">Rails (Continue, picks, grid)</option><option value="grid">Grid (classic)</option>
+        Library layout:
+        <select id="libraryLayoutSel" style="background:var(--panel2);border:1px solid var(--line);color:var(--text);border-radius:8px;padding:6px 10px">
+          <option value="rails">Rails (home + every library)</option><option value="classic">Classic (existing grid)</option>
         </select>
       </label>
 

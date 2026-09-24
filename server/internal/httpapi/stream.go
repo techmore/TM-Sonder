@@ -166,5 +166,5 @@ func (s *Server) handleBackdrop(w http.ResponseWriter, r *http.Request) {
 
 // handleIndex serves the library browser (port of SonderWebInterface.html).
 func (s *Server) handleIndex(w http.ResponseWriter, r *http.Request) {
-	serveGzippableHTML(w, r, libraryPageForTheme(s.cfg().ThemePreset))
+	serveGzippableHTML(w, r, libraryPageForThemeAndLayout(s.cfg().ThemePreset, s.cfg().LibraryLayout))
 }

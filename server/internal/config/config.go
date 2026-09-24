@@ -18,6 +18,10 @@ const (
 	DefaultPort        = 8096
 	DefaultThemePreset = "earthy"
 
+	// DefaultLibraryLayout is the shared web browser layout. Rails is the
+	// shelf-based experience; Classic keeps the existing full-grid browser.
+	DefaultLibraryLayout = "rails"
+
 	// DefaultAudiobookLayout is the rails browser ("rails"); the legacy
 	// list view remains available as "classic".
 	DefaultAudiobookLayout = "rails"
@@ -68,6 +72,7 @@ type Config struct {
 	AllowLAN          bool      `json:"allowLAN"`
 	PairingToken      string    `json:"pairingToken"`
 	ThemePreset       string    `json:"themePreset"`
+	LibraryLayout     string    `json:"libraryLayout"`
 	AudiobookLayout   string    `json:"audiobookLayout"`
 	MoviesLayout      string    `json:"moviesLayout"`
 	TVLayout          string    `json:"tvLayout"`
@@ -89,19 +94,20 @@ func Default() Config {
 		dataDir = filepath.Join(home, "Library", "Application Support", "TM-Sonder-Server")
 	}
 	return Config{
-		Port:        DefaultPort,
-		WebPort:     0,
-		APIPort:     0,
-		DataDir:     dataDir,
-		ThemePreset: DefaultThemePreset,
+		Port:            DefaultPort,
+		WebPort:         0,
+		APIPort:         0,
+		DataDir:         dataDir,
+		ThemePreset:     DefaultThemePreset,
+		LibraryLayout:   DefaultLibraryLayout,
 		AudiobookLayout: DefaultAudiobookLayout,
 		MoviesLayout:    DefaultMediaLayout,
 		TVLayout:        DefaultMediaLayout,
-		FFmpegPath:  "ffmpeg",
-		FFprobePath: "ffprobe",
-		SafeScan:    true,
-		Transcode:   Transcode{MaxConcurrent: 2, HWAccel: "videotoolbox", Preset: "veryfast"},
-		LogDir:      filepath.Join(dataDir, "logs"),
+		FFmpegPath:      "ffmpeg",
+		FFprobePath:     "ffprobe",
+		SafeScan:        true,
+		Transcode:       Transcode{MaxConcurrent: 2, HWAccel: "videotoolbox", Preset: "veryfast"},
+		LogDir:          filepath.Join(dataDir, "logs"),
 	}
 }
 
@@ -282,9 +288,21 @@ func (c *Config) applyEnv() {
 	if v := os.Getenv("SONDER_TRANSCODE_PRESET"); v != "" {
 		c.Transcode.Preset = v
 	}
+	c.LibraryLayout = NormalizeLibraryLayout(c.LibraryLayout)
 	c.AudiobookLayout = NormalizeAudiobookLayout(c.AudiobookLayout)
 	c.MoviesLayout = NormalizeMediaLayout(c.MoviesLayout)
 	c.TVLayout = NormalizeMediaLayout(c.TVLayout)
+}
+
+// NormalizeLibraryLayout coerces the shared web browser preference to
+// "rails" or "classic", defaulting to Rails for new and older configs.
+func NormalizeLibraryLayout(v string) string {
+	switch strings.ToLower(strings.TrimSpace(v)) {
+	case "classic":
+		return "classic"
+	default:
+		return DefaultLibraryLayout
+	}
 }
 
 // NormalizeAudiobookLayout coerces a layout preference to "rails" or
@@ -397,6 +415,7 @@ var templateBytes = []byte(`// TM Sonder Go server configuration.
   "pairingToken": "",
   "safeScan": true,
   "themePreset": "earthy",
+  "libraryLayout": "rails",
   "ffmpegPath": "ffmpeg",
   "ffprobePath": "ffprobe",
   "probeWorkers": 0,

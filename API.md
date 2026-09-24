@@ -274,9 +274,15 @@ Media items expose relative artwork URLs instead:
   "allowLAN": true,
   "port": 8096,
   "themePreset": "earthy",
+  "libraryLayout": "rails",
   "requiresPairing": true
 }
 ```
+
+`libraryLayout` is the shared web browser mode: `rails` is the default
+shelf-based Home and library experience, while `classic` preserves the
+existing grid-first browser. The setting is also available through
+`GET/PUT /api/settings`.
 
 Clients must store any pairing token they were given out-of-band (Keychain). The token is never returned by the API.
 

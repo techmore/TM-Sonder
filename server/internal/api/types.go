@@ -148,6 +148,7 @@ type ServerSettings struct {
 	WebPort         int    `json:"webPort,omitempty"`
 	APIPort         int    `json:"apiPort,omitempty"`
 	ThemePreset     string `json:"themePreset"`
+	LibraryLayout   string `json:"libraryLayout"`
 	RequiresPairing bool   `json:"requiresPairing"`
 }
 

@@ -29,38 +29,51 @@ func mustReadWeb(name string) []byte {
 }
 
 var (
-	libraryPage    = newGzippedPage(func() []byte { return mustReadWeb("web/library.html") })
-	libraryCSS     = newGzippedPage(func() []byte { return mustReadWeb("web/library.css") })
-	libraryJS      = newGzippedPage(func() []byte { return mustReadWeb("web/library.js") })
-	audiobooksPage = newGzippedPage(func() []byte { return mustReadWeb("web/audiobooks.html") })
+	libraryPage        = newGzippedPage(func() []byte { return mustReadWeb("web/library.html") })
+	libraryCSS         = newGzippedPage(func() []byte { return mustReadWeb("web/library.css") })
+	libraryJS          = newGzippedPage(func() []byte { return mustReadWeb("web/library.js") })
+	audiobooksPage     = newGzippedPage(func() []byte { return mustReadWeb("web/audiobooks.html") })
 	audiobooksBetaPage = newGzippedPage(func() []byte { return mustReadWeb("web/audiobooks-beta.html") })
-	ebooksPage     = newGzippedPage(func() []byte { return mustReadWeb("web/ebooks.html") })
-	sharedJS       = newGzippedPage(func() []byte { return mustReadWeb("web/shared.js") })
-	faviconSVG     = newGzippedPage(func() []byte { return mustReadWeb("web/favicon.svg") })
-	faviconPNG     = newGzippedPage(func() []byte { return mustReadWeb("web/favicon.png") })
-	libraryThemeMu sync.Mutex
-	libraryThemes  = map[string]*gzippedPage{}
+	ebooksPage         = newGzippedPage(func() []byte { return mustReadWeb("web/ebooks.html") })
+	sharedJS           = newGzippedPage(func() []byte { return mustReadWeb("web/shared.js") })
+	faviconSVG         = newGzippedPage(func() []byte { return mustReadWeb("web/favicon.svg") })
+	faviconPNG         = newGzippedPage(func() []byte { return mustReadWeb("web/favicon.png") })
+	libraryThemeMu     sync.Mutex
+	libraryThemes      = map[string]*gzippedPage{}
 )
 
-// libraryPageForTheme renders the saved preset into the document before the
-// browser can paint. The JavaScript still reapplies the setting after its API
-// response, but the first paint now uses the same palette and cannot flash the
-// default dark theme.
+// libraryPageForTheme preserves the legacy helper for callers that only need a
+// palette. New web requests should use libraryPageForThemeAndLayout so the
+// first paint also reflects the saved Rails/Classic browser mode.
 func libraryPageForTheme(preset string) *gzippedPage {
+	return libraryPageForThemeAndLayout(preset, "rails")
+}
+
+// libraryPageForThemeAndLayout renders the saved palette and browser layout
+// into the document before the browser can paint. The JavaScript still
+// reapplies both settings after its API response, but the first paint now
+// matches the persisted experience and cannot flash the default mode.
+func libraryPageForThemeAndLayout(preset, layout string) *gzippedPage {
 	preset = strings.ToLower(strings.TrimSpace(preset))
 	if preset != "dark" && preset != "techmore" {
 		preset = "earthy"
 	}
+	layout = strings.ToLower(strings.TrimSpace(layout))
+	if layout != "classic" {
+		layout = "rails"
+	}
+	cacheKey := preset + "|" + layout
 
 	libraryThemeMu.Lock()
 	defer libraryThemeMu.Unlock()
-	if page := libraryThemes[preset]; page != nil {
+	if page := libraryThemes[cacheKey]; page != nil {
 		return page
 	}
 
 	page := newGzippedPage(func() []byte {
 		raw, _, _ := libraryPage.bytes()
 		raw = bytes.ReplaceAll(raw, []byte(`data-theme="earthy"`), []byte(`data-theme="`+preset+`"`))
+		raw = bytes.ReplaceAll(raw, []byte(`data-library-layout="rails"`), []byte(`data-library-layout="`+layout+`"`))
 		for _, asset := range []struct {
 			placeholder string
 			page        *gzippedPage
@@ -75,7 +88,7 @@ func libraryPageForTheme(preset string) *gzippedPage {
 		}
 		return raw
 	})
-	libraryThemes[preset] = page
+	libraryThemes[cacheKey] = page
 	return page
 }
 

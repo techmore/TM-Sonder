@@ -8,6 +8,7 @@
     body { margin:0; font:14px -apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif; background:var(--bg); color:var(--text); }
     .brand-lockup { display:inline-flex; align-items:center; gap:8px; }
     .brand-lockup img { width:28px; height:28px; border-radius:7px; box-shadow:0 0 0 1px rgba(182,213,109,.32); }
+    .layout-badge { display:inline-flex; align-items:center; border:1px solid var(--line); border-radius:5px; padding:2px 7px; color:var(--muted); font-size:10px; font-weight:800; letter-spacing:.7px; }
     button { font:inherit; }
     header {
       position:sticky; top:0; z-index:5; display:flex; flex-wrap:wrap;
@@ -31,8 +32,8 @@
       display:grid; grid-template-columns:repeat(auto-fill,minmax(165px,1fr));
       gap:16px; padding:18px 22px 40px;
     }
-    main.grid.rail-mode { display:flex; overflow-x:auto; padding-top:4px; }
-    main.grid.rail-mode .card { flex:0 0 165px; }
+    .grid.rail-mode { display:flex; overflow-x:auto; padding-top:4px; }
+    .grid.rail-mode .card { flex:0 0 165px; }
 
     .card {
       background:none; border:0; padding:0; text-align:left; cursor:pointer;
@@ -487,6 +488,58 @@ body[data-theme="techmore"] .nowplaying { background:rgba(63,64,56,.96); border-
   body[data-theme="techmore"] section.row { padding-left:16px; padding-right:16px; }
   body[data-theme="techmore"] main.grid { padding-left:16px; padding-right:16px; gap:14px; }
   body[data-theme="techmore"] .recommended-lists { margin-left:16px; margin-right:16px; }
+}
+
+/* ── Rails browser: the shared default home and library experience ─────── */
+body[data-library-layout="rails"] {
+  color-scheme:dark;
+  --bg:#10130f; --panel:#171d15; --panel2:#202819; --line:#344128;
+  --text:#eff4e8; --muted:#a8b39c; --accent:#b6d56d; --accent-dark:#11160f;
+  --gold:#e0a14a; --radius:10px;
+  background:var(--bg); color:var(--text);
+}
+body[data-library-layout="rails"] header {
+  padding:14px 20px; background:rgba(16,19,15,.96); border-bottom-color:var(--line);
+}
+body[data-library-layout="rails"] .layout-badge {
+  border-color:var(--accent); background:var(--accent); color:var(--accent-dark);
+}
+body[data-library-layout="rails"] input[type="search"],
+body[data-library-layout="rails"] select {
+  background:var(--panel); border-color:var(--line); color:var(--text); border-radius:8px;
+}
+body[data-library-layout="rails"] nav.tabs button {
+  background:var(--panel2); border-color:var(--line); color:var(--text); border-radius:8px;
+}
+body[data-library-layout="rails"] nav.tabs button.active {
+  background:var(--accent); border-color:var(--accent); color:var(--accent-dark);
+}
+body[data-library-layout="rails"] .audiobook-player-link {
+  background:var(--accent); border-color:var(--accent); color:var(--accent-dark);
+}
+body[data-library-layout="rails"] section.row h2 {
+  color:var(--text); text-transform:none; letter-spacing:0; font-size:19px; margin-bottom:3px;
+}
+body[data-library-layout="rails"] .web-rail { margin-bottom:30px; }
+body[data-library-layout="rails"] .web-rail > p.sub {
+  color:var(--muted); font-size:12.5px; margin:0 0 12px;
+}
+body[data-library-layout="rails"] .card .frame {
+  background:linear-gradient(145deg,#334124,#11160f);
+  border:1px solid var(--line); border-radius:10px;
+  box-shadow:0 2px 10px rgba(0,0,0,.45);
+}
+body[data-library-layout="rails"] .card:hover .frame,
+body[data-library-layout="rails"] .card:focus-visible .frame {
+  transform:translateY(-3px); box-shadow:0 8px 22px rgba(0,0,0,.55);
+}
+body[data-library-layout="rails"] .card h3 { font-size:12.5px; font-weight:600; }
+body[data-library-layout="rails"] .card p.meta { font-size:11.5px; }
+body[data-library-layout="rails"] .recommended-list-card,
+body[data-library-layout="rails"] .reading-list,
+body[data-library-layout="rails"] section.season,
+body[data-library-layout="rails"] dialog#detail {
+  background:var(--panel); border-color:var(--line);
 }
 
 /* ── Persistent now-playing controller ─────────────────────────────────── */

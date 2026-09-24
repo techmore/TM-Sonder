@@ -514,9 +514,20 @@ func TestIndexPageRendersSavedThemeBeforeHydration(t *testing.T) {
 	if resp.StatusCode != http.StatusOK {
 		t.Fatalf("status = %d", resp.StatusCode)
 	}
-	if !strings.Contains(body, `<html lang="en" data-theme="techmore">`) ||
-		!strings.Contains(body, `<body data-theme="techmore">`) {
+	if !strings.Contains(body, `data-theme="techmore"`) ||
+		!strings.Contains(body, `data-library-layout="rails"`) {
 		t.Fatalf("saved theme was not rendered into initial HTML")
+	}
+}
+
+func TestIndexPageRendersSavedClassicLayoutBeforeHydration(t *testing.T) {
+	f := newFixture(t, func(cfg *config.Config) { cfg.LibraryLayout = "classic" })
+	resp, body := get(t, f.ts.URL+"/")
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("status = %d", resp.StatusCode)
+	}
+	if !strings.Contains(body, `data-library-layout="classic"`) {
+		t.Fatalf("saved classic layout was not rendered into initial HTML")
 	}
 }
 
