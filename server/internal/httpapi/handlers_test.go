@@ -99,6 +99,9 @@ func TestHealthShape(t *testing.T) {
 		h.Library != "/api/library" || h.AllowLAN || h.RequiresPairing {
 		t.Errorf("health shape wrong: %+v", h)
 	}
+	if resp.Header.Get("X-Sonder-Server") != ServerID || resp.Header.Get("X-Sonder-Name") != AppName {
+		t.Errorf("identity headers = (%q, %q), want (%q, %q)", resp.Header.Get("X-Sonder-Server"), resp.Header.Get("X-Sonder-Name"), ServerID, AppName)
+	}
 }
 
 func TestDiscoveryShape(t *testing.T) {
@@ -377,7 +380,7 @@ func TestAuthMatrix(t *testing.T) {
 
 	t.Run("web assets load without copying page token", func(t *testing.T) {
 		f := newSrv(true)
-		for _, path := range []string{"/shared.js", "/library.css", "/library.js", "/favicon.svg", "/favicon.png"} {
+		for _, path := range []string{"/shared.js", "/library.css", "/library.js", "/favicon.svg", "/favicon.png", "/favicon.ico"} {
 			req := httptest.NewRequest("GET", path, nil)
 			req.RemoteAddr = "192.168.1.50:1234"
 			req.Host = "192.168.1.20:8797"
@@ -465,6 +468,11 @@ func TestIndexPage(t *testing.T) {
 	if respPNG.StatusCode != 200 || respPNG.Header.Get("Content-Type") != "image/png" ||
 		len(bodyPNG) < 8 || bodyPNG[:8] != "\x89PNG\r\n\x1a\n" {
 		t.Errorf("generated favicon not served: %d %s (%d bytes)", respPNG.StatusCode, respPNG.Header.Get("Content-Type"), len(bodyPNG))
+	}
+	respICO, bodyICO := get(t, f.ts.URL+"/favicon.ico")
+	if respICO.StatusCode != 200 || respICO.Header.Get("Content-Type") != "image/png" ||
+		len(bodyICO) < 8 || bodyICO[:8] != "\x89PNG\r\n\x1a\n" {
+		t.Errorf("favicon.ico fallback not served: %d %s (%d bytes)", respICO.StatusCode, respICO.Header.Get("Content-Type"), len(bodyICO))
 	}
 	// Audiobook browser page.
 	resp2, body2 := get(t, f.ts.URL+"/audiobooks")

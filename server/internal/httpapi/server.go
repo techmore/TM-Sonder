@@ -311,11 +311,12 @@ func (s *Server) routes() {
 	m.HandleFunc("GET /library.js", s.handleLibraryJS)
 	m.HandleFunc("GET /favicon.svg", s.handleFavicon)
 	m.HandleFunc("GET /favicon.png", s.handleFaviconPNG)
+	m.HandleFunc("GET /favicon.ico", s.handleFaviconPNG)
 }
 
 // Handler returns the fully wrapped HTTP handler.
 func (s *Server) Handler() http.Handler {
-	return withLocalPprof(s.withAccessLog(s.withGzip(s.withAuth(s.withRecovery(s.mux)))))
+	return s.withIdentity(withLocalPprof(s.withAccessLog(s.withGzip(s.withAuth(s.withRecovery(s.mux))))))
 }
 
 // WebHandler is the LAN-facing frontend. It enforces the original request's
@@ -347,7 +348,18 @@ func (s *Server) WebHandler(privateAPIAddress string) http.Handler {
 		// pairing/LAN policy before this proxy hop.
 		r.Host = target.Host
 	}
-	return s.withAccessLog(s.withAuth(s.withRecovery(proxy)))
+	return s.withIdentity(s.withAccessLog(s.withAuth(s.withRecovery(proxy))))
+}
+
+// withIdentity adds a stable product identity to every response. The standard
+// Server header is intentionally left to the process/reverse proxy; these
+// names remain available to clients even when Caddy is in front of Sonder.
+func (s *Server) withIdentity(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("X-Sonder-Server", ServerID)
+		w.Header().Set("X-Sonder-Name", AppName)
+		next.ServeHTTP(w, r)
+	})
 }
 
 // withRecovery converts a handler panic into a 500 instead of dropping the
@@ -386,7 +398,7 @@ func (s *Server) withGzip(next http.Handler) http.Handler {
 			strings.HasPrefix(path, "/subtitles/") ||
 			path == "/api/library" || path == "/library.json" ||
 			path == "/" || path == "/audiobooks" || path == "/audiobooks-classic" || path == "/audiobooks-beta" || path == "/ebooks" ||
-			path == "/shared.js" || path == "/library.css" || path == "/library.js" ||
+			path == "/shared.js" || path == "/library.css" || path == "/library.js" || path == "/favicon.ico" ||
 			path == "/favicon.svg" || path == "/favicon.png" {
 			// These routes manage their own cached gzip.
 			next.ServeHTTP(w, r)
@@ -617,7 +629,7 @@ func isBrowserPage(path string) bool {
 
 func isPublicWebAsset(path string) bool {
 	switch path {
-	case "/shared.js", "/library.css", "/library.js", "/favicon.svg", "/favicon.png":
+	case "/shared.js", "/library.css", "/library.js", "/favicon.svg", "/favicon.png", "/favicon.ico":
 		return true
 	default:
 		return false
