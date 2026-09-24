@@ -92,6 +92,12 @@
 
     const { api, escapeHTML, formatTime } = window.Sonder;
 
+    const audiobookPlayerLink = typeof document === "undefined"
+      ? null : document.querySelector("#audiobookPlayerLink");
+    if (audiobookPlayerLink && typeof api === "function") {
+      audiobookPlayerLink.href = api("/audiobooks");
+    }
+
     function applyTheme(preset) {
       const theme = preset || "earthy";
       document.documentElement.dataset.theme = theme;

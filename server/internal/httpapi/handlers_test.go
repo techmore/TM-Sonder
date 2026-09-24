@@ -443,7 +443,8 @@ func TestIndexPage(t *testing.T) {
 	resp, body := get(t, f.ts.URL+"/")
 	if resp.StatusCode != 200 || !strings.Contains(body, "TM Sonder") ||
 		!strings.Contains(body, `id="grid"`) ||
-		!strings.Contains(body, "/library.js") || !strings.Contains(body, "/library.css") {
+		!strings.Contains(body, "/library.js") || !strings.Contains(body, "/library.css") ||
+		!strings.Contains(body, `id="audiobookPlayerLink"`) {
 		t.Errorf("library web UI not served: %d %.120s", resp.StatusCode, body)
 	}
 	// The extracted assets are served and the script still talks to the API.
