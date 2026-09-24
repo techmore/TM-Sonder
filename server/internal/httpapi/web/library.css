@@ -44,10 +44,12 @@
     .catalog-rails { min-width:0; padding:20px 22px 60px; }
     .catalog-rails .web-rail { margin-bottom:30px; }
     .catalog-strip {
-      display:flex; gap:14px; overflow-x:auto; padding:2px 2px 10px;
+      display:flex; align-items:flex-start; gap:14px; overflow-x:auto; padding:2px 2px 10px;
       scrollbar-width:thin;
     }
-    .catalog-strip .card { flex:0 0 165px; }
+    /* Keep long titles from becoming giant flex items and stretching one
+       poster far taller than the rest of its shelf. */
+    .catalog-strip .card { flex:0 0 165px; min-width:0; }
     .catalog-shelf {
       display:grid; grid-template-columns:repeat(auto-fill,minmax(165px,1fr));
       gap:16px;
