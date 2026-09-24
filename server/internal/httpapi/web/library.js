@@ -1320,6 +1320,9 @@
     let selectedMovieID = null;
     let movieDetailCollapsed = false;
     let movieShelfExpanded = false;
+    const movieMetadataByID = new Map();
+    const movieMetadataLoading = new Set();
+    const movieMetadataErrors = new Map();
 
     function movieShelfGroups(source) {
       const movies = (source || []).filter(item => item.kind === "movie" && !item.isPlaceholder);
@@ -1717,12 +1720,82 @@
       } catch (error) { alert(error.message || "Could not create list"); }
     });
 
+    function movieMetaInitials(name) {
+      return String(name || "?")
+        .split(/\s+/)
+        .filter(Boolean)
+        .slice(0, 2)
+        .map(part => part[0])
+        .join("")
+        .toUpperCase() || "?";
+    }
+
+    function movieMetadataMarkup(item) {
+      const metadata = movieMetadataByID.get(item.id);
+      if (movieMetadataLoading.has(item.id)) {
+        return `<section class="movie-meta-loading" aria-live="polite"><span class="catalog-kicker">LOOKING CLOSER</span><p>Loading cast, characters, and ratings…</p></section>`;
+      }
+      if (movieMetadataErrors.has(item.id)) {
+        return `<section class="movie-meta-loading movie-meta-error"><span class="catalog-kicker">LOCAL METADATA</span><p>Online cast and rating details are unavailable right now. The local primer above is still ready.</p></section>`;
+      }
+      if (!metadata) return "";
+
+      const directors = (metadata.directors || []).filter(Boolean);
+      const genres = (metadata.genres || []).filter(Boolean).slice(0, 8);
+      const ratings = (metadata.ratings || []).filter(rating => rating && rating.value);
+      const cast = (metadata.cast || []).filter(member => member && member.name).slice(0, 10);
+      const creditBits = [];
+      if (directors.length) creditBits.push(`<span><strong>Directed by</strong>${escapeHTML(directors.join(", "))}</span>`);
+      if (genres.length) creditBits.push(`<span><strong>Genres</strong>${genres.map(genre => escapeHTML(genre)).join(" · ")}</span>`);
+      const creditsHTML = creditBits.length ? `<div class="movie-credits">${creditBits.join("")}</div>` : "";
+      const ratingsHTML = ratings.length ? `
+        <section class="movie-ratings" aria-label="Movie ratings">
+          <div class="movie-section-head"><span class="catalog-kicker">RATINGS</span><span>Published snapshots</span></div>
+          <div class="movie-rating-grid">${ratings.map(rating => `
+            <div class="movie-rating"><strong>${escapeHTML(rating.value)}</strong><span>${escapeHTML(rating.source || "Wikidata")}</span>${rating.method ? `<small>${escapeHTML(rating.method)}</small>` : ""}</div>`).join("")}</div>
+        </section>` : "";
+      const castHTML = cast.length ? `
+        <section class="movie-cast" aria-label="Main cast">
+          <div class="movie-section-head"><span class="catalog-kicker">CAST</span><span>Main players</span></div>
+          <div class="movie-cast-grid">${cast.map(member => `
+            <div class="movie-cast-member">
+              <div class="movie-cast-portrait">${member.imageURL ? `<img src="${escapeHTML(member.imageURL)}" alt="" loading="lazy">` : `<span>${escapeHTML(movieMetaInitials(member.name))}</span>`}</div>
+              <strong>${escapeHTML(member.name)}</strong>
+              ${member.character ? `<span>${escapeHTML(member.character)}</span>` : `<span class="movie-cast-unknown">Character not indexed</span>`}
+            </div>`).join("")}</div>
+        </section>` : `<p class="movie-meta-muted">No cast details are indexed for this title yet.</p>`;
+      const sourceHTML = metadata.wikiURL ? `<a class="movie-meta-source" href="${escapeHTML(metadata.wikiURL)}" target="_blank" rel="noopener">Metadata source: Wikipedia / Wikidata ↗</a>` : "";
+      return `${creditsHTML}${ratingsHTML}${castHTML}${sourceHTML}`;
+    }
+
+    function requestMovieMetadata(item) {
+      if (!item || movieMetadataByID.has(item.id) || movieMetadataLoading.has(item.id) || movieMetadataErrors.has(item.id)) return;
+      movieMetadataLoading.add(item.id);
+      fetch(api(`/api/movies/${encodeURIComponent(item.id)}/metadata`), { cache: "no-store" })
+        .then(async response => {
+          if (!response.ok) throw new Error(`metadata ${response.status}`);
+          return response.json();
+        })
+        .then(metadata => movieMetadataByID.set(item.id, metadata || {}))
+        .catch(error => {
+          console.warn("Movie metadata unavailable", error);
+          movieMetadataErrors.set(item.id, true);
+        })
+        .finally(() => {
+          movieMetadataLoading.delete(item.id);
+          if (activeTab === "movies" && selectedMovieID === item.id && !$("#movieCatalog")?.hidden) {
+            renderMovieCatalog(visibleItems());
+          }
+        });
+    }
+
     function movieDetailMarkup(item) {
       const p = progressFor(item.id);
       const plan = playbackPlan(item);
       const resumeAt = p && p.seconds > 5 ? p.seconds : 0;
       const isCurrent = nowPlayingItem && nowPlayingItem.id === item.id;
       const media = npMedia();
+      const metadata = movieMetadataByID.get(item.id);
       const playingNow = isCurrent && media && !media.paused;
       const playLabel = playingNow ? "Pause" : resumeAt ? `Resume at ${formatTime(resumeAt)}` : "Play movie";
       const title = item.title || "Untitled movie";
@@ -1733,7 +1806,7 @@
         .filter(Boolean).join(" · ");
       const tags = (item.tags || []).slice(0, 8)
         .map(tag => `<span class="tag">${escapeHTML(tag)}</span>`).join("");
-      const summary = [item.summary, item.subtitle].filter(Boolean)
+      const summary = [metadata?.primer || item.summary, metadata?.primer ? "" : item.subtitle].filter(Boolean)
         .map(value => `<p class="summary">${escapeHTML(value)}</p>`).join("");
       const progress = p && p.seconds > 5
         ? `<p class="catalog-detail-meta">${isWatched(p, item) ? "Watched" : `Started · ${formatTime(p.seconds)}${item.durationSeconds ? ` of ${formatTime(item.durationSeconds)}` : ""}`}</p>`
@@ -1750,6 +1823,7 @@
         </div>
         ${plan ? `<div class="actions"><button class="primary" data-action="play-item" data-id="${escapeHTML(item.id)}">${playLabel}</button><a href="${api("/stream/" + item.id)}" target="_blank" rel="noopener">Open stream URL</a></div>` : `<div class="not-playable"><strong>.${escapeHTML(String(item.format || "?").toUpperCase())}</strong> can't play in the browser. <a href="${api("/stream/" + item.id)}" target="_blank" rel="noopener">Open in a native player</a>.</div>`}
         ${summary || `<p class="catalog-detail-empty">No synopsis is available for this movie yet.</p>`}
+        ${movieMetadataMarkup(item)}
         ${tags ? `<div class="tagrow">${tags}</div>` : ""}
         ${editionsHTML(item)}`;
     }
@@ -1783,6 +1857,7 @@
       detail.innerHTML = selected
         ? movieDetailMarkup(selected)
         : `<p class="catalog-detail-empty">Choose a movie to see its story and start watching.</p>`;
+      requestMovieMetadata(selected);
       layout.classList.toggle("detail-collapsed", movieDetailCollapsed);
       const toggle = $("#movieDetailToggle");
       if (toggle) {

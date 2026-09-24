@@ -128,6 +128,7 @@ Includes:
 | `subtitles` | `/subtitles/{id}/{index}` |
 | `poster` | `/artwork/poster/{id}` |
 | `backdrop` | `/artwork/backdrop/{id}` |
+| `movieMetadata` | `/api/movies/{id}/metadata` |
 
 ## Library
 
@@ -135,6 +136,7 @@ Includes:
 | --- | --- | --- |
 | GET | `/api/library` | Full library catalog, progress records, public server settings, activity, and theme. |
 | GET | `/library.json` | Compatibility alias for `/api/library`. |
+| GET | `/api/movies/{id}/metadata` | Lazy, cached movie primer, cast/character portraits, directors, genres, and published ratings for the Rails detail panel. |
 | GET | `/api/data/export` | Download a versioned, media-independent Sonder data bundle containing catalog metadata, lists, tags, order, and progress. |
 | POST | `/api/data/import` | Restore or merge a data bundle. Accepts `mode` (`replace` or `merge`) and optional `pathMappings`; never starts a scan. |
 | GET | `/api/status` | Server/library scan status. |

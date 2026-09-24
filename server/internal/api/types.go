@@ -271,6 +271,7 @@ type DiscoveryEndpoints struct {
 	Subtitles            *string `json:"subtitles"`
 	Poster               *string `json:"poster"`
 	Backdrop             *string `json:"backdrop"`
+	MovieMetadata        *string `json:"movieMetadata,omitempty"`
 	NetworkInterfaces    *string `json:"networkInterfaces,omitempty"`
 	NetworkStatus        *string `json:"networkStatus,omitempty"`
 	NetworkRebind        *string `json:"networkRebind,omitempty"`

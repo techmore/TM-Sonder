@@ -24,6 +24,7 @@ import (
 	"tm-sonder/server/internal/api"
 	"tm-sonder/server/internal/audiobookopt"
 	"tm-sonder/server/internal/config"
+	"tm-sonder/server/internal/enrich"
 	"tm-sonder/server/internal/library"
 	"tm-sonder/server/internal/runtimecontrol"
 	"tm-sonder/server/internal/transcode"
@@ -61,6 +62,7 @@ type Server struct {
 	tm                 *transcode.Manager
 	refresher          TrackRefresher
 	chapters           ChapterProvider
+	movieMetadata      *enrich.Enricher
 	audiobookOptimizer *audiobookopt.Manager
 	runtimeControl     *runtimecontrol.Controller
 	onMutation         func()
@@ -86,10 +88,11 @@ type Server struct {
 
 func New(cfg *config.Config, store *library.Store, scanner *library.Scanner, tm *transcode.Manager) *Server {
 	s := &Server{
-		store:   store,
-		scanner: scanner,
-		tm:      tm,
-		logger:  log.New(log.Writer(), "sonder-http ", log.LstdFlags),
+		store:         store,
+		scanner:       scanner,
+		tm:            tm,
+		movieMetadata: enrich.New(filepath.Join(cfg.DataDir, "metadata-cache")),
+		logger:        log.New(log.Writer(), "sonder-http ", log.LstdFlags),
 	}
 	s.cfgPtr.Store(cfg)
 	s.mux = http.NewServeMux()
@@ -231,6 +234,7 @@ func (s *Server) routes() {
 	m.HandleFunc("GET /api/discovery", s.handleDiscovery)
 	m.HandleFunc("GET /api/library", s.handleLibrary)
 	m.HandleFunc("GET /library.json", s.handleLibrary)
+	m.HandleFunc("GET /api/movies/{id}/metadata", s.handleMovieMetadata)
 	m.HandleFunc("GET /api/status", s.handleStatus)
 	m.HandleFunc("GET /api/network/interfaces", s.handleNetworkInterfaces)
 	m.HandleFunc("GET /api/network/status", s.handleNetworkStatus)

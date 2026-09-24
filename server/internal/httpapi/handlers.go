@@ -124,6 +124,7 @@ func (s *Server) handleDiscovery(w http.ResponseWriter, r *http.Request) {
 			Subtitles:            strPtr("/subtitles/{id}/{index}"),
 			Poster:               strPtr("/artwork/poster/{id}"),
 			Backdrop:             strPtr("/artwork/backdrop/{id}"),
+			MovieMetadata:        strPtr("/api/movies/{id}/metadata"),
 			NetworkInterfaces:    strPtr("/api/network/interfaces"),
 			NetworkStatus:        strPtr("/api/network/status"),
 			NetworkRebind:        strPtr("/api/network/rebind"),
