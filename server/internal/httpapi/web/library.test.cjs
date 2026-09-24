@@ -14,11 +14,18 @@ function catalog(items, progress = []) {
 }
 
 const movie = (id, year, extra = {}) => ({ id, title: 'The Thing', kind: 'movie', year, format: 'mkv', ...extra });
+const librarySource = fs.readFileSync(`${__dirname}/library.js`, 'utf8');
 
 test('rail cards keep a fixed width even when titles are long', () => {
   const css = fs.readFileSync(`${__dirname}/library.css`, 'utf8');
   assert.match(css, /\.grid\.rail-mode \.card\s*\{[^}]*flex:0 0 165px;[^}]*min-width:0;/);
   assert.match(css, /\.card\s*\{\s*min-width:0;/);
+});
+
+test('Rails replaces the fallback grid and exposes complete content shelves', () => {
+  assert.match(librarySource, /data-action="browse-tab"/);
+  assert.match(librarySource, /data-action="expand-library-shelf"/);
+  assert.match(librarySource, /\$\("#grid"\)\.hidden = true;/);
 });
 
 test('playback plan plays audio inline and transcodes unsupported video', () => {

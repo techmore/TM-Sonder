@@ -632,9 +632,22 @@ body[data-library-layout="rails"] section.row h2 {
   color:var(--text); text-transform:none; letter-spacing:0; font-size:19px; margin-bottom:3px;
 }
 body[data-library-layout="rails"] .web-rail { margin-bottom:30px; }
+body[data-library-layout="rails"] .web-rail-heading {
+  display:flex; align-items:flex-start; justify-content:space-between; gap:12px; margin-bottom:12px;
+}
+body[data-library-layout="rails"] .web-rail-heading h2 { margin:0; }
 body[data-library-layout="rails"] .web-rail > p.sub {
   color:var(--muted); font-size:12.5px; margin:0 0 12px;
 }
+body[data-library-layout="rails"] .web-rail-heading p.sub {
+  color:var(--muted); font-size:12.5px; margin:3px 0 0;
+}
+body[data-library-layout="rails"] .rail-browse {
+  flex:0 0 auto; border:1px solid var(--line); border-radius:7px; padding:6px 9px;
+  background:var(--panel2); color:var(--accent); cursor:pointer; font-size:12px;
+}
+body[data-library-layout="rails"] .rail-browse:hover,
+body[data-library-layout="rails"] .rail-browse:focus-visible { border-color:var(--accent); }
 body[data-library-layout="rails"] .card .frame {
   background:linear-gradient(145deg,#334124,#11160f);
   border:1px solid var(--line); border-radius:10px;

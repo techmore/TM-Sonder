@@ -1320,6 +1320,7 @@
     let selectedMovieID = null;
     let movieDetailCollapsed = false;
     let movieShelfExpanded = false;
+    let libraryShelfLimit = 96;
     const movieMetadataByID = new Map();
     const movieMetadataLoading = new Set();
     const movieMetadataErrors = new Map();
@@ -1533,6 +1534,7 @@
 
     function setTab(tab, keepShow=false) {
       activeTab = tab;
+      libraryShelfLimit = 96;
       if (tab !== "lists") selectedListID = null;
       if (!keepShow) { openSeason = null; leaveShow(); }
       for (const b of document.querySelectorAll("#tabs button")) {
@@ -1928,25 +1930,44 @@
       if (railsActive) {
         const byUpdated = (a, b) => (progressByID.get(b.id)?.updatedAt || "")
           .localeCompare(progressByID.get(a.id)?.updatedAt || "");
-        const railStrip = (title, sub, cards) => cards.length ? `
-          <section class="web-rail"><h2>${escapeHTML(title)}</h2><p class="sub">${escapeHTML(sub)}</p>
+        const shelfHeading = (title, sub, browseTab = "") => `
+          <div class="web-rail-heading">
+            <div><h2>${escapeHTML(title)}</h2><p class="sub">${escapeHTML(sub)}</p></div>
+            ${browseTab ? `<button type="button" class="rail-browse" data-action="browse-tab" data-tab="${escapeHTML(browseTab)}">Browse all</button>` : ""}
+          </div>`;
+        const railStrip = (title, sub, cards, browseTab = "") => cards.length ? `
+          <section class="web-rail">${shelfHeading(title, sub, browseTab)}
           <div class="grid rail-mode">${cards.join("")}</div></section>` : "";
+        const fullShelf = (title, sub, cards, renderCard) => {
+          if (!cards.length) return "";
+          const shown = cards.slice(0, libraryShelfLimit);
+          const toggle = cards.length > shown.length
+            ? `<div class="catalog-more"><button type="button" data-action="expand-library-shelf">Show more · ${shown.length.toLocaleString()} of ${cards.length.toLocaleString()}</button></div>`
+            : libraryShelfLimit > 96
+              ? `<div class="catalog-more"><button type="button" data-action="collapse-library-shelf">Show less</button></div>`
+              : "";
+          return `<section class="web-rail">${shelfHeading(title, sub)}
+            <div class="catalog-shelf">${shown.map(renderCard).join("")}</div>${toggle}</section>`;
+        };
         const fresh = source => source
           .filter(i => !isWatched(progressFor(i.id), i) && !inProgress(progressFor(i.id), i))
           .sort((a, b) => (b.year || 0) - (a.year || 0) || (a.title || "").localeCompare(b.title || ""));
         const showGroups = source => buildShowGroups(new Set(source.filter(i => i.kind === "tvShow").map(i => i.id)));
+        const tabLabel = ({ documentaries:"Documentaries", audiobooks:"Audiobooks", books:"Books" })[activeTab] || "Library";
         let blocks = "";
         if (activeTab === "all") {
           const cont = visible.filter(i => inProgress(progressFor(i.id), i)).sort(byUpdated).slice(0, 12);
           const movies = visible.filter(i => i.kind === "movie").slice(0, 12);
           const shows = showGroups(visible).slice(0, 12);
+          const documentaries = visible.filter(i => i.kind === "documentary").slice(0, 12);
           const audiobooks = visible.filter(i => i.kind === "audiobook").slice(0, 12);
           const books = visible.filter(i => i.kind === "ebook").slice(0, 12);
           blocks = railStrip("Continue Watching", `${cont.length} in progress`, cont.map(cardHTML)) +
-                   railStrip("Movies", `${movies.length} in the shelf`, movies.map(cardHTML)) +
-                   railStrip("TV Shows", `${shows.length} shows in the shelf`, shows.map(showCardHTML)) +
-                   railStrip("Audiobooks", `${audiobooks.length} titles in the shelf`, audiobooks.map(cardHTML)) +
-                   railStrip("Books", `${books.length} titles in the shelf`, books.map(cardHTML));
+                   railStrip("Movies", `${movies.length} in the shelf`, movies.map(cardHTML), "movies") +
+                   railStrip("TV Shows", `${shows.length} shows in the shelf`, shows.map(showCardHTML), "tvshows") +
+                   railStrip("Documentaries", `${documentaries.length} in the shelf`, documentaries.map(cardHTML), "documentaries") +
+                   railStrip("Audiobooks", `${audiobooks.length} titles in the shelf`, audiobooks.map(cardHTML), "audiobooks") +
+                   railStrip("Books", `${books.length} titles in the shelf`, books.map(cardHTML), "books");
         } else if (activeTab === "tvshows") {
           const shows = showGroups(visible);
           const showProg = s => {
@@ -1961,19 +1982,26 @@
             .sort((a, b) => (showProg(b).prog?.updatedAt || "").localeCompare(showProg(a).prog?.updatedAt || "")).slice(0, 10);
           const unstarted = shows.filter(s => !showProg(s).started).slice(0, 12);
           blocks = railStrip("Continue Watching", `${cont.length} shows in progress`, cont.map(showCardHTML)) +
-                   railStrip("Unstarted", "nothing played yet", unstarted.map(showCardHTML));
+                   railStrip("Unstarted", "nothing played yet", unstarted.map(showCardHTML)) +
+                   fullShelf("All TV shows", `${shows.length.toLocaleString()} shows in your catalog`, shows, showCardHTML);
         } else {
           const cont = visible.filter(i => inProgress(progressFor(i.id), i)).sort(byUpdated).slice(0, 10);
           const picks = fresh(visible).slice(0, 12);
-          const continueLabel = activeTab === "audiobooks" ? "Continue Listening" : "Continue Watching";
+          const continueLabel = activeTab === "audiobooks" ? "Continue Listening" : activeTab === "books" ? "Continue Reading" : "Continue Watching";
           blocks = railStrip(continueLabel, `${cont.length} in progress`, cont.map(cardHTML)) +
-                   railStrip(activeTab === "audiobooks" ? "Up Next" : "Unwatched Picks",
-                     activeTab === "audiobooks" ? "unstarted titles from your shelves" : "newest unwatched titles",
-                     picks.map(cardHTML));
+                   railStrip(activeTab === "audiobooks" ? "Up Next" : activeTab === "books" ? "Next Reads" : "Unwatched Picks",
+                     activeTab === "audiobooks" ? "unstarted titles from your shelves" : activeTab === "books" ? "unstarted books from your shelves" : "newest unwatched titles",
+                     picks.map(cardHTML)) +
+                   fullShelf(`All ${tabLabel}`, `${visible.length.toLocaleString()} titles in your catalog`, visible, cardHTML);
         }
         if (blocks) {
           document.querySelector("#railsBlocks").innerHTML = blocks;
           railsRow.hidden = false;
+          $("#continueRow").hidden = true;
+          $("#grid").hidden = true;
+          $("#pager").hidden = true;
+          $("#seasonList").hidden = true;
+          return;
         }
       }
       const continuing = items.filter(i =>
@@ -2174,6 +2202,12 @@
       else if (act === "play-item" && btn.dataset.id) startPlaybackById(btn.dataset.id);
       else if (act === "expand-movie-shelf") { movieShelfExpanded = true; renderMovieCatalog(visibleItems()); }
       else if (act === "collapse-movie-shelf") { movieShelfExpanded = false; renderMovieCatalog(visibleItems()); }
+      else if (act === "expand-library-shelf") { libraryShelfLimit += 96; render(); }
+      else if (act === "collapse-library-shelf") { libraryShelfLimit = 96; render(); }
+      else if (act === "browse-tab" && btn.dataset.tab) {
+        const target = [...document.querySelectorAll("#tabs button[data-tab]")].find(tab => tab.dataset.tab === btn.dataset.tab);
+        target?.click();
+      }
       else if (act === "open-detail" && btn.dataset.id) openDetail(btn.dataset.id);
       else if (act === "open-show" && btn.dataset.show) openShowPage(btn.dataset.show);
       else if (act === "open-season") { openSeason = Number(btn.dataset.season); render(); syncHash(true); window.scrollTo({top:0}); }
