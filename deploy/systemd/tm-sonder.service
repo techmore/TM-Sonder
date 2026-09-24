@@ -1,0 +1,15 @@
+[Unit]
+Description=TM Sonder media server
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=%h/TM-Sonder
+ExecStart=%h/TM-Sonder/bin/sonder-linux-amd64 -config %h/.config/sonder/server.json
+Restart=on-failure
+RestartSec=5
+Environment=PATH=%h/.local/bin:/usr/local/bin:/usr/bin:/bin
+
+[Install]
+WantedBy=default.target
