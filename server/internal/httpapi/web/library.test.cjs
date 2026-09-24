@@ -46,6 +46,20 @@ test('empty media tabs are omitted from the populated navigation set', () => {
   );
 });
 
+test('movie Rails shelves prioritize in-progress titles and keep catalog groups', () => {
+  const get = catalog([
+    movie('started', 2020, { title: 'Started', durationSeconds: 3600 }),
+    movie('fresh', 2024, { title: 'Fresh', durationSeconds: 5400 }),
+    movie('epic', 2021, { title: 'Epic', durationSeconds: 9000 }),
+    movie('quick', 2022, { title: 'Quick', durationSeconds: 1800 }),
+  ], [{ id: 'started', seconds: 120, duration: 3600, updatedAt: '2026-09-24T12:00:00Z' }]);
+  assert.deepEqual(get('movieShelfGroups(items).continueWatching.map(i => i.id)'), ['started']);
+  assert.equal(get('movieSpotlight(items).id'), 'started');
+  assert.deepEqual(get('movieShelfGroups(items).featured.map(i => i.id)'), ['fresh', 'quick', 'epic']);
+  assert.deepEqual(get('movieShelfGroups(items).quick.map(i => i.id)'), ['started', 'fresh', 'quick']);
+  assert.deepEqual(get('movieShelfGroups(items).long.map(i => i.id)'), ['epic']);
+});
+
 test('quality copies group, while remakes and split parts stay distinct', () => {
   const get = catalog([
     movie('hd', 1982, { probedHeight: 1080 }), movie('uhd', 1982, { probedHeight: 2160 }),

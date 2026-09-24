@@ -967,7 +967,8 @@
       const term = $("#q").value.trim().toLowerCase();
       const watchSel = $("#watched").value;
       let list = items.filter(i => !i.isPlaceholder);
-      // Tabs are the kind filter; documentaries ride with movies elsewhere.
+      // Tabs are the kind filter; movies and documentaries remain distinct
+      // catalogs even when they share video playback behavior.
       const kindSel = kindByTab[activeTab] ?? null;
       if (kindSel) list = list.filter(i => i.kind === kindSel);
       const coverFilter = $("#coverFilter")?.value || "all";
@@ -1316,6 +1317,28 @@
     let activeTab = "all";
     let openShow = null; // show name when drilled into a TV show
     let openSeason = null;
+    let selectedMovieID = null;
+    let movieDetailCollapsed = false;
+
+    function movieShelfGroups(source) {
+      const movies = (source || []).filter(item => item.kind === "movie" && !item.isPlaceholder);
+      const byUpdated = (a, b) => (progressByID.get(b.id)?.updatedAt || "")
+        .localeCompare(progressByID.get(a.id)?.updatedAt || "");
+      const fresh = movies.filter(item => !isWatched(progressFor(item.id), item) && !inProgress(progressFor(item.id), item))
+        .sort((a, b) => (b.year || 0) - (a.year || 0) || a.title.localeCompare(b.title));
+      return {
+        continueWatching: movies.filter(item => inProgress(progressFor(item.id), item)).sort(byUpdated),
+        featured: fresh,
+        quick: movies.filter(item => item.durationSeconds > 0 && item.durationSeconds < 2 * 60 * 60),
+        long: movies.filter(item => item.durationSeconds >= 2 * 60 * 60),
+        full: movies,
+      };
+    }
+
+    function movieSpotlight(source) {
+      const groups = movieShelfGroups(source);
+      return groups.continueWatching[0] || groups.featured[0] || groups.full[0] || null;
+    }
 
     function buildShowGroups(visibleIDs = null) {
       const map = new Map();
@@ -1693,6 +1716,85 @@
       } catch (error) { alert(error.message || "Could not create list"); }
     });
 
+    function movieDetailMarkup(item) {
+      const p = progressFor(item.id);
+      const plan = playbackPlan(item);
+      const resumeAt = p && p.seconds > 5 ? p.seconds : 0;
+      const isCurrent = nowPlayingItem && nowPlayingItem.id === item.id;
+      const media = npMedia();
+      const playingNow = isCurrent && media && !media.paused;
+      const playLabel = playingNow ? "Pause" : resumeAt ? `Resume at ${formatTime(resumeAt)}` : "Play movie";
+      const title = item.title || "Untitled movie";
+      const poster = item.posterURL
+        ? `<img src="${escapeHTML(api(item.posterURL))}" alt="">`
+        : escapeHTML(title.slice(0, 1).toUpperCase() || "M");
+      const meta = [item.year || "", runtimeLabel(item), item.probedHeight ? `${item.probedWidth || "?"}×${item.probedHeight}` : ""]
+        .filter(Boolean).join(" · ");
+      const tags = (item.tags || []).slice(0, 8)
+        .map(tag => `<span class="tag">${escapeHTML(tag)}</span>`).join("");
+      const summary = [item.summary, item.subtitle].filter(Boolean)
+        .map(value => `<p class="summary">${escapeHTML(value)}</p>`).join("");
+      const progress = p && p.seconds > 5
+        ? `<p class="catalog-detail-meta">${isWatched(p, item) ? "Watched" : `Started · ${formatTime(p.seconds)}${item.durationSeconds ? ` of ${formatTime(item.durationSeconds)}` : ""}`}</p>`
+        : "";
+      return `
+        <div class="catalog-detail-hero">
+          <div class="catalog-detail-cover">${poster}</div>
+          <div>
+            <span class="pill">Movie</span>
+            <h2>${escapeHTML(title)}</h2>
+            <p class="catalog-detail-meta">${escapeHTML(meta || "Ready to watch")}</p>
+            ${progress}
+          </div>
+        </div>
+        ${plan ? `<div class="actions"><button class="primary" data-action="play-item" data-id="${escapeHTML(item.id)}">${playLabel}</button><a href="${api("/stream/" + item.id)}" target="_blank" rel="noopener">Open stream URL</a></div>` : `<div class="not-playable"><strong>.${escapeHTML(String(item.format || "?").toUpperCase())}</strong> can't play in the browser. <a href="${api("/stream/" + item.id)}" target="_blank" rel="noopener">Open in a native player</a>.</div>`}
+        ${summary || `<p class="catalog-detail-empty">No synopsis is available for this movie yet.</p>`}
+        ${tags ? `<div class="tagrow">${tags}</div>` : ""}
+        ${editionsHTML(item)}`;
+    }
+
+    function renderMovieCatalog(source) {
+      const layout = $("#movieCatalog");
+      const rails = $("#movieRails");
+      const detail = $("#movieDetailBody");
+      if (!layout || !rails || !detail) return;
+      const groups = movieShelfGroups(source);
+      const selected = groups.full.find(item => item.id === selectedMovieID) || movieSpotlight(source);
+      selectedMovieID = selected?.id || null;
+      const shelf = (title, subtitle, list, full = false) => list.length ? `
+        <section class="web-rail">
+          <h2>${escapeHTML(title)}</h2><p class="sub">${escapeHTML(subtitle)}</p>
+          <div class="${full ? "catalog-shelf" : "catalog-strip"}">${list.map(cardHTML).join("")}</div>
+        </section>` : "";
+      rails.innerHTML = shelf("Continue watching", `${groups.continueWatching.length} movies in progress`, groups.continueWatching.slice(0, 12)) +
+        shelf("Featured movies", "newest unwatched films from your shelf", groups.featured.slice(0, 18)) +
+        shelf("Quick watches", "under two hours", groups.quick.slice(0, 18)) +
+        shelf("Long-form cinema", "two hours and up", groups.long.slice(0, 18)) +
+        shelf("Full movie shelf", `${groups.full.length.toLocaleString()} movies in your catalog`, groups.full, true) +
+        (groups.full.length ? "" : `<p class="empty-state">No movies found in this catalog.</p>`);
+      detail.innerHTML = selected
+        ? movieDetailMarkup(selected)
+        : `<p class="catalog-detail-empty">Choose a movie to see its story and start watching.</p>`;
+      layout.classList.toggle("detail-collapsed", movieDetailCollapsed);
+      const toggle = $("#movieDetailToggle");
+      if (toggle) {
+        toggle.textContent = movieDetailCollapsed ? "Expand" : "Collapse";
+        toggle.setAttribute("aria-expanded", String(!movieDetailCollapsed));
+        toggle.setAttribute("aria-label", movieDetailCollapsed ? "Expand movie detail panel" : "Collapse movie detail panel");
+      }
+    }
+
+    function openMovieDetail(id) {
+      if (!items.some(item => item.id === id)) return;
+      selectedMovieID = id;
+      renderMovieCatalog(visibleItems());
+    }
+
+    function toggleMovieDetail() {
+      movieDetailCollapsed = !movieDetailCollapsed;
+      renderMovieCatalog(visibleItems());
+    }
+
     function render() {
       const storage = activeTab === "storage";
       const optimize = activeTab === "optimize";
@@ -1707,6 +1809,8 @@
       $("#grid").hidden = storage || optimize || listMode;
       $("#pager").hidden = storage || optimize || listMode;
       $("#seasonList").hidden = storage || optimize || listMode;
+      const movieCatalog = $("#movieCatalog");
+      if (movieCatalog) movieCatalog.hidden = true;
       if (storage) { renderStorage(); return; }
       if (optimize) {
         $("#continueRow").hidden = true;
@@ -1729,6 +1833,15 @@
         $("#watched").value === "all" && !openShow;
       const railsRow = $("#railsRow");
       railsRow.hidden = true;
+      if (railsActive && activeTab === "movies" && movieCatalog) {
+        $("#continueRow").hidden = true;
+        $("#grid").hidden = true;
+        $("#pager").hidden = true;
+        $("#seasonList").hidden = true;
+        renderMovieCatalog(visible);
+        movieCatalog.hidden = false;
+        return;
+      }
       if (railsActive) {
         const byUpdated = (a, b) => (progressByID.get(b.id)?.updatedAt || "")
           .localeCompare(progressByID.get(a.id)?.updatedAt || "");
@@ -1974,6 +2087,8 @@
       if (!btn) return;
       const act = btn.dataset.action;
       if (act === "scan-storage") scanStorageNow();
+      else if (act === "toggle-movie-detail") toggleMovieDetail();
+      else if (act === "play-item" && btn.dataset.id) startPlaybackById(btn.dataset.id);
       else if (act === "open-detail" && btn.dataset.id) openDetail(btn.dataset.id);
       else if (act === "open-show" && btn.dataset.show) openShowPage(btn.dataset.show);
       else if (act === "open-season") { openSeason = Number(btn.dataset.season); render(); syncHash(true); window.scrollTo({top:0}); }
@@ -2059,6 +2174,11 @@
     }
 
     function switchCopy(id) {
+      if (activeTab === "movies" && libraryLayout === "rails" && !$("#movieCatalog")?.hidden) {
+        selectedMovieID = id;
+        renderMovieCatalog(visibleItems());
+        return;
+      }
       const wasOpen = $("#detail").open;
       openDetail(id, wasOpen);
     }
@@ -2081,6 +2201,10 @@
     function openDetail(id, keepVideo) {
       const item = items.find(i => i.id === id);
       if (!item) return;
+      if (activeTab === "movies" && libraryLayout === "rails" && !$("#movieCatalog")?.hidden) {
+        openMovieDetail(id);
+        return;
+      }
       const p = progressFor(id);
       const plan = playbackPlan(item);
       const resumeAt = p && p.seconds > 5 ? p.seconds : 0;
