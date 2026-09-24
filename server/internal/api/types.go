@@ -142,14 +142,15 @@ func (m *MediaItem) EpisodeCode() string {
 }
 
 type ServerSettings struct {
-	IsEnabled       bool   `json:"isEnabled"`
-	AllowLAN        bool   `json:"allowLAN"`
-	Port            int    `json:"port"`
-	WebPort         int    `json:"webPort,omitempty"`
-	APIPort         int    `json:"apiPort,omitempty"`
-	ThemePreset     string `json:"themePreset"`
-	LibraryLayout   string `json:"libraryLayout"`
-	RequiresPairing bool   `json:"requiresPairing"`
+	IsEnabled          bool   `json:"isEnabled"`
+	AllowLAN           bool   `json:"allowLAN"`
+	Port               int    `json:"port"`
+	WebPort            int    `json:"webPort,omitempty"`
+	APIPort            int    `json:"apiPort,omitempty"`
+	ThemePreset        string `json:"themePreset"`
+	LibraryLayout      string `json:"libraryLayout"`
+	HideEmptyLibraries bool   `json:"hideEmptyLibraries"`
+	RequiresPairing    bool   `json:"requiresPairing"`
 }
 
 type MediaDirectory struct {

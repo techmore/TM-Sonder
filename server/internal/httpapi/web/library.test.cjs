@@ -34,6 +34,18 @@ test('playback plan plays audio inline and transcodes unsupported video', () => 
   assert.equal(get("playbackPlan(items[4])"), null);
 });
 
+test('empty media tabs are omitted from the populated navigation set', () => {
+  const get = catalog([
+    movie('movie', 2024),
+    { id: 'book', title: 'Book', kind: 'ebook', format: 'epub' },
+    { id: 'placeholder', title: 'Missing', kind: 'documentary', isPlaceholder: true },
+  ]);
+  assert.deepEqual(
+    get('Array.from(populatedLibraryTabs(items)).sort()'),
+    ['all', 'books', 'lists', 'movies', 'optimize', 'storage'],
+  );
+});
+
 test('quality copies group, while remakes and split parts stay distinct', () => {
   const get = catalog([
     movie('hd', 1982, { probedHeight: 1080 }), movie('uhd', 1982, { probedHeight: 2160 }),

@@ -275,6 +275,7 @@ Media items expose relative artwork URLs instead:
   "port": 8096,
   "themePreset": "earthy",
   "libraryLayout": "rails",
+  "hideEmptyLibraries": true,
   "requiresPairing": true
 }
 ```
@@ -283,6 +284,11 @@ Media items expose relative artwork URLs instead:
 shelf-based Home and library experience, while `classic` preserves the
 existing grid-first browser. The setting is also available through
 `GET/PUT /api/settings`.
+
+`hideEmptyLibraries` defaults to `true`: the web navigation hides media tabs
+whose catalog kind has no indexed items, while the configured library remains
+available in Settings. Set it to `false` to show empty tabs while configuring a
+new library.
 
 Clients must store any pairing token they were given out-of-band (Keychain). The token is never returned by the API.
 

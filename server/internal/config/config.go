@@ -29,6 +29,10 @@ const (
 	// DefaultMediaLayout is the rails browser for movies/TV ("rails");
 	// "grid" keeps the classic full-grid view.
 	DefaultMediaLayout = "rails"
+
+	// DefaultHideEmptyLibraries keeps navigation focused on populated media
+	// kinds while leaving the underlying library configuration untouched.
+	DefaultHideEmptyLibraries = true
 )
 
 var validKinds = map[string]bool{
@@ -64,28 +68,29 @@ type Config struct {
 	// Port is retained as the backwards-compatible web port key. WebPort is
 	// the preferred name for new installs; Load normalizes the two so the
 	// rest of the application can continue to expose the existing API shape.
-	Port              int       `json:"port"`
-	WebPort           int       `json:"webPort,omitempty"`
-	APIPort           int       `json:"apiPort,omitempty"`
-	DataDir           string    `json:"dataDir"`
-	Libraries         []Library `json:"libraries"`
-	AllowLAN          bool      `json:"allowLAN"`
-	PairingToken      string    `json:"pairingToken"`
-	ThemePreset       string    `json:"themePreset"`
-	LibraryLayout     string    `json:"libraryLayout"`
-	AudiobookLayout   string    `json:"audiobookLayout"`
-	MoviesLayout      string    `json:"moviesLayout"`
-	TVLayout          string    `json:"tvLayout"`
-	FFmpegPath        string    `json:"ffmpegPath"`
-	FFprobePath       string    `json:"ffprobePath"`
-	ProbeWorkers      int       `json:"probeWorkers,omitempty"`
-	ThumbWorkers      int       `json:"thumbWorkers,omitempty"`
-	SafeScan          bool      `json:"safeScan"`
-	Transcode         Transcode `json:"transcode"`
-	LogDir            string    `json:"logDir"`
-	CaddyPath         string    `json:"caddyPath,omitempty"`
-	CaddyConfigPath   string    `json:"caddyConfigPath,omitempty"`
-	CaddyLaunchdLabel string    `json:"caddyLaunchdLabel,omitempty"`
+	Port               int       `json:"port"`
+	WebPort            int       `json:"webPort,omitempty"`
+	APIPort            int       `json:"apiPort,omitempty"`
+	DataDir            string    `json:"dataDir"`
+	Libraries          []Library `json:"libraries"`
+	AllowLAN           bool      `json:"allowLAN"`
+	PairingToken       string    `json:"pairingToken"`
+	ThemePreset        string    `json:"themePreset"`
+	LibraryLayout      string    `json:"libraryLayout"`
+	HideEmptyLibraries bool      `json:"hideEmptyLibraries"`
+	AudiobookLayout    string    `json:"audiobookLayout"`
+	MoviesLayout       string    `json:"moviesLayout"`
+	TVLayout           string    `json:"tvLayout"`
+	FFmpegPath         string    `json:"ffmpegPath"`
+	FFprobePath        string    `json:"ffprobePath"`
+	ProbeWorkers       int       `json:"probeWorkers,omitempty"`
+	ThumbWorkers       int       `json:"thumbWorkers,omitempty"`
+	SafeScan           bool      `json:"safeScan"`
+	Transcode          Transcode `json:"transcode"`
+	LogDir             string    `json:"logDir"`
+	CaddyPath          string    `json:"caddyPath,omitempty"`
+	CaddyConfigPath    string    `json:"caddyConfigPath,omitempty"`
+	CaddyLaunchdLabel  string    `json:"caddyLaunchdLabel,omitempty"`
 }
 
 func Default() Config {
@@ -94,20 +99,21 @@ func Default() Config {
 		dataDir = filepath.Join(home, "Library", "Application Support", "TM-Sonder-Server")
 	}
 	return Config{
-		Port:            DefaultPort,
-		WebPort:         0,
-		APIPort:         0,
-		DataDir:         dataDir,
-		ThemePreset:     DefaultThemePreset,
-		LibraryLayout:   DefaultLibraryLayout,
-		AudiobookLayout: DefaultAudiobookLayout,
-		MoviesLayout:    DefaultMediaLayout,
-		TVLayout:        DefaultMediaLayout,
-		FFmpegPath:      "ffmpeg",
-		FFprobePath:     "ffprobe",
-		SafeScan:        true,
-		Transcode:       Transcode{MaxConcurrent: 2, HWAccel: "videotoolbox", Preset: "veryfast"},
-		LogDir:          filepath.Join(dataDir, "logs"),
+		Port:               DefaultPort,
+		WebPort:            0,
+		APIPort:            0,
+		DataDir:            dataDir,
+		ThemePreset:        DefaultThemePreset,
+		LibraryLayout:      DefaultLibraryLayout,
+		HideEmptyLibraries: DefaultHideEmptyLibraries,
+		AudiobookLayout:    DefaultAudiobookLayout,
+		MoviesLayout:       DefaultMediaLayout,
+		TVLayout:           DefaultMediaLayout,
+		FFmpegPath:         "ffmpeg",
+		FFprobePath:        "ffprobe",
+		SafeScan:           true,
+		Transcode:          Transcode{MaxConcurrent: 2, HWAccel: "videotoolbox", Preset: "veryfast"},
+		LogDir:             filepath.Join(dataDir, "logs"),
 	}
 }
 
@@ -248,6 +254,9 @@ func (c *Config) applyEnv() {
 	}
 	if v := os.Getenv("SONDER_THEME_PRESET"); v != "" {
 		c.ThemePreset = v
+	}
+	if v := os.Getenv("SONDER_HIDE_EMPTY_LIBRARIES"); v != "" {
+		c.HideEmptyLibraries = parseBool(v)
 	}
 	if v := os.Getenv("SONDER_FFMPEG_PATH"); v != "" {
 		c.FFmpegPath = v
@@ -399,6 +408,7 @@ var templateBytes = []byte(`// TM Sonder Go server configuration.
 //   SONDER_WEB_PORT, SONDER_API_PORT, SONDER_CADDY_PATH,
 //   SONDER_CADDY_CONFIG, SONDER_CADDY_LAUNCHD_LABEL,
 //   SONDER_SAFE_SCAN, SONDER_THEME_PRESET, SONDER_FFMPEG_PATH,
+//   SONDER_HIDE_EMPTY_LIBRARIES,
 //   SONDER_FFPROBE_PATH, SONDER_PROBE_WORKERS, SONDER_THUMB_WORKERS,
 //   SONDER_LOG_DIR,
 //   SONDER_TRANSCODE_MAX_CONCURRENT, SONDER_HWACCEL,
@@ -416,6 +426,7 @@ var templateBytes = []byte(`// TM Sonder Go server configuration.
   "safeScan": true,
   "themePreset": "earthy",
   "libraryLayout": "rails",
+  "hideEmptyLibraries": true,
   "ffmpegPath": "ffmpeg",
   "ffprobePath": "ffprobe",
   "probeWorkers": 0,

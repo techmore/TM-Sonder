@@ -99,6 +99,7 @@
     }
 
     let libraryLayout = "rails";
+    let hideEmptyLibraries = true;
     function applyLibraryLayout(value) {
       libraryLayout = String(value || "rails").toLowerCase() === "classic" ? "classic" : "rails";
       if (typeof document === "undefined") return;
@@ -436,6 +437,62 @@
     const kindByTab = { all:null, movies:"movie", tvshows:"tvShow",
                         documentaries:"documentary", audiobooks:"audiobook",
                         books:"ebook" };
+    const EMPTY_HIDABLE_TABS = ["movies", "tvshows", "documentaries", "audiobooks", "books"];
+
+    function populatedLibraryTabs(catalog = items) {
+      const populated = new Set(["all", "lists", "storage", "optimize"]);
+      for (const item of catalog || []) {
+        if (!item || item.isPlaceholder) continue;
+        const tab = EMPTY_HIDABLE_TABS.find(candidate => kindByTab[candidate] === item.kind);
+        if (tab) populated.add(tab);
+      }
+      return populated;
+    }
+
+    function tabIsHidden(tab) {
+      if (typeof document === "undefined") return false;
+      const button = document.querySelector(`#tabs button[data-tab="${tab}"]`);
+      return !!button?.hidden;
+    }
+
+    // Empty media kinds stay configured and available in Settings, but do not
+    // occupy the primary navigation by default. Turning the preference off
+    // restores every tab so an empty kind can still be opened while it is
+    // being configured.
+    function applyEmptyLibraryTabs() {
+      if (typeof document === "undefined") return false;
+      const populated = populatedLibraryTabs();
+      let activeTabReset = false;
+      for (const button of document.querySelectorAll("#tabs button[data-tab]")) {
+        const tab = button.dataset.tab;
+        const hide = hideEmptyLibraries && EMPTY_HIDABLE_TABS.includes(tab) && !populated.has(tab);
+        button.hidden = hide;
+        if (hide) {
+          button.setAttribute("aria-hidden", "true");
+          button.tabIndex = -1;
+          if (activeTab === tab) activeTabReset = true;
+        } else {
+          button.removeAttribute("aria-hidden");
+          button.tabIndex = 0;
+        }
+      }
+      if (activeTabReset) {
+        activeTab = "all";
+        openShow = null;
+        openSeason = null;
+        selectedListID = null;
+        currentPage = 1;
+        const back = $("#backRow");
+        if (back) back.hidden = true;
+        const seasons = $("#seasonList");
+        if (seasons) seasons.innerHTML = "";
+      }
+      for (const button of document.querySelectorAll("#tabs button")) {
+        button.classList.toggle("active", button.dataset.tab === activeTab);
+      }
+      return activeTabReset;
+    }
+
     const FACETS = [
       { key: "genres",    label: "Genres" },
       { key: "authors",   label: "Authors" },
@@ -1416,7 +1473,7 @@
         .filter(s => s !== "").map(decodeURIComponent);
       if (seg.length === 0) return false;
       const tabs = ["all", "movies", "tvshows", "documentaries", "audiobooks", "books", "lists", "storage", "optimize"];
-      const tab = tabs.includes(seg[0]) ? seg[0] : "all";
+      const tab = tabs.includes(seg[0]) && !tabIsHidden(seg[0]) ? seg[0] : "all";
       activeTab = tab;
       for (const b of document.querySelectorAll("#tabs button"))
         b.classList.toggle("active", b.dataset.tab === tab);
@@ -2100,6 +2157,7 @@
       return { etag, data: await response.json() };
     }).then(({ etag, data }) => {
       applyLibraryLayout(data.serverSettings?.libraryLayout || "rails");
+      hideEmptyLibraries = data.serverSettings?.hideEmptyLibraries !== false;
       applyTheme(data.theme?.preset || "earthy");
       items = data.items ?? [];
       (data.progress ?? []).forEach(pr => progressByID.set(pr.itemID, pr));
@@ -2107,6 +2165,7 @@
         rebuildCopyGroups();
         cacheCopyGroups(etag);
       }
+      applyEmptyLibraryTabs();
       renderFacets();
       applyHash(); // restore tab/show/page from the URL on load
       render();
@@ -2131,6 +2190,11 @@
     on("#themeSel", "change", event => applyTheme(event.target.value));
     on("#libraryLayoutSel", "change", event => {
       applyLibraryLayout(event.target.value);
+      render();
+    });
+    on("#hideEmptyLibraries", "change", event => {
+      hideEmptyLibraries = event.target.checked;
+      applyEmptyLibraryTabs();
       render();
     });
     on("#dataImportBtn", "click", () => $("#dataImportFile")?.click());
@@ -2177,6 +2241,8 @@
       try {
         settingsData = await (await fetch(api("/api/settings"))).json();
         applyLibraryLayout(settingsData.libraryLayout || "rails");
+        hideEmptyLibraries = settingsData.hideEmptyLibraries !== false;
+        applyEmptyLibraryTabs();
         applyTheme(settingsData.themePreset || "earthy");
         pendingLibs = null; // fresh server state wins over stale edits
       } catch { settingsData = null; }
@@ -2200,6 +2266,7 @@
       document.querySelector("#allowLAN").checked = !!settingsData.allowLAN;
       document.querySelector("#themeSel").value = settingsData.themePreset || "earthy";
       document.querySelector("#libraryLayoutSel").value = settingsData.libraryLayout || "rails";
+      document.querySelector("#hideEmptyLibraries").checked = settingsData.hideEmptyLibraries !== false;
       document.querySelector("#mounts").innerHTML =
         (settingsData.suggestedMounts ?? []).map(m => `<option value="${escapeHTML(m)}">`).join("");
 
@@ -2371,6 +2438,7 @@
       body.allowLAN = document.querySelector("#allowLAN").checked;
       body.themePreset = document.querySelector("#themeSel").value;
       body.libraryLayout = document.querySelector("#libraryLayoutSel").value;
+      body.hideEmptyLibraries = document.querySelector("#hideEmptyLibraries").checked;
       // Keep the older per-media keys synchronized for older clients and
       // standalone routes while the shared layout is the source of truth.
       body.audiobookLayout = body.libraryLayout;
@@ -2416,6 +2484,8 @@
       const etag = response.headers.get("ETag") || "";
       const data = await response.json();
       items = data.items ?? [];
+      hideEmptyLibraries = data.serverSettings?.hideEmptyLibraries !== false;
+      applyEmptyLibraryTabs();
       storageData = null;
       progressByID.clear();
       (data.progress ?? []).forEach(pr => progressByID.set(pr.itemID, pr));
@@ -2891,6 +2961,8 @@
         }
         settingsData = await r.json();
         applyLibraryLayout(settingsData.libraryLayout || "rails");
+        hideEmptyLibraries = settingsData.hideEmptyLibraries !== false;
+        applyEmptyLibraryTabs();
         applyTheme(settingsData.themePreset || "earthy");
         renderSettings();
         status.textContent = "Saved ✓";

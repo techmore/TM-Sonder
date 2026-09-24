@@ -20,24 +20,25 @@ import (
 // SettingsPayload is the GET/PUT shape for /api/settings. The pairing token
 // is only included when the request comes from loopback.
 type SettingsPayload struct {
-	Version         int            `json:"version"`
-	Port            int            `json:"port"`
-	WebPort         int            `json:"webPort,omitempty"`
-	APIPort         int            `json:"apiPort,omitempty"`
-	DataDir         string         `json:"dataDir"`
-	AllowLAN        bool           `json:"allowLAN"`
-	TokenConfigured bool           `json:"tokenConfigured"`
-	PairingToken    *string        `json:"pairingToken,omitempty"`
-	RequiresPairing bool           `json:"requiresPairing"`
-	ThemePreset     string         `json:"themePreset"`
-	LibraryLayout   string         `json:"libraryLayout"`
-	AudiobookLayout string         `json:"audiobookLayout"`
-	MoviesLayout    string         `json:"moviesLayout"`
-	TVLayout        string         `json:"tvLayout"`
-	HWAccel         string         `json:"hwaccel"`
-	MaxConcurrent   int            `json:"maxConcurrent"`
-	Libraries       []LibraryEntry `json:"libraries"`
-	SuggestedMounts []string       `json:"suggestedMounts"`
+	Version            int            `json:"version"`
+	Port               int            `json:"port"`
+	WebPort            int            `json:"webPort,omitempty"`
+	APIPort            int            `json:"apiPort,omitempty"`
+	DataDir            string         `json:"dataDir"`
+	AllowLAN           bool           `json:"allowLAN"`
+	TokenConfigured    bool           `json:"tokenConfigured"`
+	PairingToken       *string        `json:"pairingToken,omitempty"`
+	RequiresPairing    bool           `json:"requiresPairing"`
+	ThemePreset        string         `json:"themePreset"`
+	LibraryLayout      string         `json:"libraryLayout"`
+	HideEmptyLibraries bool           `json:"hideEmptyLibraries"`
+	AudiobookLayout    string         `json:"audiobookLayout"`
+	MoviesLayout       string         `json:"moviesLayout"`
+	TVLayout           string         `json:"tvLayout"`
+	HWAccel            string         `json:"hwaccel"`
+	MaxConcurrent      int            `json:"maxConcurrent"`
+	Libraries          []LibraryEntry `json:"libraries"`
+	SuggestedMounts    []string       `json:"suggestedMounts"`
 }
 
 type LibraryEntry struct {
@@ -59,23 +60,24 @@ func (s *Server) settingsPayload(includeToken bool) SettingsPayload {
 		})
 	}
 	p := SettingsPayload{
-		Version:         int(atomic.LoadInt64(&s.settingsVersion)),
-		Port:            webPort,
-		WebPort:         webPort,
-		APIPort:         apiPort,
-		DataDir:         s.cfg().DataDir,
-		AllowLAN:        s.cfg().AllowLAN,
-		TokenConfigured: s.cfg().PairingToken != "",
-		RequiresPairing: s.requiresPairing(),
-		ThemePreset:     s.cfg().ThemePreset,
-		LibraryLayout:   config.NormalizeLibraryLayout(s.cfg().LibraryLayout),
-		AudiobookLayout: config.NormalizeAudiobookLayout(s.cfg().AudiobookLayout),
-		MoviesLayout:    config.NormalizeMediaLayout(s.cfg().MoviesLayout),
-		TVLayout:        config.NormalizeMediaLayout(s.cfg().TVLayout),
-		HWAccel:         s.cfg().Transcode.HWAccel,
-		MaxConcurrent:   s.cfg().Transcode.MaxConcurrent,
-		Libraries:       libs,
-		SuggestedMounts: suggestedMounts(),
+		Version:            int(atomic.LoadInt64(&s.settingsVersion)),
+		Port:               webPort,
+		WebPort:            webPort,
+		APIPort:            apiPort,
+		DataDir:            s.cfg().DataDir,
+		AllowLAN:           s.cfg().AllowLAN,
+		TokenConfigured:    s.cfg().PairingToken != "",
+		RequiresPairing:    s.requiresPairing(),
+		ThemePreset:        s.cfg().ThemePreset,
+		LibraryLayout:      config.NormalizeLibraryLayout(s.cfg().LibraryLayout),
+		HideEmptyLibraries: s.cfg().HideEmptyLibraries,
+		AudiobookLayout:    config.NormalizeAudiobookLayout(s.cfg().AudiobookLayout),
+		MoviesLayout:       config.NormalizeMediaLayout(s.cfg().MoviesLayout),
+		TVLayout:           config.NormalizeMediaLayout(s.cfg().TVLayout),
+		HWAccel:            s.cfg().Transcode.HWAccel,
+		MaxConcurrent:      s.cfg().Transcode.MaxConcurrent,
+		Libraries:          libs,
+		SuggestedMounts:    suggestedMounts(),
 	}
 	if includeToken && s.cfg().PairingToken != "" {
 		t := s.cfg().PairingToken
@@ -135,13 +137,14 @@ func (s *Server) handleSettingsGet(w http.ResponseWriter, r *http.Request) {
 }
 
 type settingsUpdate struct {
-	AllowLAN        *bool           `json:"allowLAN"`
-	ThemePreset     *string         `json:"themePreset"`
-	LibraryLayout   *string         `json:"libraryLayout"`
-	AudiobookLayout *string         `json:"audiobookLayout"`
-	MoviesLayout    *string         `json:"moviesLayout"`
-	TVLayout        *string         `json:"tvLayout"`
-	Libraries       *[]LibraryEntry `json:"libraries"`
+	AllowLAN           *bool           `json:"allowLAN"`
+	ThemePreset        *string         `json:"themePreset"`
+	LibraryLayout      *string         `json:"libraryLayout"`
+	HideEmptyLibraries *bool           `json:"hideEmptyLibraries"`
+	AudiobookLayout    *string         `json:"audiobookLayout"`
+	MoviesLayout       *string         `json:"moviesLayout"`
+	TVLayout           *string         `json:"tvLayout"`
+	Libraries          *[]LibraryEntry `json:"libraries"`
 }
 
 // handleSettingsPut implements PUT/PATCH /api/settings: applies validated
@@ -211,6 +214,9 @@ func (s *Server) handleSettingsPut(w http.ResponseWriter, r *http.Request) {
 		}
 		if upd.LibraryLayout != nil {
 			next.LibraryLayout = config.NormalizeLibraryLayout(*upd.LibraryLayout)
+		}
+		if upd.HideEmptyLibraries != nil {
+			next.HideEmptyLibraries = *upd.HideEmptyLibraries
 		}
 		if upd.AudiobookLayout != nil {
 			next.AudiobookLayout = config.NormalizeAudiobookLayout(*upd.AudiobookLayout)

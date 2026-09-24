@@ -45,6 +45,9 @@ func TestSettingsGetLoopbackIncludesToken(t *testing.T) {
 	if p["libraryLayout"] != "rails" {
 		t.Errorf("default library layout = %v, want rails", p["libraryLayout"])
 	}
+	if p["hideEmptyLibraries"] != true {
+		t.Errorf("default hide empty libraries = %v, want true", p["hideEmptyLibraries"])
+	}
 }
 
 func TestSettingsPutAddsLibraryAndRescans(t *testing.T) {
@@ -113,6 +116,36 @@ func TestSettingsPutPersistsLibraryLayout(t *testing.T) {
 	}
 	if payload["libraryLayout"] != "classic" {
 		t.Errorf("response library layout = %v, want classic", payload["libraryLayout"])
+	}
+}
+
+func TestSettingsPutPersistsHideEmptyLibraries(t *testing.T) {
+	f := newFixture(t, nil)
+	path := filepath.Join(t.TempDir(), "server.json")
+	f.s.SetConfigPath(path)
+
+	req := httptest.NewRequest("PUT", "/api/settings", strings.NewReader(`{"hideEmptyLibraries":false}`))
+	req.RemoteAddr = "127.0.0.1:1111"
+	req.Host = "127.0.0.1:8797"
+	rec := httptest.NewRecorder()
+	f.s.Handler().ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status %d: %s", rec.Code, rec.Body.String())
+	}
+	if f.s.cfg().HideEmptyLibraries {
+		t.Fatal("in-memory hide empty libraries remained enabled")
+	}
+	data, err := os.ReadFile(path)
+	if err != nil || !strings.Contains(string(data), `"hideEmptyLibraries": false`) {
+		t.Fatalf("hide empty libraries not persisted: %v %s", err, data)
+	}
+
+	var payload map[string]any
+	if err := json.Unmarshal(rec.Body.Bytes(), &payload); err != nil {
+		t.Fatal(err)
+	}
+	if payload["hideEmptyLibraries"] != false {
+		t.Errorf("response hide empty libraries = %v, want false", payload["hideEmptyLibraries"])
 	}
 }
 

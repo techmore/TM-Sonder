@@ -59,14 +59,15 @@ func themeFor(preset string) api.ThemeSnapshot {
 func (s *Server) serverSettings() api.ServerSettings {
 	webPort, apiPort := s.activePorts()
 	return api.ServerSettings{
-		IsEnabled:       true,
-		AllowLAN:        s.cfg().AllowLAN,
-		Port:            webPort,
-		WebPort:         webPort,
-		APIPort:         apiPort,
-		ThemePreset:     s.cfg().ThemePreset,
-		LibraryLayout:   config.NormalizeLibraryLayout(s.cfg().LibraryLayout),
-		RequiresPairing: s.requiresPairing(),
+		IsEnabled:          true,
+		AllowLAN:           s.cfg().AllowLAN,
+		Port:               webPort,
+		WebPort:            webPort,
+		APIPort:            apiPort,
+		ThemePreset:        s.cfg().ThemePreset,
+		LibraryLayout:      config.NormalizeLibraryLayout(s.cfg().LibraryLayout),
+		HideEmptyLibraries: s.cfg().HideEmptyLibraries,
+		RequiresPairing:    s.requiresPairing(),
 	}
 }
 
