@@ -34,6 +34,10 @@ Base URL comes from `/api/discovery` as `localURL` or `lanURL`.
   Audiobookshelf `POST /login` returns `user.token`. Those tokens are accepted as a Bearer token, Jellyfin
   `Authorization: MediaBrowser ... Token="..."`, or Audiobookshelf `?api_key=...`. Compatibility discovery endpoints
   (`/System/Info/Public`, `/QuickConnect/Enabled`, `/ping`, and `/status`) remain reachable so clients can begin login.
+- An optional media-client-only compatibility pair can be supplied through the protected service environment variables
+  `SONDER_COMPAT_USERNAME` and `SONDER_COMPAT_PASSWORD`. It is accepted only by the Jellyfin/Audiobookshelf login
+  endpoints and issues the same scoped session token; it is not accepted by browser account login. Do not use a weak
+  pair when the server is reachable from the public internet.
 - Sessions are random, expire after 30 days, and are persisted with the account file so a normal service restart or upgrade
   does not force every client to sign in again. Passwords are never stored in plaintext.
 

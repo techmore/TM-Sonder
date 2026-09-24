@@ -1,6 +1,7 @@
 package httpapi
 
 import (
+	"crypto/subtle"
 	"encoding/json"
 	"html"
 	"io"
@@ -73,7 +74,17 @@ func (s *Server) issueAccountSession(username, password string) (string, time.Ti
 	}
 	username = strings.TrimSpace(username)
 	if err := s.accounts.Authenticate(username, password); err != nil {
-		return "", time.Time{}, err
+		// Media-server clients often keep their server definition but ask for
+		// credentials again after a token reset. An optional, environment-only
+		// compatibility pair gives BookPlayer/Audiobookshelf a stable login
+		// without weakening browser or private-API authentication.
+		cfg := s.cfg()
+		if cfg.CompatibilityUsername == "" ||
+			subtle.ConstantTimeCompare([]byte(username), []byte(cfg.CompatibilityUsername)) != 1 ||
+			subtle.ConstantTimeCompare([]byte(password), []byte(cfg.CompatibilityPassword)) != 1 {
+			return "", time.Time{}, err
+		}
+		username = s.accounts.Username()
 	}
 	return s.accounts.CreateSession(username)
 }

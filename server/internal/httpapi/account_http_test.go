@@ -130,6 +130,58 @@ func TestAccountSetupLoginAndCompatibilitySessions(t *testing.T) {
 	}
 }
 
+func TestCompatibilityCredentialAliasOnlyAppliesToMediaServerLogin(t *testing.T) {
+	f := newFixture(t, func(cfg *config.Config) {
+		cfg.AllowLAN = true
+		cfg.PairingToken = "pair-me"
+		cfg.CompatibilityUsername = "sonder"
+		cfg.CompatibilityPassword = "sonder"
+	})
+	if err := f.s.accounts.Setup("owner", "a-long-test-password"); err != nil {
+		t.Fatal(err)
+	}
+
+	login := httptest.NewRequest(http.MethodPost, "/Users/AuthenticateByName", strings.NewReader(`{"Username":"sonder","Pw":"sonder"}`))
+	login.RemoteAddr = "192.168.3.50:50123"
+	login.Host = "sonder.example:8096"
+	login.Header.Set("Content-Type", "application/json")
+	loginRec := httptest.NewRecorder()
+	f.s.Handler().ServeHTTP(loginRec, login)
+	if loginRec.Code != http.StatusOK {
+		t.Fatalf("compatibility alias status = %d, body=%s", loginRec.Code, loginRec.Body.String())
+	}
+	var result struct {
+		AccessToken string `json:"AccessToken"`
+	}
+	if err := json.Unmarshal(loginRec.Body.Bytes(), &result); err != nil {
+		t.Fatal(err)
+	}
+	if result.AccessToken == "" {
+		t.Fatal("compatibility alias returned an empty access token")
+	}
+
+	items := httptest.NewRequest(http.MethodGet, "/Items?Limit=1", nil)
+	items.RemoteAddr = login.RemoteAddr
+	items.Host = login.Host
+	items.Header.Set("Authorization", `MediaBrowser Client="BookPlayer", Token="`+result.AccessToken+`"`)
+	itemsRec := httptest.NewRecorder()
+	f.s.Handler().ServeHTTP(itemsRec, items)
+	if itemsRec.Code != http.StatusOK {
+		t.Fatalf("compatibility alias token status = %d, body=%s", itemsRec.Code, itemsRec.Body.String())
+	}
+
+	// The alias is deliberately not a browser/private-API password.
+	browser := httptest.NewRequest(http.MethodPost, "/api/auth/login", strings.NewReader(`{"username":"sonder","password":"sonder"}`))
+	browser.RemoteAddr = login.RemoteAddr
+	browser.Host = login.Host
+	browser.Header.Set("Content-Type", "application/json")
+	browserRec := httptest.NewRecorder()
+	f.s.Handler().ServeHTTP(browserRec, browser)
+	if browserRec.Code != http.StatusUnauthorized {
+		t.Fatalf("compatibility alias unexpectedly authenticated browser login: %d", browserRec.Code)
+	}
+}
+
 func TestRemoteBrowserPageRedirectsToLogin(t *testing.T) {
 	f := newFixture(t, func(cfg *config.Config) {
 		cfg.AllowLAN = true

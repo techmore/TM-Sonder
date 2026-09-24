@@ -68,29 +68,34 @@ type Config struct {
 	// Port is retained as the backwards-compatible web port key. WebPort is
 	// the preferred name for new installs; Load normalizes the two so the
 	// rest of the application can continue to expose the existing API shape.
-	Port               int       `json:"port"`
-	WebPort            int       `json:"webPort,omitempty"`
-	APIPort            int       `json:"apiPort,omitempty"`
-	DataDir            string    `json:"dataDir"`
-	Libraries          []Library `json:"libraries"`
-	AllowLAN           bool      `json:"allowLAN"`
-	PairingToken       string    `json:"pairingToken"`
-	ThemePreset        string    `json:"themePreset"`
-	LibraryLayout      string    `json:"libraryLayout"`
-	HideEmptyLibraries bool      `json:"hideEmptyLibraries"`
-	AudiobookLayout    string    `json:"audiobookLayout"`
-	MoviesLayout       string    `json:"moviesLayout"`
-	TVLayout           string    `json:"tvLayout"`
-	FFmpegPath         string    `json:"ffmpegPath"`
-	FFprobePath        string    `json:"ffprobePath"`
-	ProbeWorkers       int       `json:"probeWorkers,omitempty"`
-	ThumbWorkers       int       `json:"thumbWorkers,omitempty"`
-	SafeScan           bool      `json:"safeScan"`
-	Transcode          Transcode `json:"transcode"`
-	LogDir             string    `json:"logDir"`
-	CaddyPath          string    `json:"caddyPath,omitempty"`
-	CaddyConfigPath    string    `json:"caddyConfigPath,omitempty"`
-	CaddyLaunchdLabel  string    `json:"caddyLaunchdLabel,omitempty"`
+	Port         int       `json:"port"`
+	WebPort      int       `json:"webPort,omitempty"`
+	APIPort      int       `json:"apiPort,omitempty"`
+	DataDir      string    `json:"dataDir"`
+	Libraries    []Library `json:"libraries"`
+	AllowLAN     bool      `json:"allowLAN"`
+	PairingToken string    `json:"pairingToken"`
+	// CompatibilityUsername and CompatibilityPassword are intentionally
+	// environment-only. They provide a stable login pair for media clients
+	// such as BookPlayer without writing a plaintext password to server.json.
+	CompatibilityUsername string    `json:"-"`
+	CompatibilityPassword string    `json:"-"`
+	ThemePreset           string    `json:"themePreset"`
+	LibraryLayout         string    `json:"libraryLayout"`
+	HideEmptyLibraries    bool      `json:"hideEmptyLibraries"`
+	AudiobookLayout       string    `json:"audiobookLayout"`
+	MoviesLayout          string    `json:"moviesLayout"`
+	TVLayout              string    `json:"tvLayout"`
+	FFmpegPath            string    `json:"ffmpegPath"`
+	FFprobePath           string    `json:"ffprobePath"`
+	ProbeWorkers          int       `json:"probeWorkers,omitempty"`
+	ThumbWorkers          int       `json:"thumbWorkers,omitempty"`
+	SafeScan              bool      `json:"safeScan"`
+	Transcode             Transcode `json:"transcode"`
+	LogDir                string    `json:"logDir"`
+	CaddyPath             string    `json:"caddyPath,omitempty"`
+	CaddyConfigPath       string    `json:"caddyConfigPath,omitempty"`
+	CaddyLaunchdLabel     string    `json:"caddyLaunchdLabel,omitempty"`
 }
 
 func Default() Config {
@@ -252,6 +257,12 @@ func (c *Config) applyEnv() {
 	if v := os.Getenv("SONDER_TOKEN"); v != "" {
 		c.PairingToken = v
 	}
+	if v := os.Getenv("SONDER_COMPAT_USERNAME"); v != "" {
+		c.CompatibilityUsername = v
+	}
+	if v := os.Getenv("SONDER_COMPAT_PASSWORD"); v != "" {
+		c.CompatibilityPassword = v
+	}
 	if v := os.Getenv("SONDER_THEME_PRESET"); v != "" {
 		c.ThemePreset = v
 	}
@@ -360,6 +371,9 @@ func (c *Config) validate() error {
 	if c.DataDir == "" {
 		return fmt.Errorf("config: dataDir is required")
 	}
+	if (c.CompatibilityUsername == "") != (c.CompatibilityPassword == "") {
+		return fmt.Errorf("config: SONDER_COMPAT_USERNAME and SONDER_COMPAT_PASSWORD must be set together")
+	}
 	for i, lib := range c.Libraries {
 		if !validKinds[lib.Kind] {
 			return fmt.Errorf("config: libraries[%d] (%q) has invalid kind %q", i, lib.Name, lib.Kind)
@@ -405,6 +419,7 @@ var templateBytes = []byte(`// TM Sonder Go server configuration.
 //
 // Environment overrides (highest precedence):
 //   SONDER_PORT, SONDER_DATA_DIR, SONDER_ALLOW_LAN, SONDER_TOKEN,
+//   SONDER_COMPAT_USERNAME, SONDER_COMPAT_PASSWORD,
 //   SONDER_WEB_PORT, SONDER_API_PORT, SONDER_CADDY_PATH,
 //   SONDER_CADDY_CONFIG, SONDER_CADDY_LAUNCHD_LABEL,
 //   SONDER_SAFE_SCAN, SONDER_THEME_PRESET, SONDER_FFMPEG_PATH,

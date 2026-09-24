@@ -64,6 +64,12 @@ without binding the API process or catalog storage to the network. The first
 browser account is created once from `/account/setup?token=<pairing-token>`;
 after that, browsers use an HTTP-only session cookie and Jellyfin/Audiobookshelf
 clients authenticate with the same account and receive a session token.
+For a dedicated BookPlayer/Audiobookshelf login, the service may also set the
+environment-only `SONDER_COMPAT_USERNAME` and `SONDER_COMPAT_PASSWORD`; these
+are accepted only by the compatibility login endpoints and never written to
+`server.json`.
+The systemd install includes an optional protected environment file at
+`~/.config/sonder/bookplayer.env` for this purpose.
 
 ### Operations
 
