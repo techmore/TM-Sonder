@@ -1319,6 +1319,7 @@
     let openSeason = null;
     let selectedMovieID = null;
     let movieDetailCollapsed = false;
+    let movieShelfExpanded = false;
 
     function movieShelfGroups(source) {
       const movies = (source || []).filter(item => item.kind === "movie" && !item.isPlaceholder);
@@ -1766,11 +1767,18 @@
           <h2>${escapeHTML(title)}</h2><p class="sub">${escapeHTML(subtitle)}</p>
           <div class="${full ? "catalog-shelf" : "catalog-strip"}">${list.map(cardHTML).join("")}</div>
         </section>` : "";
+      const fullShelf = movieShelfExpanded ? groups.full : groups.full.slice(0, 96);
+      const fullShelfToggle = groups.full.length > fullShelf.length
+        ? `<div class="catalog-more"><button type="button" data-action="expand-movie-shelf">Show all ${groups.full.length.toLocaleString()} movies</button></div>`
+        : movieShelfExpanded && groups.full.length > 96
+          ? `<div class="catalog-more"><button type="button" data-action="collapse-movie-shelf">Show a faster shelf</button></div>`
+          : "";
       rails.innerHTML = shelf("Continue watching", `${groups.continueWatching.length} movies in progress`, groups.continueWatching.slice(0, 12)) +
         shelf("Featured movies", "newest unwatched films from your shelf", groups.featured.slice(0, 18)) +
         shelf("Quick watches", "under two hours", groups.quick.slice(0, 18)) +
         shelf("Long-form cinema", "two hours and up", groups.long.slice(0, 18)) +
-        shelf("Full movie shelf", `${groups.full.length.toLocaleString()} movies in your catalog`, groups.full, true) +
+        shelf("Full movie shelf", `${groups.full.length.toLocaleString()} movies in your catalog`, fullShelf, true) +
+        fullShelfToggle +
         (groups.full.length ? "" : `<p class="empty-state">No movies found in this catalog.</p>`);
       detail.innerHTML = selected
         ? movieDetailMarkup(selected)
@@ -2089,6 +2097,8 @@
       if (act === "scan-storage") scanStorageNow();
       else if (act === "toggle-movie-detail") toggleMovieDetail();
       else if (act === "play-item" && btn.dataset.id) startPlaybackById(btn.dataset.id);
+      else if (act === "expand-movie-shelf") { movieShelfExpanded = true; renderMovieCatalog(visibleItems()); }
+      else if (act === "collapse-movie-shelf") { movieShelfExpanded = false; renderMovieCatalog(visibleItems()); }
       else if (act === "open-detail" && btn.dataset.id) openDetail(btn.dataset.id);
       else if (act === "open-show" && btn.dataset.show) openShowPage(btn.dataset.show);
       else if (act === "open-season") { openSeason = Number(btn.dataset.season); render(); syncHash(true); window.scrollTo({top:0}); }
