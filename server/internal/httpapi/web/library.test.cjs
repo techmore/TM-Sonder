@@ -15,6 +15,12 @@ function catalog(items, progress = []) {
 
 const movie = (id, year, extra = {}) => ({ id, title: 'The Thing', kind: 'movie', year, format: 'mkv', ...extra });
 
+test('rail cards keep a fixed width even when titles are long', () => {
+  const css = fs.readFileSync(`${__dirname}/library.css`, 'utf8');
+  assert.match(css, /\.grid\.rail-mode \.card\s*\{[^}]*flex:0 0 165px;[^}]*min-width:0;/);
+  assert.match(css, /\.card\s*\{\s*min-width:0;/);
+});
+
 test('playback plan plays audio inline and transcodes unsupported video', () => {
   const get = catalog([
     { id: 'm4b', kind: 'audiobook', format: 'm4b' },

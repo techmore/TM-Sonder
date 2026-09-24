@@ -33,7 +33,7 @@
       gap:16px; padding:18px 22px 40px;
     }
     .grid.rail-mode { display:flex; overflow-x:auto; padding-top:4px; }
-    .grid.rail-mode .card { flex:0 0 165px; }
+    .grid.rail-mode .card { flex:0 0 165px; min-width:0; }
 
     /* Rails catalog view: shelves stay browseable on the left while the
        selected title remains visible as an invitation to start consuming. */
@@ -128,7 +128,7 @@
     .catalog-layout.detail-collapsed .catalog-detail-head button { writing-mode:vertical-rl; padding:9px 6px; }
 
     .card {
-      background:none; border:0; padding:0; text-align:left; cursor:pointer;
+      min-width:0; background:none; border:0; padding:0; text-align:left; cursor:pointer;
       color:var(--text); border-radius:var(--radius); position:relative;
     }
     .card .frame {
