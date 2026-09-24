@@ -1036,6 +1036,18 @@
     function foldDiacritics(s) {
       return s.normalize("NFD").replace(/[\u0300-\u036f]/g, "");
     }
+    function movieSplitPart(i) {
+      if (i.splitPart) return String(i.splitPart).toLowerCase();
+      if (i.kind !== "movie" && i.kind !== "documentary") return "";
+      const title = String(i.title || "").toLowerCase();
+      let m = title.match(/\b(?:part|pt)\s*([ivxlcdm]+|\d+)\b/i);
+      if (m) return "part" + m[1].toLowerCase();
+      m = title.match(/(?:\b|[^a-z0-9])\(?(\d+)of\d+\)?\s*$/i);
+      if (m) return "part" + m[1];
+      m = title.match(/(?:^|[\s._-])(cd|disc|disk|dvd)(\d+)\s*$/i);
+      if (m) return m[1].toLowerCase() + m[2];
+      return "";
+    }
     function copyKey(i) {
       // Episode titles recur across shows and seasons (especially "Pilot").
       if (i.kind === "tvShow" && i.showTitle && i.seasonNumber != null && i.episodeNumber != null) {
@@ -1045,11 +1057,11 @@
       let t = foldDiacritics(i.title || "").toLowerCase();
       t = t.replace(/\b\d{3,4}\s*p\b/gi, "")           // resolution hints
            .replace(/[\[\(\{][^\]\)\}]*[\]\)\}]/g, "")  // any (...) [...] {...} tag group
-           .replace(/(?:bluray|webrip|web[- ]?dl|hdtv|hdrip|dvdrip|bdrip|brrip|remux|x265|x264|hevc|h264|10bit|8bit|aac|ddp5|yify|rarbg|mkvcage|s4filmes|proper|repack|unrated)\b/gi, "")
+           .replace(/(?:bluray|webrip|web[- ]?dl|hdtv|hdrip|dvdrip|bdrip|brrip|remux|x265|x264|xvid|hevc|h264|divx|mpeg[- ]?4|10bit|8bit|aac|ddp5|yify|rarbg|mkvcage|s4filmes|proper|repack|unrated)\b/gi, "")
            .replace(/\b(dual|multi|subs?|ws)\b/gi, "")
            .replace(/\bv\d+\b/gi, "")                   // V2 / v3 re-encode tags
            .replace(/[^a-z0-9]+/g, "");
-      return [i.kind, t, i.year || 0, i.splitPart || "", i.kind === "tvShow" ? (i.showGroupID || i.showTitle || i.id) : "", i.kind === "tvShow" ? (i.seasonNumber ?? "unknown") : ""].join("\u0000");
+      return [i.kind, t, i.year || 0, movieSplitPart(i), i.kind === "tvShow" ? (i.showGroupID || i.showTitle || i.id) : "", i.kind === "tvShow" ? (i.seasonNumber ?? "unknown") : ""].join("\u0000");
     }
     // Near-duplicate folding: typos ("007 Jame" vs "007 James"), junk tails
     // ("-1", " a", "-cd1", "800MB"), diacritics (Nausicaa/Nausicaä), and
@@ -1068,14 +1080,27 @@
       return 2 * inter / (A.size + B.size);
     }
     const FUZZ_MIN = 0.85;
+    function externalMediaKey(i) {
+      if (i.kind !== "movie" && i.kind !== "documentary") return "";
+      const source = String(i.metadataIDSource || "").trim().toLowerCase();
+      const id = String(i.metadataID || "").trim().toLowerCase();
+      if (!source || !id) return "";
+      // Keep split/disc files separate even when the provider ID is shared.
+      return [source, id, movieSplitPart(i)].join("\u0000");
+    }
+    function copyTitle(k) {
+      return k.split("\u0000")[0];
+    }
     function numTail(k) {
-      const m = k.match(/(\d+|[ivxl]{1,5})$/);
+      const m = copyTitle(k).match(/(\d+|[ivxl]{1,5})$/);
       return m ? m[1] : null;
     }
     function isPluralPair(a, b) {
       // Word-boundary plural: "predator"/"predators". Only when the shorter
       // ends at a whole-token boundary of the longer and the extra letters
       // are just an s/es tail.
+      a = copyTitle(a);
+      b = copyTitle(b);
       const short = a.length <= b.length ? a : b;
       const long = a.length <= b.length ? b : a;
       return long.startsWith(short) && /^(?:es|s)$/.test(long.slice(short.length));
@@ -1089,6 +1114,11 @@
       "featurette", "bloopers", "outtakes", "gagreeel",
       "interview", "interviews", "commentary",
     ]);
+    const GENERIC_EXTRA_PREFIXES = ["storyboardcomparison"];
+    function isGenericExtra(k) {
+      const title = k.split("\u0000")[1] || "";
+      return GENERIC_EXTRAS.has(title) || GENERIC_EXTRA_PREFIXES.some(prefix => title.startsWith(prefix));
+    }
     function rebuildCopyGroups() {
       copyGroups = new Map();
       const extrasGroups = new Map();  // generic bonus-feature titles: never merged
@@ -1101,7 +1131,7 @@
           if (!years) { years = new Set(); yearsByKey.set(k, years); }
           years.add(i.year);
         }
-        if (GENERIC_EXTRAS.has(k.split("\u0000")[1])) {
+        if (isGenericExtra(k)) {
           // "Trailer" / "Deleted Scenes" from different films share a key but
           // are different content — one card per item.
           const solo = k + "\u0000" + i.id;
@@ -1148,6 +1178,22 @@
           .filter(t => !extrasGroups.has(kind + "\u0000" + t))
           .sort();
         for (const k of keys) parent.set(k, k);
+        // A provider ID is authoritative for movies/documentaries. This also
+        // joins a correctly tagged copy to a differently named copy of the
+        // same title, while preserving separate split/disc parts.
+        const externalRoots = new Map();
+        for (const k of keys) {
+          const group = copyGroups.get(kind + "\u0000" + k);
+          const external = externalMediaKey(group?.[0]);
+          if (!external) continue;
+          const first = externalRoots.get(external);
+          if (first && first !== k) {
+            const ra = find(first), rb = find(k);
+            if (ra !== rb) parent.set(rb, ra);
+          } else {
+            externalRoots.set(external, k);
+          }
+        }
         for (let i = 0; i < keys.length; i++) {
           for (let j = i + 1; j < Math.min(i + 6, keys.length); j++) {
             const a = keys[i], b = keys[j];

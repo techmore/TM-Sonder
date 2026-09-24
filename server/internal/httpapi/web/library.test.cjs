@@ -82,6 +82,36 @@ test('quality copies group, while remakes and split parts stay distinct', () => 
   assert.deepEqual(get('copiesOf(items[0]).map(i => i.id)'), ['uhd', 'hd']);
 });
 
+test('codec suffixes do not create a second movie card', () => {
+  const get = catalog([
+    { id: 'blade-runner', title: 'Blade Runner', year: 2049, kind: 'movie', probedHeight: 800, format: 'mkv' },
+    { id: 'blade-runner-xvid', title: 'Blade Runner XviD', year: 2049, kind: 'movie', format: 'mkv' },
+  ]);
+  assert.equal(get('copyGroups.size'), 1);
+  assert.deepEqual(get('copiesOf(items[0]).map(i => i.id)'), ['blade-runner', 'blade-runner-xvid']);
+});
+
+test('shared movie metadata IDs join alternate titles and release labels', () => {
+  const get = catalog([
+    { id: 'tagged', title: 'The Matrix', year: 1999, kind: 'movie', metadataIDSource: 'imdb', metadataID: 'tt0133093' },
+    { id: 'renamed', title: 'Matrix XviD', year: 1999, kind: 'movie', metadataIDSource: 'imdb', metadataID: 'TT0133093' },
+  ]);
+  assert.equal(get('copyGroups.size'), 1);
+  assert.equal(get('copiesOf(items[0]).length'), 2);
+});
+
+test('sequel numbers, split parts, and comparison extras stay separate', () => {
+  const get = catalog([
+    { id: 'predator', title: 'Predator', year: 1987, kind: 'movie' },
+    { id: 'predator-2', title: 'Predator 2', year: 1987, kind: 'movie' },
+    { id: 'merlin-1', title: 'Merlin Part I', year: 1998, kind: 'movie' },
+    { id: 'merlin-2', title: 'Merlin Part II', year: 1998, kind: 'movie' },
+    { id: 'parade', title: 'Storyboard Comparisons - The Parade Scene', kind: 'movie' },
+    { id: 'ruins', title: 'Storyboard Comparisons - The Ruins Scene', kind: 'movie' },
+  ]);
+  assert.equal(get('copyGroups.size'), 6);
+});
+
 test('resume position takes priority over resolution', () => {
   const get = catalog([movie('hd', 1982, { probedHeight: 1080 }), movie('uhd', 1982, { probedHeight: 2160 })],
     [{ id: 'hd', seconds: 100, duration: 1000 }]);

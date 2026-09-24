@@ -74,7 +74,7 @@ func uuidV5(ns [16]byte, name string) string {
 // (IDs are path-derived, so progress and item identity survive the rebuild),
 // which propagates parsing fixes to already-cataloged libraries without a
 // full wipe.
-const ParserVersion = 8
+const ParserVersion = 9
 
 // Parsed is the ported result of SonderMediaParser.parseTitle. Kind is chosen
 // by the scanner from library config + extension, not by the parser.
@@ -120,6 +120,10 @@ var (
 	// Quality tail: from the first resolution token (1080p/720p/480p...) to
 	// the end — e.g. " Show S04 E18 Extended 1080p Bluray AAC" -> " Show S04 E18 Extended".
 	reTrailingQuality = regexp.MustCompile(`(?i)[\s._-]*\b(?:480p|576p|720p|1080p|2160p|4k)\b[\s\S]*$`)
+	// Some Plex/movie-folder exports put the codec in the displayed title when
+	// there is no resolution marker, e.g. "Blade Runner XviD". It describes
+	// the source, not the movie, so remove it before catalog identity is built.
+	reTrailingCodec = regexp.MustCompile(`(?i)[\s._-]+(?:xvid|divx|mpeg[- ]?4)$`)
 	// Release chain: resolution token followed by MORE junk tokens before the
 	// string ends ("1080p Bluray AAC 5.1 x265-GRP") — a release chain, not a
 	// lone quality suffix. Matched where used in cleanEpisodeTitle.
@@ -187,13 +191,22 @@ func movieNameAndYear(s string) (string, int, bool) {
 	}
 	title := reYearParen.ReplaceAllString(s, "")
 	title = reYearBare.ReplaceAllString(title, "")
-	title = removePlexTags(title)
-	title = removeSplitSuffix(title)
-	title = cleanMediaTitle(title)
+	title = cleanMovieTitle(title)
 	if title == "" {
-		title = cleanMediaTitle(s)
+		title = cleanMovieTitle(s)
 	}
 	return title, year, true
+}
+
+// cleanMovieTitle removes the common source/codec metadata that Plex can
+// expose as part of a movie's title. Keep this conservative: the title is
+// still allowed to contain ordinary words, years, and edition names.
+func cleanMovieTitle(s string) string {
+	s = removePlexTags(s)
+	s = removeSplitSuffix(s)
+	s = reTrailingQuality.ReplaceAllString(s, "")
+	s = reTrailingCodec.ReplaceAllString(s, "")
+	return cleanMediaTitle(s)
 }
 
 func extractMetadataTag(s string) (source, id string) {
@@ -421,6 +434,14 @@ func ParseFilename(path, libraryKind string) Parsed {
 		if fileHasYear {
 			return simpleParsed(fileTitle, "Movie - "+strconv.Itoa(fileYear), fileYear, metadataSource, metadataID, edition, splitPart)
 		}
+		// A flat movie file may not contain a year, but can still contain a
+		// source tag such as "Blade Runner XviD". Normalize that tag so it
+		// remains one movie identity in the catalog.
+		title := cleanMovieTitle(raw)
+		if title == "" {
+			title = raw
+		}
+		return simpleParsed(title, "Movie", 0, metadataSource, metadataID, edition, splitPart)
 	case "documentary":
 		sub := "Documentary"
 		year := fileYear

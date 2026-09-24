@@ -123,6 +123,11 @@ func TestParseFilenameMovieAndTags(t *testing.T) {
 	if p2.SplitPart != "part1" {
 		t.Errorf("splitPart = %q", p2.SplitPart)
 	}
+
+	p3 := ParseFilename("/movies/Blade Runner XviD.mkv", "movie")
+	if p3.Title != "Blade Runner" {
+		t.Errorf("codec suffix title = %q, want %q", p3.Title, "Blade Runner")
+	}
 }
 
 func TestParseFilenameBooks(t *testing.T) {
