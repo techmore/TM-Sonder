@@ -1353,7 +1353,7 @@
     let openShow = null; // show name when drilled into a TV show
     let openSeason = null;
     let selectedMovieID = null;
-    let movieDetailCollapsed = false;
+    let movieDetailCollapsed = true;
     let movieShelfExpanded = false;
     let libraryShelfLimit = 96;
     const movieMetadataByID = new Map();
@@ -1910,6 +1910,7 @@
     function openMovieDetail(id) {
       if (!items.some(item => item.id === id)) return;
       selectedMovieID = id;
+      movieDetailCollapsed = false;
       renderMovieCatalog(visibleItems());
     }
 

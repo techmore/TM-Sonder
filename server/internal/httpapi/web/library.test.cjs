@@ -28,6 +28,8 @@ test('library shows its version and keeps audiobook layout in Settings', () => {
   assert.match(libraryHTML, /<svg[^>]+class="size-6"/);
   assert.doesNotMatch(libraryHTML, /id="layoutBadge"|class="layout-badge"/);
   assert.doesNotMatch(libraryHTML, /data-tab="lists"/);
+  assert.match(libraryHTML, /id="movieCatalog" class="catalog-layout detail-collapsed"/);
+  assert.match(libraryHTML, /id="movieDetailToggle"[^>]+aria-expanded="false">Expand/);
   assert.match(libraryHTML, /id="pager"[\s\S]*id="listsPanel"/);
   assert.doesNotMatch(libraryHTML, /id="audiobookPlayerLink"/);
   assert.match(librarySource, /body\.audiobookLayout = document\.querySelector\("#audiobookLayoutSel"\)\.value/);
@@ -88,6 +90,11 @@ test('movie Rails shelves prioritize in-progress titles and keep catalog groups'
   assert.deepEqual(get('movieShelfGroups(items).featured.map(i => i.id)'), ['fresh', 'quick', 'epic']);
   assert.deepEqual(get('movieShelfGroups(items).quick.map(i => i.id)'), ['started', 'fresh', 'quick']);
   assert.deepEqual(get('movieShelfGroups(items).long.map(i => i.id)'), ['epic']);
+});
+
+test('movie detail starts collapsed and opens when a title is selected', () => {
+  assert.match(librarySource, /let movieDetailCollapsed = true;/);
+  assert.match(librarySource, /selectedMovieID = id;\n\s+movieDetailCollapsed = false;/);
 });
 
 test('quality copies group, while remakes and split parts stay distinct', () => {
