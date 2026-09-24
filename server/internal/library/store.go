@@ -290,11 +290,14 @@ func (s *Store) Items() []api.MediaItem {
 	out := make([]api.MediaItem, len(internal))
 	for i, it := range internal {
 		out[i] = it.MediaItem
-		// Generated video frames are previews, not portrait cover artwork.
-		// Keep their files internally for previews/enrichment, but do not
-		// present them as movie/show posters in the catalog.
-		if it.PosterSource == "thumbnail" && (it.Kind == api.KindMovie || it.Kind == api.KindTVShow || it.Kind == api.KindDocumentary) {
-			out[i].PosterURL = nil
+		// Every movie gets a stable poster endpoint. The endpoint serves the
+		// discovered artwork when available, falls back to a relocated
+		// generated frame, and finally uses a title placeholder. This keeps
+		// movie cards visually complete while still allowing official/local
+		// artwork to take precedence.
+		if out[i].Kind == api.KindMovie && out[i].PosterURL == nil {
+			u := "/artwork/poster/" + out[i].ID
+			out[i].PosterURL = &u
 		}
 	}
 	return out

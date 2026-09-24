@@ -42,12 +42,12 @@ func TestStructuredSeasonUsesConsistentShowName(t *testing.T) {
 	}
 }
 
-func TestCatalogDoesNotPresentVideoFrameAsPoster(t *testing.T) {
+func TestCatalogUsesStableMoviePosterEndpoint(t *testing.T) {
 	store := New()
 	frame := "/artwork/poster/movie"
 	store.Upsert(&Item{MediaItem: api.MediaItem{ID: "movie", Kind: api.KindMovie, PosterURL: &frame}, PosterSource: "thumbnail"})
-	if store.Items()[0].PosterURL != nil {
-		t.Fatal("video frame exposed as cover")
+	if got := store.Items()[0].PosterURL; got == nil || *got != "/artwork/poster/movie" {
+		t.Fatalf("movie poster endpoint = %v, want /artwork/poster/movie", got)
 	}
 	original, _ := store.Get("movie")
 	if original.PosterURL == nil {
@@ -55,8 +55,8 @@ func TestCatalogDoesNotPresentVideoFrameAsPoster(t *testing.T) {
 	}
 	original.PosterSource = "local"
 	store.Upsert(original)
-	if store.Items()[0].PosterURL == nil {
-		t.Fatal("local cover hidden")
+	if got := store.Items()[0].PosterURL; got == nil || *got != "/artwork/poster/movie" {
+		t.Fatalf("local cover endpoint = %v, want /artwork/poster/movie", got)
 	}
 }
 

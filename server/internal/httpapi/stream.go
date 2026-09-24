@@ -230,7 +230,44 @@ func (s *Server) handlePoster(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusNotFound, "Artwork not found")
 		return
 	}
-	s.serveArtwork(w, r, item.PosterPath)
+
+	// Catalogs imported from another host can retain the old absolute
+	// artwork path while the image itself was copied into this data dir.
+	// Prefer the recorded path, then resolve the standard generated-artwork
+	// location by stable item ID.
+	path := item.PosterPath
+	if path == "" || !fileExists(path) {
+		path = filepath.Join(s.cfg().DataDir, "artwork", item.ID+".jpg")
+	}
+	if fileExists(path) {
+		s.serveArtwork(w, r, path)
+		return
+	}
+	if item.Kind == "movie" {
+		s.serveMoviePlaceholder(w, r, item)
+		return
+	}
+	writeError(w, http.StatusNotFound, "Artwork not found")
+}
+
+func fileExists(path string) bool {
+	if path == "" {
+		return false
+	}
+	info, err := os.Stat(path)
+	return err == nil && !info.IsDir()
+}
+
+func (s *Server) serveMoviePlaceholder(w http.ResponseWriter, r *http.Request, item *library.Item) {
+	initial := "?"
+	for _, ch := range strings.TrimSpace(item.Title) {
+		initial = strings.ToUpper(string(ch))
+		break
+	}
+	w.Header().Set("Content-Type", "image/svg+xml")
+	w.Header().Set("Cache-Control", "private, max-age=86400")
+	w.WriteHeader(http.StatusOK)
+	_, _ = w.Write([]byte(`<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 300 450"><defs><linearGradient id="g" x1="0" y1="0" x2="1" y2="1"><stop stop-color="#1b2520"/><stop offset="1" stop-color="#536a59"/></linearGradient></defs><rect width="300" height="450" fill="url(#g)"/><circle cx="150" cy="165" r="64" fill="#d7e3d7" opacity=".18"/><text x="150" y="190" text-anchor="middle" font-family="Arial,sans-serif" font-size="72" font-weight="700" fill="#f2f5ed">` + initial + `</text></svg>`))
 }
 
 func (s *Server) handleBackdrop(w http.ResponseWriter, r *http.Request) {
