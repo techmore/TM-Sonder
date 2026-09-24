@@ -82,6 +82,15 @@ test('unknown episode numbers never merge same-title files across shows', () => 
  assert.equal(get('buildShowGroups().length'),2);
 });
 
+test('TV show cards honor the visible episode filter and search episode metadata', () => {
+ const get = catalog([
+   {id:'a',kind:'tvShow',title:'Pilot',subtitle:'Alpha - S01E01',showTitle:'Alpha',showGroupID:'alpha',showGroupTitle:'Alpha',seasonNumber:1,episodeNumber:1},
+   {id:'b',kind:'tvShow',title:'The Finale',subtitle:'Beta - S01E01',showTitle:'Beta',showGroupID:'beta',showGroupTitle:'Beta',seasonNumber:1,episodeNumber:1},
+ ]);
+ assert.deepEqual(get('buildShowGroups(new Set(["a"])).map(s => s.name)'), ['Alpha']);
+ assert.match(get('buildShowGroups().find(s => s.name === "Beta").searchText'), /Finale/);
+});
+
 test('packed episode duplicate suffix groups only with same-season sibling', () => {
  const ep=(id,title,seasonNumber)=>({id,title,seasonNumber,kind:'tvShow',showTitle:'Jack',showGroupID:'jack'});
  const get=catalog([ep('a','102 - Jack',1),ep('b','102 - Jack-1',1),ep('c','102 - Jack-1',2),ep('d','103 - Different-1',1)]);

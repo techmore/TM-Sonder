@@ -1244,11 +1244,12 @@
     let openShow = null; // show name when drilled into a TV show
     let openSeason = null;
 
-    function buildShowGroups() {
+    function buildShowGroups(visibleIDs = null) {
       const map = new Map();
       const seen = new Set();
       for (const i of items) {
         if (i.kind !== "tvShow" || i.isPlaceholder || !(i.showGroupTitle || i.showTitle)) continue;
+        if (visibleIDs && !visibleIDs.has(i.id)) continue;
         const key = itemGroupKey.get(i.id) ?? copyKey(i);
         if (seen.has(key)) continue;
         seen.add(key);
@@ -1256,9 +1257,10 @@
         const groupID = i.showGroupID || i.showTitle;
         let show = map.get(groupID);
         if (!show) {
-          show = { id:groupID, name:i.showGroupTitle || i.showTitle, seasons:new Map(), posterItem:null };
+          show = { id:groupID, name:i.showGroupTitle || i.showTitle, searchText:"", seasons:new Map(), posterItem:null };
           map.set(groupID, show);
         }
+        show.searchText += ` ${i.showTitle || ""} ${i.title || ""} ${i.subtitle || ""}`;
         const sn = i.seasonNumber ?? 0;
         if (!show.seasons.has(sn)) show.seasons.set(sn, []);
         show.seasons.get(sn).push(representative);
@@ -1715,11 +1717,15 @@
 
       // TV Shows tab: group episodes into clickable show folders.
       if (activeTab === "tvshows") {
-        let shows = buildShowGroups();
+        const visibleIDs = new Set(visible.filter(i => i.kind === "tvShow").map(i => i.id));
+        let shows = buildShowGroups(visibleIDs);
         const term = $("#q").value.trim().toLowerCase();
-        if (term) shows = shows.filter(s => s.name.toLowerCase().includes(term));
+        if (term) shows = shows.filter(s =>
+          foldDiacritics(`${s.name} ${s.searchText}`).toLowerCase().includes(foldDiacritics(term)));
         grid.className = "grid";
-        pager.innerHTML = `<span class="pageinfo">${shows.length} show${shows.length===1?"":"s"}</span>`;
+        const episodeCount = shows.reduce((count, show) =>
+          count + Array.from(show.seasons.values()).reduce((n, eps) => n + eps.length, 0), 0);
+        pager.innerHTML = `<span class="pageinfo">${shows.length.toLocaleString()} show${shows.length===1?"":"s"} • ${episodeCount.toLocaleString()} episode${episodeCount===1?"":"s"}</span>`;
         if (shows.length === 0) {
           grid.innerHTML = `<div class="empty-state">No shows yet. Add a TV Shows library with Show Name/Season XX/Episode files.</div>`;
           return;

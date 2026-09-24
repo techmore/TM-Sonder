@@ -54,3 +54,24 @@ func TestBrowsingGroupsDoNotMergeRemakesOrFlatFiles(t *testing.T) {
 		t.Fatalf("unsafe grouping: %v unmapped=%d", ids, unmapped)
 	}
 }
+
+func TestBrowsingGroupsUseStoredRelativePathAcrossMountAliases(t *testing.T) {
+	store := New()
+	lib := "plex-tvShow-plex"
+	show := "The X-Files"
+	store.Upsert(&Item{
+		MediaItem:          api.MediaItem{ID: "x-files", Kind: api.KindTVShow, LibraryID: &lib, ShowTitle: &show},
+		FilePath:           "/Volumes/14tb/plex/tv_shows/The X-Files (1993)/Season 02/episode.mkv",
+		SourceRelativePath: "The X-Files (1993)/Season 02/episode.mkv",
+	})
+
+	groups := store.GroupedItems([]config.Library{{
+		ID: lib, Path: "/Users/seandolbec/NAS/plex/tv_shows", Kind: "tvShow",
+	}})
+	if groups[0].ShowGroupID == nil || groups[0].ShowGroupTitle == nil {
+		t.Fatalf("stored relative path did not produce a show group: %+v", groups[0])
+	}
+	if *groups[0].ShowGroupTitle != "The X-Files (1993)" {
+		t.Fatalf("wrong show folder: %q", *groups[0].ShowGroupTitle)
+	}
+}
