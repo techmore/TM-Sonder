@@ -66,9 +66,11 @@ def migration_plan(rows):
     for book_key, book_rows in grouped.items():
         for row in book_rows:
             row['book_file_count'] = len(book_rows)
-            if row['migration_action'] == 'pending' and len(book_rows) > 1:
-                row['migration_action'] = 'review_multipart'
-                row['migration_reason'] = 'multiple_files_in_book_folder'
+            if row['migration_action'] == 'pending':
+                row['migration_action'] = 'keep'
+                if len(book_rows) > 1:
+                    row['migration_action'] = 'review_multipart'
+                    row['migration_reason'] = 'multiple_files_in_book_folder'
     return grouped
 
 def main():
