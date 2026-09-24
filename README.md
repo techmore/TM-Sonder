@@ -75,6 +75,9 @@ make prepare-install       # install/check ffmpeg + ffprobe
 make install-launchd        # build + install + bootstrap + health check
 make container-build && make container-run
 
+# Ubuntu host migration: keep public Jellyfin/BookPlayer HTTPS on :8096
+sudo ./deploy/enable-ubuntu-https8096.sh
+
 sonder app interfaces --json
 sonder app status --json
 sonder app proxy status
