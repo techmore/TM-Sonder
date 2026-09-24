@@ -5,7 +5,11 @@ const vm = require('node:vm');
 
 function catalog(items, progress = []) {
   const source = fs.readFileSync(`${__dirname}/library.js`, 'utf8');
-  const context = vm.createContext({ window: { Sonder: {} } });
+  const context = vm.createContext({ window: { Sonder: {
+    api: value => value,
+    escapeHTML: value => String(value),
+    formatTime: value => String(value),
+  } } });
   vm.runInContext(source.slice(0, source.indexOf('    function seasonLabel')), context);
   context.input = items;
   context.progress = progress;
@@ -88,6 +92,13 @@ test('quality copies group, while remakes and split parts stay distinct', () => 
   ]);
   assert.equal(get('copyGroups.size'), 4);
   assert.deepEqual(get('copiesOf(items[0]).map(i => i.id)'), ['uhd', 'hd']);
+});
+
+test('movie cards do not show a copy-count overlay', () => {
+  const get = catalog([
+    movie('hd', 1982, { probedHeight: 1080 }), movie('uhd', 1982, { probedHeight: 2160 }),
+  ]);
+  assert.doesNotMatch(get('cardHTML(items[0])'), /VERSIONS/);
 });
 
 test('codec suffixes do not create a second movie card', () => {

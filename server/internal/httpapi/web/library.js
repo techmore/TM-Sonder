@@ -1335,8 +1335,6 @@
       const badge = watched
         ? `<span class="badge watched">WATCHED</span>`
         : (pct > 0 ? `<span class="badge unwatched">${Math.round(100-pct)}% LEFT</span>` : "");
-      const copiesBadge = copies > 1
-        ? `<span class="badge copies" title="Also available in other versions">${copies} VERSIONS</span>` : "";
       return `
       <button class="card" data-id="${item.id}" data-action="open-detail"
               aria-label="${escapeHTML(item.title)}${metaBits ? ", " + metaBits : ""}">
@@ -1344,7 +1342,6 @@
           ${poster}
           <span class="play-glyph" aria-hidden="true">▶</span>
           ${badge}
-          ${copiesBadge}
           ${pct > 0 ? `<span class="bar"><i style="width:${pct}%"></i></span>` : ""}
         </div>
         <h3>${escapeHTML(opts.showTitle ? (item.showTitle || item.title) : item.title)}</h3>
