@@ -28,7 +28,6 @@
       <button data-tab="documentaries">🎥 Documentaries</button>
       <button data-tab="audiobooks">🎧 Audiobooks</button>
       <button data-tab="books">📚 Books</button>
-      <button data-tab="lists">📋 Lists</button>
       <button data-tab="storage">💾 Storage</button>
       <button data-tab="optimize">⚡ Optimize</button>
     </nav>
@@ -68,18 +67,6 @@
   </section>
 
   <section id="storagePanel" class="storage-panel" hidden aria-live="polite"></section>
-
-  <section id="listsPanel" class="row lists-panel" hidden aria-live="polite">
-    <h2>Reading lists</h2>
-    <p class="muted">A book can appear in many lists. Each list keeps its own order and tags.</p>
-    <form id="listCreateForm" class="list-create-form">
-      <input id="newListName" required placeholder="New list name" aria-label="New list name">
-      <input id="newListDescription" placeholder="Description" aria-label="List description">
-      <input id="newListTags" placeholder="Tags, comma separated" aria-label="List tags">
-      <button type="submit" class="primary">Create list</button>
-    </form>
-    <div id="listsView"></div>
-  </section>
 
   <details class="row" id="libraryHealth" hidden>
     <summary id="libraryHealthSummary">Library consistency</summary>
@@ -174,6 +161,18 @@
   </main>
   <div id="seasonList"></div>
   <nav id="pager" class="pager" aria-label="Library pages"></nav>
+
+  <section id="listsPanel" class="row lists-panel" hidden aria-live="polite">
+    <h2>Reading lists</h2>
+    <p class="muted">A book can appear in many lists. Each list keeps its own order and tags.</p>
+    <form id="listCreateForm" class="list-create-form">
+      <input id="newListName" required placeholder="New list name" aria-label="New list name">
+      <input id="newListDescription" placeholder="Description" aria-label="List description">
+      <input id="newListTags" placeholder="Tags, comma separated" aria-label="List tags">
+      <button type="submit" class="primary">Create list</button>
+    </form>
+    <div id="listsView"></div>
+  </section>
 
   <dialog id="detail" role="dialog" aria-modal="true" aria-labelledby="detailTitle">
     <div class="modal-head">

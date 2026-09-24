@@ -26,6 +26,8 @@ test('library shows its version and keeps audiobook layout in Settings', () => {
   assert.match(libraryHTML, /id="audiobookLayoutSel"/);
   assert.match(libraryHTML, /href="https:\/\/stoverparc\.org:8096\/#audiobooks"/);
   assert.match(libraryHTML, /<svg[^>]+class="size-6"/);
+  assert.doesNotMatch(libraryHTML, /data-tab="lists"/);
+  assert.match(libraryHTML, /id="pager"[\s\S]*id="listsPanel"/);
   assert.doesNotMatch(libraryHTML, /id="audiobookPlayerLink"/);
   assert.match(librarySource, /body\.audiobookLayout = document\.querySelector\("#audiobookLayoutSel"\)\.value/);
 });
@@ -69,7 +71,7 @@ test('empty media tabs are omitted from the populated navigation set', () => {
   ]);
   assert.deepEqual(
     get('Array.from(populatedLibraryTabs(items)).sort()'),
-    ['all', 'books', 'lists', 'movies', 'optimize', 'storage'],
+    ['all', 'books', 'movies', 'optimize', 'storage'],
   );
 });
 

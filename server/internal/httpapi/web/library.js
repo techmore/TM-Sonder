@@ -434,7 +434,7 @@
     const EMPTY_HIDABLE_TABS = ["movies", "tvshows", "documentaries", "audiobooks", "books"];
 
     function populatedLibraryTabs(catalog = items) {
-      const populated = new Set(["all", "lists", "storage", "optimize"]);
+      const populated = new Set(["all", "storage", "optimize"]);
       for (const item of catalog || []) {
         if (!item || item.isPlaceholder) continue;
         const tab = EMPTY_HIDABLE_TABS.find(candidate => kindByTab[candidate] === item.kind);
@@ -1521,7 +1521,7 @@
     // --- URL state (#tab[/show/<name>|/page/<n>]) so refresh and Back work ---
     function syncHash(push) {
       const parts = [activeTab];
-      if (activeTab === "lists" && selectedListID) {
+      if (["audiobooks", "books"].includes(activeTab) && selectedListID) {
         parts.push("list", selectedListID);
       } else if (openShow) {
         parts.push("show", openShow);
@@ -1537,8 +1537,10 @@
       const seg = location.hash.replace(/^#\/?/, "").split("/")
         .filter(s => s !== "").map(decodeURIComponent);
       if (seg.length === 0) return false;
-      const tabs = ["all", "movies", "tvshows", "documentaries", "audiobooks", "books", "lists", "storage", "optimize"];
-      const tab = tabs.includes(seg[0]) && !tabIsHidden(seg[0]) ? seg[0] : "all";
+      const tabs = ["all", "movies", "tvshows", "documentaries", "audiobooks", "books", "storage", "optimize"];
+      // Keep old #lists links useful after Lists moved into the reading tabs.
+      const requestedTab = seg[0] === "lists" ? "books" : seg[0];
+      const tab = tabs.includes(requestedTab) && !tabIsHidden(requestedTab) ? requestedTab : "all";
       activeTab = tab;
       for (const b of document.querySelectorAll("#tabs button"))
         b.classList.toggle("active", b.dataset.tab === tab);
@@ -1547,7 +1549,7 @@
       selectedListID = null;
       currentPage = 1;
       if (seg[1] === "show" && seg[2]) openShow = seg[2];
-      if (tab === "lists" && seg[1] === "list" && seg[2]) selectedListID = seg[2];
+      if (seg[0] === "lists" && seg[1] === "list" && seg[2]) selectedListID = seg[2];
       if (openShow && seg[3] === "season" && /^\d+$/.test(seg[4] || "")) openSeason = Number(seg[4]);
       else if (seg[1] === "page") currentPage = Math.max(1, parseInt(seg[2], 10) || 1);
       return true;
@@ -1570,9 +1572,10 @@
     });
 
     function setTab(tab, keepShow=false) {
+      const previousTab = activeTab;
       activeTab = tab;
       libraryShelfLimit = 96;
-      if (tab !== "lists") selectedListID = null;
+      if (tab !== previousTab) selectedListID = null;
       if (!keepShow) { openSeason = null; leaveShow(); }
       for (const b of document.querySelectorAll("#tabs button")) {
         b.classList.toggle("active", b.dataset.tab === tab);
@@ -1609,7 +1612,7 @@
       const response = await fetch(api("/api/lists"));
       if (!response.ok) throw new Error("Lists unavailable");
       lists = (await response.json()).lists || [];
-      if (activeTab === "lists") renderLists();
+      if (["audiobooks", "books"].includes(activeTab)) renderLists();
     }
 
     async function listMutation(path, options) {
@@ -1917,20 +1920,27 @@
       renderMovieCatalog(visibleItems());
     }
 
+    function renderReadingLists() {
+      const panel = $("#listsPanel");
+      if (!panel) return;
+      const visible = ["audiobooks", "books"].includes(activeTab);
+      panel.hidden = !visible;
+      if (visible) renderLists();
+    }
+
     function render() {
       const storage = activeTab === "storage";
       const optimize = activeTab === "optimize";
-      const listMode = activeTab === "lists";
       const coverFilter = $("#coverFilter");
       if (coverFilter) coverFilter.hidden = activeTab !== "audiobooks";
       document.body.classList.toggle("storage-mode", storage);
       document.body.classList.toggle("optimize-mode", optimize);
       $("#storagePanel").hidden = !storage;
-      $("#listsPanel").hidden = !listMode;
+      renderReadingLists();
       $("#optimizationPage").hidden = !optimize;
-      $("#grid").hidden = storage || optimize || listMode;
-      $("#pager").hidden = storage || optimize || listMode;
-      $("#seasonList").hidden = storage || optimize || listMode;
+      $("#grid").hidden = storage || optimize;
+      $("#pager").hidden = storage || optimize;
+      $("#seasonList").hidden = storage || optimize;
       const movieCatalog = $("#movieCatalog");
       if (movieCatalog) movieCatalog.hidden = true;
       if (storage) { renderStorage(); return; }
@@ -1939,7 +1949,6 @@
         $("#backRow").hidden = true;
         return;
       }
-      if (listMode) { renderLists(); return; }
       $("#railsRow").hidden = true;
       if (openShow) { renderShowPage(); return; }
 
