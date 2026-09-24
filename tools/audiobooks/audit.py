@@ -28,6 +28,49 @@ def inspect(item):
     except Exception as e:row['error']=str(e)
     return row
 
+def migration_plan(rows):
+    """Attach non-destructive canonical-path and review metadata.
+
+    This is deliberately a plan, not a move operation. The standard target is
+    Author/Book/file; wrapper directories and working files are quarantined
+    from the active library but remain in the inventory for rollback/review.
+    """
+    grouped = collections.defaultdict(list)
+    for row in rows:
+        rel = pathlib.PurePosixPath(str(row.get('relative_path', '')).replace('\\', '/'))
+        parts = [p for p in rel.parts if p not in ('', '.', '..')]
+        lower_parts = [p.lower() for p in parts]
+        filename = parts[-1] if parts else ''
+        book_parts = parts[-3:-1] if len(parts) >= 3 else ([parts[-2]] if len(parts) == 2 else [])
+        author = book_parts[0] if len(book_parts) == 2 else ''
+        book = book_parts[-1] if book_parts else ''
+        book_key = '/'.join(p for p in book_parts if p).lower() or filename.lower()
+        grouped[book_key].append(row)
+        lower_name = filename.lower()
+        reason = None
+        if any(p.startswith('_inbox') or p.startswith('test-') or p in {'m4b forge compact'} or p.startswith('compact-m4b-') for p in lower_parts[:-1]):
+            reason = 'inbox_or_wrapper'
+        elif any(token in lower_name for token in ('.sonder-retag.', '.wcqr')) or lower_name.endswith(('.partial', '.tmp', '.download')):
+            reason = 'working_file'
+        if author and book:
+            canonical = f'{author}/{book}/{filename}'
+        elif book:
+            canonical = f'{book}/{filename}'
+        else:
+            canonical = filename
+        row['book_key'] = book_key
+        row['canonical_relative_path'] = canonical
+        row['canonical_path'] = str(pathlib.Path(row.get('root', '.')) / pathlib.Path(*canonical.split('/')))
+        row['migration_action'] = 'quarantine' if reason else 'pending'
+        row['migration_reason'] = reason or ''
+    for book_key, book_rows in grouped.items():
+        for row in book_rows:
+            row['book_file_count'] = len(book_rows)
+            if row['migration_action'] == 'pending' and len(book_rows) > 1:
+                row['migration_action'] = 'review_multipart'
+                row['migration_reason'] = 'multiple_files_in_book_folder'
+    return grouped
+
 def main():
     ap=argparse.ArgumentParser(description=__doc__);ap.add_argument('roots',nargs='+',type=pathlib.Path);ap.add_argument('--out',required=True,type=pathlib.Path);ap.add_argument('--workers',type=int,default=4);args=ap.parse_args()
     args.out.mkdir(parents=True,exist_ok=True); cache=args.out/'inventory.jsonl'; prior={}
@@ -59,7 +102,10 @@ def main():
         for i,row in enumerate(pool.map(inspect,items),1):
             f.write(json.dumps(row)+'\n');f.flush();rows.append(row)
             if i%25==0:print(f'Probed {i}/{len(items)}',flush=True)
+    migration_plan(rows)
     rows.sort(key=lambda r:r['path']);(args.out/'inventory.json').write_text(json.dumps(rows,indent=2))
-    summary={'files':len(rows),'GiB':round(sum(r['size'] for r in rows)/2**30,2),'hours':round(sum(r.get('duration',0) for r in rows)/3600,2),'containers':dict(collections.Counter(r.get('container','ERROR') for r in rows)),'codecs':dict(collections.Counter(a['codec_name'] for r in rows for a in r.get('audio',[]))),'issues':dict(collections.Counter(i for r in rows for i in r.get('issues',[]))),'probe_errors':sum('error' in r for r in rows),'walk_errors':errors,'embedded_covers':sum(r.get('embedded_cover',False) for r in rows),'sidecar_covers':sum(bool(r.get('sidecar_covers')) for r in rows)}
+    manifest = {'version': 1, 'target_layout': 'Author/Book/file', 'rows': rows}
+    (args.out/'migration-manifest.json').write_text(json.dumps(manifest, indent=2))
+    summary={'files':len(rows),'GiB':round(sum(r['size'] for r in rows)/2**30,2),'hours':round(sum(r.get('duration',0) for r in rows)/3600,2),'containers':dict(collections.Counter(r.get('container','ERROR') for r in rows)),'codecs':dict(collections.Counter(a['codec_name'] for r in rows for a in r.get('audio',[]))),'issues':dict(collections.Counter(i for r in rows for i in r.get('issues',[]))),'migration_actions':dict(collections.Counter(r.get('migration_action') for r in rows)),'multipart_books':sum(1 for n in {r.get('book_key') for r in rows} if n and sum(1 for x in rows if x.get('book_key') == n) > 1),'probe_errors':sum('error' in r for r in rows),'walk_errors':errors,'embedded_covers':sum(r.get('embedded_cover',False) for r in rows),'sidecar_covers':sum(bool(r.get('sidecar_covers')) for r in rows)}
     (args.out/'summary.json').write_text(json.dumps(summary,indent=2));print(json.dumps(summary,indent=2))
 if __name__=='__main__':main()
