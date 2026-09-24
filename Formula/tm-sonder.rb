@@ -6,6 +6,7 @@ class TmSonder < Formula
   sha256 "6c3e3d8a111d3376268e040254dfcfeca070d2761607b47fbb90bab1e76f3f94"
 
   depends_on "go" => :build
+  # The ffmpeg package supplies both ffmpeg and ffprobe.
   depends_on "ffmpeg"
 
   def install
@@ -28,5 +29,7 @@ class TmSonder < Formula
 
   test do
     assert_match "sonder #{version}", shell_output("#{bin}/sonder -version")
+    system "ffmpeg", "-version"
+    system "ffprobe", "-version"
   end
 end

@@ -10,6 +10,8 @@ CONFIG_DIR="${SONDER_CONFIG_DIR:-$HOME/.config/sonder}"
 LOG_FILE="$HOME/Library/Logs/sonder.log"
 CURRENT_USER="$(id -un)"
 
+echo "==> Preparing FFmpeg and FFprobe"
+"$ROOT_DIR/deploy/prepare-install.sh" --install
 echo "==> Building sonder (darwin/arm64)"
 cd "$ROOT_DIR/server"
 CGO_ENABLED=0 GOOS=darwin GOARCH=arm64 go build -trimpath -ldflags "-s -w" -o sonder ./cmd/sonder

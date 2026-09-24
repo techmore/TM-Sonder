@@ -38,9 +38,17 @@ to point at your media roots, then restart. Key config fields:
 `probeWorkers`, `thumbWorkers`, `transcode`, and optional Caddy paths. Every
 field also has a `SONDER_*` environment override (see the generated template).
 
-Requirements: `ffprobe` and `ffmpeg` on `PATH` (or configured paths) for track
-probing, thumbnails, chapters, and transcoding. The server runs fine without
-them, minus those features.
+Requirements: the FFmpeg package, which provides both `ffmpeg` and `ffprobe`,
+on `PATH` (or configured paths) for track probing, thumbnails, chapters, and
+transcoding. Prepare a native host with:
+
+```bash
+make prepare-install
+```
+
+The preflight detects Homebrew, apt, dnf, apk, or pacman, installs the FFmpeg
+package when needed, and verifies both executables. The server can start
+without them, but those media features will be unavailable.
 
 The web listener defaults to Jellyfin's native HTTP port `8096`; the private
 readiness/API listener uses `8097` on `127.0.0.1`. Local-only until LAN is enabled; enabling LAN
@@ -58,6 +66,7 @@ without binding the API process or catalog storage to the network.
 make test                   # go test -race ./...
 make vet
 make fmt
+make prepare-install       # install/check ffmpeg + ffprobe
 make install-launchd        # build + install + bootstrap + health check
 make container-build && make container-run
 

@@ -16,6 +16,7 @@ RUN CGO_ENABLED=0 GOOS=linux GOARCH=arm64 go build \
 FROM alpine:3.20
 ARG VERSION=0.2.0-dev
 RUN apk add --no-cache ffmpeg ca-certificates tzdata && \
+    command -v ffmpeg >/dev/null && command -v ffprobe >/dev/null && \
     addgroup -S sonder && adduser -S -G sonder sonder && \
     mkdir -p /data /media && chown -R sonder:sonder /data
 LABEL org.opencontainers.image.title="TM-Sonder" \

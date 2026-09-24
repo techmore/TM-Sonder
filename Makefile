@@ -8,7 +8,7 @@ BUILD   ?= local
 APP_BUILD ?= $(shell git rev-list --count HEAD 2>/dev/null || echo 1)
 LDFLAGS := -s -w -X main.version=$(VERSION) -X tm-sonder/server/internal/httpapi.Version=$(VERSION) -X tm-sonder/server/internal/httpapi.Build=$(BUILD)
 
-.PHONY: build mac linux linux-amd64 status-app install-status-app uninstall-status-app test vet fmt clean install-launchd uninstall-launchd container-build container-run release-check release-build
+.PHONY: build mac linux linux-amd64 prepare-install status-app install-status-app uninstall-status-app test vet fmt clean install-launchd uninstall-launchd container-build container-run release-check release-build
 
 build: mac
 
@@ -34,6 +34,9 @@ linux: ## linux/arm64 static binary for containers
 linux-amd64: ## linux/amd64 static binary for Ubuntu/x86_64 hosts
 	cd server && CGO_ENABLED=0 GOOS=linux GOARCH=amd64 $(GO) build -trimpath -ldflags "$(LDFLAGS)" -o ../bin/$(BINARY)-linux-amd64 ./cmd/sonder
 
+prepare-install: ## install/check FFmpeg and FFprobe for a host install
+	./deploy/prepare-install.sh --install
+
 test:
 	node --test server/internal/httpapi/web/library.test.cjs
 	cd server && $(GO) test -race -count=1 ./...
@@ -47,7 +50,7 @@ fmt:
 clean:
 	rm -rf bin
 
-install-launchd: ## build + install + bootstrap + health check
+install-launchd: ## prepare media tools + build + install + bootstrap + health check
 	./deploy/install-launchd.sh
 
 uninstall-launchd:
