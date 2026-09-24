@@ -351,12 +351,12 @@ func run(configFlag, plexDB, exportPath, importPath, importMode, importPathMap s
 	}
 	if _, err := lookPath(cfg.FFprobePath); err == nil {
 		srv.SetChapterProvider(probe.NewChapterSource(
-			func(id string) (string, time.Time, bool) {
+			func(id string) (string, time.Time, float64, bool) {
 				it, ok := store.Get(id)
 				if !ok {
-					return "", time.Time{}, false
+					return "", time.Time{}, 0, false
 				}
-				return it.FilePath, it.ModTime, true
+				return it.FilePath, it.ModTime, it.DurationSeconds, true
 			}, cfg.FFprobePath))
 	}
 	srv.SetAutoSave(func() {

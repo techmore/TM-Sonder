@@ -7,6 +7,8 @@ import (
 	"path/filepath"
 	"testing"
 	"time"
+
+	"tm-sonder/server/internal/api"
 )
 
 const twoAudioOneSub = `{
@@ -54,6 +56,19 @@ func TestParseTwoAudioOneSubtitle(t *testing.T) {
 	}
 }
 
+func TestParseAudiobookMetadataTags(t *testing.T) {
+	res, err := Parse([]byte(`{"streams":[],"format":{"tags":{"title":"Project Hail Mary","artist":"Andy Weir","narrator":"Andrew Wilson","series":"Project Hail Mary","series-part":"1","date":"2021"}}}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.Metadata("title") != "Project Hail Mary" || res.Metadata("artist") != "Andy Weir" {
+		t.Fatalf("metadata tags = %v", res.MetadataTags)
+	}
+	if res.Metadata("narrator") != "Andrew Wilson" || res.Metadata("series-part") != "1" {
+		t.Fatalf("audiobook metadata aliases = %v", res.MetadataTags)
+	}
+}
+
 func TestParseEmpty(t *testing.T) {
 	res, err := Parse([]byte(`{"streams":[],"format":{}}`))
 	if err != nil {
@@ -63,6 +78,19 @@ func TestParseEmpty(t *testing.T) {
 		t.Errorf("unexpected result: %+v", res)
 	}
 }
+
+func TestValidateChaptersRejectsMarkersBeyondDuration(t *testing.T) {
+	chapters := []api.AudiobookChapter{{Index: 0, StartSeconds: 0, EndSeconds: floatPtr(10)}}
+	if got := ValidateChapters(chapters, 100); len(got) != 1 {
+		t.Fatalf("valid chapters were rejected: %+v", got)
+	}
+	chapters[0].EndSeconds = floatPtr(200)
+	if got := ValidateChapters(chapters, 100); got != nil {
+		t.Fatalf("out-of-range chapters accepted: %+v", got)
+	}
+}
+
+func floatPtr(v float64) *float64 { return &v }
 
 func TestCacheInvalidatedByModTime(t *testing.T) {
 	c := NewCache("")

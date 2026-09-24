@@ -43,6 +43,35 @@ func fixtureTree(t *testing.T) string {
 	return root
 }
 
+func TestScannerSkipsAudiobookInboxAndWorkingFiles(t *testing.T) {
+	root := t.TempDir()
+	mk := func(rel string) {
+		p := filepath.Join(root, rel)
+		if err := os.MkdirAll(filepath.Dir(p), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(p, []byte("audio"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	mk("Author/Book/Book.m4b")
+	mk("_INBOX-torrents-2026-09-22/Inbox.m4b")
+	mk("Test-ebook/Test.m4b")
+	mk("M4B Forge Compact/compact-m4b-80k/Author/Book/Book.m4b")
+	mk("Author/Book/Book.sonder-retag.m4b")
+	mk("Author/Book/Book.wcqr1ulr.m4b")
+
+	store := New()
+	sc := NewScanner(store)
+	res, err := sc.ScanAll([]config.Library{{ID: "audio", Name: "Audio", Path: root, Kind: "audiobook"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.Added != 1 || store.Count() != 1 {
+		t.Fatalf("scan result=%+v items=%d, want only canonical book", res, store.Count())
+	}
+}
+
 func TestScanFixtureSxxEyyGrouping(t *testing.T) {
 	root := fixtureTree(t)
 	store := New()

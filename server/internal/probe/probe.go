@@ -31,6 +31,10 @@ type Result struct {
 	VideoStreamCount   int
 	HasAttachedPicture bool
 	UnsupportedStreams int
+	// MetadataTags contains normalized container-level tags from ffprobe.
+	// Keys are lower-case and values are trimmed; audiobook consumers use it
+	// for author/narrator/series/edition metadata without coupling to ffprobe.
+	MetadataTags map[string]string
 	// StreamCount is the number of streams ffprobe reported. Zero means the
 	// file had no readable streams (broken/unsupported), which callers use to
 	// distinguish "probed successfully" from "probe returned nothing".
@@ -64,8 +68,9 @@ type ffprobeOutput struct {
 	Streams  []ffprobeStream   `json:"streams"`
 	Chapters []json.RawMessage `json:"chapters"`
 	Format   struct {
-		Duration string `json:"duration"`
-		BitRate  string `json:"bit_rate"`
+		Duration string            `json:"duration"`
+		BitRate  string            `json:"bit_rate"`
+		Tags     map[string]string `json:"tags"`
 	} `json:"format"`
 }
 
@@ -133,6 +138,16 @@ func Parse(data []byte) (*Result, error) {
 			}
 		}
 	}
+	if len(raw.Format.Tags) > 0 {
+		res.MetadataTags = make(map[string]string, len(raw.Format.Tags))
+		for key, value := range raw.Format.Tags {
+			key = strings.ToLower(strings.TrimSpace(key))
+			value = strings.TrimSpace(value)
+			if key != "" && value != "" {
+				res.MetadataTags[key] = value
+			}
+		}
+	}
 	if d, ok := atof(raw.Format.Duration); ok {
 		res.DurationSeconds = d
 	}
@@ -144,6 +159,16 @@ func Parse(data []byte) (*Result, error) {
 		}
 	}
 	return res, nil
+}
+
+// Metadata returns the first non-empty value for the supplied tag aliases.
+func (r *Result) Metadata(names ...string) string {
+	for _, name := range names {
+		if value := strings.TrimSpace(r.MetadataTags[strings.ToLower(name)]); value != "" {
+			return value
+		}
+	}
+	return ""
 }
 
 func track(prefix string, n int, s *ffprobeStream) api.PlaybackTrack {

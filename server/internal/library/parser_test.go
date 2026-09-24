@@ -140,6 +140,17 @@ func TestParseFilenameBooks(t *testing.T) {
 	}
 }
 
+func TestParseFilenameAudiobookUsesCanonicalFolders(t *testing.T) {
+	p := ParseFilename("/audiobooks/Andy Weir/Project Hail Mary (2021)/2021 - Project Hail Mary.m4b", "audiobook")
+	if p.Title != "Project Hail Mary" || p.Year != 2021 || p.Author != "Andy Weir" {
+		t.Fatalf("canonical audiobook parse = %+v", p)
+	}
+	p2 := ParseFilename("/audiobooks/Unknown Author/Book/01 - Chapter.m4b", "audiobook")
+	if p2.Author != "" {
+		t.Errorf("unknown author folder was retained: %q", p2.Author)
+	}
+}
+
 func TestParseFilenameDocumentaryKeepsKind(t *testing.T) {
 	p := ParseFilename("/docs/Planet Earth II/Planet Earth II 2016 Islands.mkv", "documentary")
 	if p.ShowTitle == "" && p.Season != nil {
@@ -193,8 +204,8 @@ func TestEbookAuthorSplit(t *testing.T) {
 		if c.path == "/lib/Books/plain.epub" {
 			wantAuthor = "" // junk dir ignored
 		}
-		if p.Series != wantAuthor {
-			t.Errorf("%s: author = %q, want %q", c.path, p.Series, wantAuthor)
+		if p.Author != wantAuthor {
+			t.Errorf("%s: author = %q, want %q", c.path, p.Author, wantAuthor)
 		}
 	}
 }

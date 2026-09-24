@@ -75,6 +75,29 @@ type Scanner struct {
 }
 
 // Prober supplies ffprobe-derived metadata for new or changed files.
+func shouldSkipLibraryDir(name, kind string) bool {
+	if !strings.EqualFold(kind, "audiobook") && !strings.EqualFold(kind, "all") {
+		return false
+	}
+	lower := strings.ToLower(name)
+	return strings.HasPrefix(lower, "_inbox") ||
+		strings.HasPrefix(lower, "test-") ||
+		lower == "m4b forge compact" ||
+		strings.HasPrefix(lower, "compact-m4b-")
+}
+
+func shouldSkipLibraryFile(name, kind string) bool {
+	if !strings.EqualFold(kind, "audiobook") && !strings.EqualFold(kind, "all") {
+		return false
+	}
+	lower := strings.ToLower(name)
+	return strings.Contains(lower, ".sonder-retag.") ||
+		strings.Contains(lower, ".wcqr") ||
+		strings.HasSuffix(lower, ".partial") ||
+		strings.HasSuffix(lower, ".tmp") ||
+		strings.HasSuffix(lower, ".download")
+}
+
 type Prober interface {
 	ProbeResult(ctx context.Context, path string, size int64, mod time.Time) (*probe.Result, error)
 }
@@ -436,6 +459,9 @@ func applyProbe(it *Item, res *probe.Result) {
 	if res.DurationSeconds > 0 && it.DurationSeconds == 0 {
 		it.DurationSeconds = res.DurationSeconds
 	}
+	if it.Kind == api.KindAudiobook {
+		applyAudiobookMetadata(it, res)
+	}
 	it.ProbedWidth = res.Width
 	it.ProbedHeight = res.Height
 	it.ProbedCodec = res.Codec
@@ -451,6 +477,85 @@ func applyProbe(it *Item, res *probe.Result) {
 	it.ProbedHasCover = res.HasAttachedPicture
 	it.ProbedCoverKnown = true
 	it.ProbedUnsupportedStreams = res.UnsupportedStreams
+}
+
+func applyAudiobookMetadata(it *Item, res *probe.Result) {
+	if title := res.Metadata("title", "album"); title != "" && it.Title == "" {
+		it.Title = title
+	}
+	if author := res.Metadata("author", "artist", "album_artist", "albumartist"); author != "" {
+		it.Author = &author
+	}
+	if narrator := res.Metadata("narrator", "narrated_by", "narratedby"); narrator != "" {
+		it.Narrator = &narrator
+	}
+	if series := res.Metadata("series", "showmovement"); series != "" {
+		it.Series = series
+	}
+	if publisher := res.Metadata("publisher", "label"); publisher != "" {
+		it.Studio = publisher
+	}
+	if description := res.Metadata("description", "comment", "summary"); description != "" && it.Summary == "" {
+		it.Summary = description
+	}
+	if edition := res.Metadata("edition"); edition != "" && it.Edition == nil {
+		it.Edition = &edition
+	}
+	if year := metadataYear(res.Metadata("date", "year", "publication_date")); year > 0 {
+		it.Year = year
+	}
+	if part := res.Metadata("series-part", "series_part", "seriespart"); part != "" {
+		if number, err := strconv.ParseFloat(strings.ReplaceAll(part, ",", "."), 64); err == nil {
+			it.SeriesNumber = number
+		}
+	}
+	if genre := res.Metadata("genre", "genres"); genre != "" {
+		for _, value := range strings.FieldsFunc(genre, func(r rune) bool { return r == ';' || r == ',' }) {
+			value = strings.TrimSpace(value)
+			if value != "" && !containsFoldValue(it.Genres, value) {
+				it.Genres = append(it.Genres, value)
+			}
+		}
+	}
+	if id := res.Metadata("audible_id", "audibleid", "asin", "audnexus_id"); id != "" {
+		if it.MetadataID == nil {
+			source := "audible"
+			if res.Metadata("audnexus_id") != "" {
+				source = "audnexus"
+			}
+			it.MetadataIDSource, it.MetadataID = &source, &id
+		}
+	}
+}
+
+func containsFoldValue(values []string, target string) bool {
+	for _, value := range values {
+		if strings.EqualFold(value, target) {
+			return true
+		}
+	}
+	return false
+}
+
+func metadataYear(value string) int {
+	for i := 0; i+4 <= len(value); i++ {
+		part := value[i : i+4]
+		if part[0] < '1' || part[0] > '2' {
+			continue
+		}
+		n := 0
+		for _, c := range part {
+			if c < '0' || c > '9' {
+				n = 0
+				break
+			}
+			n = n*10 + int(c-'0')
+		}
+		if n >= 1900 && n <= 2099 {
+			return n
+		}
+	}
+	return 0
 }
 
 // scanLibraryInto walks one library root. Items whose stable ID lands in keep
@@ -488,6 +593,9 @@ func (sc *Scanner) scanLibraryInto(lib config.Library, keep map[string]bool, pen
 			return err
 		}
 		name := d.Name()
+		if d.IsDir() && path != root && shouldSkipLibraryDir(name, lib.Kind) {
+			return filepath.SkipDir
+		}
 		if strings.HasPrefix(name, ".") && path != root {
 			if d.IsDir() {
 				return filepath.SkipDir
@@ -495,6 +603,9 @@ func (sc *Scanner) scanLibraryInto(lib config.Library, keep map[string]bool, pen
 			return nil
 		}
 		if d.IsDir() || d.Type()&fs.ModeSymlink != 0 {
+			return nil
+		}
+		if shouldSkipLibraryFile(name, lib.Kind) {
 			return nil
 		}
 		ext := strings.ToLower(strings.TrimPrefix(filepath.Ext(name), "."))
@@ -689,15 +800,12 @@ func (sc *Scanner) buildItem(path, id string, st os.FileInfo, format api.MediaFo
 		s := parsed.SplitPart
 		item.SplitPart = &s
 	}
+	if parsed.Author != "" {
+		a := parsed.Author
+		item.Author = &a
+	}
 	if parsed.Series != "" {
-		item.Studio = parsed.Series
 		item.Series = parsed.Series
-		// For books the parser's "series" slot carries the filename-extracted
-		// author; mirror it so the API layer doesn't guess from Tags.
-		if kind == api.KindEbook || kind == api.KindAudiobook {
-			a := parsed.Series
-			item.Author = &a
-		}
 	}
 	item.SeriesNumber = parsed.SeriesNumber
 
@@ -737,8 +845,12 @@ func (sc *Scanner) buildItem(path, id string, st os.FileInfo, format api.MediaFo
 	if prev, ok := sc.store.Get(id); ok {
 		item.Summary = prev.Summary
 		item.Tags = prev.Tags
-		item.Author = prev.Author
-		item.Narrator = prev.Narrator
+		if prev.Author != nil {
+			item.Author = prev.Author
+		}
+		if item.Narrator == nil {
+			item.Narrator = prev.Narrator
+		}
 		item.ProbedWidth = prev.ProbedWidth
 		item.ProbedHeight = prev.ProbedHeight
 		item.ProbedCodec = prev.ProbedCodec
