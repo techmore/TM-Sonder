@@ -632,7 +632,17 @@ func isJellyfinPath(path string) bool {
 }
 
 func isJellyfinPublicPath(path string) bool {
-	return path == "/System/Info/Public" || path == "/QuickConnect/Enabled"
+	return path == "/System/Info/Public" || path == "/QuickConnect/Enabled" || isJellyfinPrimaryImagePath(path)
+}
+
+// BookPlayer's Jellyfin image loader requests primary artwork as a plain image
+// URL instead of attaching the MediaBrowser token that it uses for catalog and
+// download requests. Keep this narrow exception limited to known audiobook
+// primary-image paths; item metadata and media remain protected by auth.
+func isJellyfinPrimaryImagePath(path string) bool {
+	parts := strings.Split(strings.Trim(path, "/"), "/")
+	return len(parts) == 4 && parts[0] == "Items" && strings.HasPrefix(parts[1], "jf_") &&
+		parts[2] == "Images" && parts[3] == "Primary"
 }
 
 func isBrowserPage(path string) bool {

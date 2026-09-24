@@ -38,6 +38,9 @@ Base URL comes from `/api/discovery` as `localURL` or `lanURL`.
   `SONDER_COMPAT_USERNAME` and `SONDER_COMPAT_PASSWORD`. It is accepted only by the Jellyfin/Audiobookshelf login
   endpoints and issues the same scoped session token; it is not accepted by browser account login. Do not use a weak
   pair when the server is reachable from the public internet.
+- Jellyfin primary artwork requests at `/Items/{id}/Images/Primary` are intentionally reachable without a catalog
+  token for BookPlayer image loading. The route still resolves a known audiobook and exposes only its poster bytes;
+  item metadata, catalog, and downloads remain authenticated.
 - Sessions are random, expire after 30 days, and are persisted with the account file so a normal service restart or upgrade
   does not force every client to sign in again. Passwords are never stored in plaintext.
 

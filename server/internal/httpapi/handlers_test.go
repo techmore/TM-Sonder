@@ -358,6 +358,39 @@ func TestSubtitleAndArtworkRoutes(t *testing.T) {
 	}
 }
 
+func TestBookPlayerJellyfinPrimaryImageDoesNotRequireCatalogToken(t *testing.T) {
+	f := newFixture(t, func(cfg *config.Config) {
+		cfg.AllowLAN = true
+	})
+	dir := t.TempDir()
+	poster := filepath.Join(dir, "cover.jpg")
+	if err := os.WriteFile(poster, []byte("bookplayer-cover"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	f.store.Upsert(&library.Item{MediaItem: api.MediaItem{
+		ID: "ab1", Title: "Dune", Kind: api.KindAudiobook, Format: api.FormatM4B,
+	}, PosterPath: poster})
+
+	imageReq := httptest.NewRequest(http.MethodGet, "/Items/jf_ab1/Images/Primary", nil)
+	imageReq.RemoteAddr = "192.168.3.50:50123"
+	imageReq.Host = "sonder.example:8096"
+	imageRec := httptest.NewRecorder()
+	f.s.Handler().ServeHTTP(imageRec, imageReq)
+	if imageRec.Code != http.StatusOK || imageRec.Body.String() != "bookplayer-cover" {
+		t.Fatalf("public primary image status=%d body=%q", imageRec.Code, imageRec.Body.String())
+	}
+
+	// The compatibility exception must not make the catalog or item metadata public.
+	itemsReq := httptest.NewRequest(http.MethodGet, "/Items?Limit=1", nil)
+	itemsReq.RemoteAddr = imageReq.RemoteAddr
+	itemsReq.Host = imageReq.Host
+	itemsRec := httptest.NewRecorder()
+	f.s.Handler().ServeHTTP(itemsRec, itemsReq)
+	if itemsRec.Code != http.StatusUnauthorized {
+		t.Fatalf("unauthenticated Jellyfin catalog status=%d, want %d", itemsRec.Code, http.StatusUnauthorized)
+	}
+}
+
 func TestAudiobookRoutes(t *testing.T) {
 	f := newFixture(t, nil)
 	ab := &library.Item{MediaItem: api.MediaItem{
