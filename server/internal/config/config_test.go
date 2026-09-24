@@ -18,6 +18,9 @@ func TestDefaults(t *testing.T) {
 	if cfg.ThemePreset != DefaultThemePreset {
 		t.Errorf("themePreset = %q", cfg.ThemePreset)
 	}
+	if cfg.AudiobookLayout != DefaultAudiobookLayout {
+		t.Errorf("audiobookLayout = %q, want %q", cfg.AudiobookLayout, DefaultAudiobookLayout)
+	}
 	if cfg.Transcode.MaxConcurrent != 2 || cfg.Transcode.HWAccel != "videotoolbox" {
 		t.Errorf("transcode defaults wrong: %+v", cfg.Transcode)
 	}

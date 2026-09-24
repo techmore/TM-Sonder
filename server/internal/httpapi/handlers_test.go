@@ -473,6 +473,40 @@ func TestIndexPage(t *testing.T) {
 	}
 }
 
+func TestAudiobookLayouts(t *testing.T) {
+	checks := []struct {
+		path   string
+		marker string
+		name   string
+	}{
+		{path: "/audiobooks", marker: `data-audiobook-layout="rails"`, name: "default rails"},
+		{path: "/audiobooks?layout=rails", marker: `data-audiobook-layout="rails"`, name: "rails override"},
+		{path: "/audiobooks?layout=classic", marker: `data-audiobook-layout="classic"`, name: "classic override"},
+		{path: "/audiobooks-classic", marker: `data-audiobook-layout="classic"`, name: "classic alias"},
+		{path: "/audiobooks-beta", marker: `data-audiobook-layout="rails"`, name: "legacy rails alias"},
+	}
+	f := newFixture(t, nil)
+	for _, check := range checks {
+		t.Run(check.name, func(t *testing.T) {
+			resp, body := get(t, f.ts.URL+check.path)
+			if resp.StatusCode != http.StatusOK {
+				t.Fatalf("status = %d", resp.StatusCode)
+			}
+			if !strings.Contains(body, check.marker) {
+				t.Fatalf("page missing layout marker %q", check.marker)
+			}
+		})
+	}
+
+	classicDefault := newFixture(t, func(cfg *config.Config) {
+		cfg.AudiobookLayout = "classic"
+	})
+	resp, body := get(t, classicDefault.ts.URL+"/audiobooks")
+	if resp.StatusCode != http.StatusOK || !strings.Contains(body, `data-audiobook-layout="classic"`) {
+		t.Fatalf("saved classic default was not honored: status=%d body=%.120s", resp.StatusCode, body)
+	}
+}
+
 func TestIndexPageRendersSavedThemeBeforeHydration(t *testing.T) {
 	f := newFixture(t, func(cfg *config.Config) { cfg.ThemePreset = "techmore" })
 	resp, body := get(t, f.ts.URL+"/")

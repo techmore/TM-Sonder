@@ -1,5 +1,5 @@
 <!doctype html>
-<html>
+<html lang="en" data-audiobook-layout="rails">
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
@@ -11,7 +11,7 @@
     body { margin:0; font:14px -apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif; background:var(--bg); color:var(--text); }
     header { position:sticky; top:0; z-index:2; display:flex; flex-wrap:wrap; gap:10px; align-items:center; padding:14px 20px; background:rgba(16,19,15,.96); border-bottom:1px solid var(--line); }
     header h1 { margin:0; font-size:22px; margin-right:4px; }
-    .beta { font-size:11px; font-weight:700; color:#11160f; background:var(--warn); border-radius:4px; padding:2px 7px; letter-spacing:.06em; }
+    .layout-badge { font-size:11px; font-weight:700; color:#11160f; background:var(--accent); border-radius:4px; padding:2px 7px; letter-spacing:.06em; }
     header input { flex:1; min-width:180px; background:var(--panel); border:1px solid var(--line); color:var(--text); border-radius:8px; padding:9px 12px; }
     header select { background:var(--panel); border:1px solid var(--line); color:var(--text); border-radius:8px; padding:9px 10px; }
     header a.button, button { background:var(--panel2); border:1px solid var(--line); color:var(--text); border-radius:8px; padding:8px 10px; text-decoration:none; cursor:pointer; }
@@ -50,7 +50,7 @@
 </head>
 <body>
   <header>
-    <h1>Audiobooks</h1>
+    <h1>Audiobooks</h1><span class="layout-badge">RAILS</span>
     <input id="q" placeholder="Search title, author, narrator, series, or tag">
     <select id="sort" aria-label="Sort order">
       <option value="curated">Sort: Curated</option>
@@ -58,7 +58,7 @@
       <option value="longest">Sort: Longest</option>
       <option value="shortest">Sort: Shortest</option>
     </select>
-    <a class="button" id="stableLink" href="/audiobooks-classic">Classic layout</a>
+    <a class="button" id="classicLink" href="/audiobooks-classic">Classic layout</a>
     <a class="button" id="libraryLink" href="/">Library</a>
   </header>
   <main>
@@ -74,9 +74,12 @@
     const rails = document.querySelector("#rails");
     const detail = document.querySelector("#detail");
     const { api, escapeHTML, formatTime } = window.Sonder;
-    document.querySelector("#stableLink").href = api("/audiobooks-classic");
+    document.querySelector("#classicLink").href = api("/audiobooks-classic");
     document.querySelector("#libraryLink").href = api("/");
-    try { sortSel.value = localStorage.getItem("sonder-beta-sort") || "curated"; } catch (_) {}
+    try {
+      sortSel.value = localStorage.getItem("sonder-audiobooks-sort") ||
+        localStorage.getItem("sonder-beta-sort") || "curated";
+    } catch (_) {}
 
     const frac = b => (b.durationSeconds > 0 && (b.progressSeconds || 0) > 0) ? b.progressSeconds / b.durationSeconds : 0;
     const started = b => (b.progressSeconds || 0) > 5;
@@ -208,7 +211,7 @@
 
     let debounce = null;
     q.addEventListener("input", () => { clearTimeout(debounce); debounce = setTimeout(loadBooks, 180); });
-    sortSel.addEventListener("change", () => { try { localStorage.setItem("sonder-beta-sort", sortSel.value); } catch (_) {} renderRails(); });
+    sortSel.addEventListener("change", () => { try { localStorage.setItem("sonder-audiobooks-sort", sortSel.value); } catch (_) {} renderRails(); });
     loadBooks();
   </script>
 </body>

@@ -1,5 +1,5 @@
 <!doctype html>
-<html>
+<html lang="en" data-audiobook-layout="classic">
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
@@ -15,6 +15,7 @@
     h1 { margin:0; font-size:24px; }
     h2 { margin:0 0 5px; font-size:18px; }
     h3 { margin:0; font-size:15px; }
+    .layout-badge { font-size:11px; font-weight:700; color:#11160f; background:#a8b39c; border-radius:4px; padding:2px 7px; letter-spacing:.06em; }
     p { margin:0; color:var(--muted); line-height:1.35; }
     input { width:100%; background:var(--panel); border:1px solid var(--line); color:var(--text); border-radius:8px; padding:10px 12px; }
     button, a.button { background:var(--panel2); border:1px solid var(--line); color:var(--text); border-radius:8px; padding:8px 10px; text-decoration:none; cursor:pointer; }
@@ -52,9 +53,9 @@
 </head>
 <body>
   <header>
-    <h1>Audiobooks</h1> <span style="font-size:11px;font-weight:700;color:#11160f;background:#a8b39c;border-radius:4px;padding:2px 7px;letter-spacing:.06em">CLASSIC</span>
+    <h1>Audiobooks</h1> <span class="layout-badge">CLASSIC</span>
     <input id="q" placeholder="Search title, author, narrator, series, or tag">
-    <span><a class="button" id="betaLink" href="/audiobooks">Rails layout</a>
+    <span><a class="button" id="railsLink" href="/audiobooks">Rails layout</a>
     <a class="button" id="libraryLink" href="/">Library</a></span>
   </header>
   <main>
@@ -76,7 +77,7 @@
 
     const { api, escapeHTML, formatTime } = window.Sonder;
     document.querySelector("#libraryLink").href = api("/");
-    document.querySelector("#betaLink").href = api("/audiobooks?layout=rails");
+    document.querySelector("#railsLink").href = api("/audiobooks?layout=rails");
 
     async function loadBooks() {
       const response = await fetch(api(`/api/audiobooks?q=${encodeURIComponent(q.value)}`));
