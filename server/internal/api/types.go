@@ -147,6 +147,7 @@ type ServerSettings struct {
 	Port               int    `json:"port"`
 	WebPort            int    `json:"webPort,omitempty"`
 	APIPort            int    `json:"apiPort,omitempty"`
+	Version            string `json:"version"`
 	ThemePreset        string `json:"themePreset"`
 	LibraryLayout      string `json:"libraryLayout"`
 	HideEmptyLibraries bool   `json:"hideEmptyLibraries"`

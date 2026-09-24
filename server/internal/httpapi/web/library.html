@@ -15,6 +15,7 @@
   <header>
     <h1 class="brand-lockup"><img src="/favicon.png?v=asset" alt="" aria-hidden="true"> TM <span>Sonder</span></h1>
     <span class="layout-badge" id="layoutBadge">RAILS</span>
+    <span class="app-version" id="appVersion" aria-label="TM Sonder version">v__SONDER_VERSION__</span>
     <nav class="tabs" id="tabs" aria-label="Library sections">
       <button data-tab="all" class="active">All</button>
       <button data-tab="movies">🎬 Movies</button>
@@ -26,9 +27,6 @@
       <button data-tab="storage">💾 Storage</button>
       <button data-tab="optimize">⚡ Optimize</button>
     </nav>
-    <a class="audiobook-player-link" id="audiobookPlayerLink" href="/audiobooks" title="Open the Rails audiobook player">
-      ▶ Audiobook player <span>RAILS</span>
-    </a>
     <input type="search" id="q" placeholder="Search titles and summaries…" aria-label="Search library">
     <select id="watched" aria-label="Watched filter">
       <option value="all">All</option>
@@ -258,6 +256,12 @@
         Library layout:
         <select id="libraryLayoutSel" style="background:var(--panel2);border:1px solid var(--line);color:var(--text);border-radius:8px;padding:6px 10px">
           <option value="rails">Rails (home + every library)</option><option value="classic">Classic (existing grid)</option>
+        </select>
+      </label>
+      <label style="display:flex;gap:8px;align-items:center;margin-bottom:6px">
+        Audiobook player:
+        <select id="audiobookLayoutSel" style="background:var(--panel2);border:1px solid var(--line);color:var(--text);border-radius:8px;padding:6px 10px">
+          <option value="rails">Rails (shelves + resume)</option><option value="classic">Classic (list)</option>
         </select>
       </label>
       <label style="display:flex;gap:8px;align-items:center;margin-bottom:6px">

@@ -546,7 +546,7 @@ func TestIndexPage(t *testing.T) {
 	if resp.StatusCode != 200 || !strings.Contains(body, "TM Sonder") ||
 		!strings.Contains(body, `id="grid"`) ||
 		!strings.Contains(body, "/library.js") || !strings.Contains(body, "/library.css") ||
-		!strings.Contains(body, `id="audiobookPlayerLink"`) {
+		!strings.Contains(body, `id="appVersion"`) || strings.Contains(body, `id="audiobookPlayerLink"`) {
 		t.Errorf("library web UI not served: %d %.120s", resp.StatusCode, body)
 	}
 	// The extracted assets are served and the script still talks to the API.
@@ -622,7 +622,9 @@ func TestIndexPageRendersSavedThemeBeforeHydration(t *testing.T) {
 		t.Fatalf("status = %d", resp.StatusCode)
 	}
 	if !strings.Contains(body, `data-theme="techmore"`) ||
-		!strings.Contains(body, `data-library-layout="rails"`) {
+		!strings.Contains(body, `data-library-layout="rails"`) ||
+		!strings.Contains(body, `id="appVersion"`) ||
+		!strings.Contains(body, `v`+Version+`</span>`) {
 		t.Fatalf("saved theme was not rendered into initial HTML")
 	}
 }

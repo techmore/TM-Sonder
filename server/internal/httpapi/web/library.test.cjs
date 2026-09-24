@@ -15,6 +15,14 @@ function catalog(items, progress = []) {
 
 const movie = (id, year, extra = {}) => ({ id, title: 'The Thing', kind: 'movie', year, format: 'mkv', ...extra });
 const librarySource = fs.readFileSync(`${__dirname}/library.js`, 'utf8');
+const libraryHTML = fs.readFileSync(`${__dirname}/library.html`, 'utf8');
+
+test('library shows its version and keeps audiobook layout in Settings', () => {
+  assert.match(libraryHTML, /id="appVersion"/);
+  assert.match(libraryHTML, /id="audiobookLayoutSel"/);
+  assert.doesNotMatch(libraryHTML, /id="audiobookPlayerLink"/);
+  assert.match(librarySource, /body\.audiobookLayout = document\.querySelector\("#audiobookLayoutSel"\)\.value/);
+});
 
 test('rail cards keep a fixed width even when titles are long', () => {
   const css = fs.readFileSync(`${__dirname}/library.css`, 'utf8');

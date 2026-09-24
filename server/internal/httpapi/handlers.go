@@ -64,6 +64,7 @@ func (s *Server) serverSettings() api.ServerSettings {
 		Port:               webPort,
 		WebPort:            webPort,
 		APIPort:            apiPort,
+		Version:            Version,
 		ThemePreset:        s.cfg().ThemePreset,
 		LibraryLayout:      config.NormalizeLibraryLayout(s.cfg().LibraryLayout),
 		HideEmptyLibraries: s.cfg().HideEmptyLibraries,

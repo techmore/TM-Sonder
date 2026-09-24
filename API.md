@@ -313,6 +313,7 @@ Media items expose relative artwork URLs instead:
   "isEnabled": true,
   "allowLAN": true,
   "port": 8096,
+  "version": "0.2.10",
   "themePreset": "earthy",
   "libraryLayout": "rails",
   "hideEmptyLibraries": true,
@@ -320,10 +321,11 @@ Media items expose relative artwork URLs instead:
 }
 ```
 
-`libraryLayout` is the shared web browser mode: `rails` is the default
-shelf-based Home and library experience, while `classic` preserves the
-existing grid-first browser. The setting is also available through
-`GET/PUT /api/settings`.
+`version` identifies the running TM Sonder build. `libraryLayout` is the shared
+web browser mode: `rails` is the default shelf-based Home and library
+experience, while `classic` preserves the existing grid-first browser.
+`audiobookLayout` is an independent `rails`/`classic` preference for the
+dedicated `/audiobooks` player and is available through `GET/PUT /api/settings`.
 
 `hideEmptyLibraries` defaults to `true`: the web navigation hides media tabs
 whose catalog kind has no indexed items, while the configured library remains

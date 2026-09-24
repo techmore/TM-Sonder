@@ -9,6 +9,7 @@
     .brand-lockup { display:inline-flex; align-items:center; gap:8px; }
     .brand-lockup img { width:28px; height:28px; border-radius:7px; box-shadow:0 0 0 1px rgba(182,213,109,.32); }
     .layout-badge { display:inline-flex; align-items:center; border:1px solid var(--line); border-radius:5px; padding:2px 7px; color:var(--muted); font-size:10px; font-weight:800; letter-spacing:.7px; }
+    .app-version { color:var(--muted); font-size:11px; font-variant-numeric:tabular-nums; white-space:nowrap; }
     button { font:inherit; }
     header {
       position:sticky; top:0; z-index:5; display:flex; flex-wrap:wrap;
@@ -200,16 +201,6 @@
       display:flex; align-items:center; gap:7px;
     }
     nav.tabs button.active { background:var(--accent); border-color:var(--accent); color:var(--accent-dark); font-weight:700; }
-    .audiobook-player-link {
-      display:inline-flex; align-items:center; gap:7px; white-space:nowrap;
-      background:var(--accent); border:1px solid var(--accent); color:var(--accent-dark);
-      border-radius:8px; padding:8px 11px; font-size:13px; font-weight:700; text-decoration:none;
-    }
-    .audiobook-player-link:hover, .audiobook-player-link:focus-visible { filter:brightness(1.08); }
-    .audiobook-player-link span {
-      border:1px solid currentColor; border-radius:4px; padding:1px 4px;
-      font-size:10px; letter-spacing:.5px; line-height:1.2;
-    }
     section.season { margin:0 22px 18px; background:var(--panel); border:1px solid var(--line); border-radius:var(--radius); overflow:hidden; }
     section.season h2 { margin:0; padding:12px 16px; font-size:14px; letter-spacing:.6px; text-transform:uppercase; color:var(--muted); border-bottom:1px solid var(--line); }
     button.ep-row { display:grid; grid-template-columns:auto 1fr auto auto; gap:12px; align-items:center;
@@ -623,9 +614,6 @@ body[data-library-layout="rails"] nav.tabs button {
   background:var(--panel2); border-color:var(--line); color:var(--text); border-radius:8px;
 }
 body[data-library-layout="rails"] nav.tabs button.active {
-  background:var(--accent); border-color:var(--accent); color:var(--accent-dark);
-}
-body[data-library-layout="rails"] .audiobook-player-link {
   background:var(--accent); border-color:var(--accent); color:var(--accent-dark);
 }
 body[data-library-layout="rails"] section.row h2 {

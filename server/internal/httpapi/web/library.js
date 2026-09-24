@@ -92,12 +92,6 @@
 
     const { api, escapeHTML, formatTime } = window.Sonder;
 
-    const audiobookPlayerLink = typeof document === "undefined"
-      ? null : document.querySelector("#audiobookPlayerLink");
-    if (audiobookPlayerLink && typeof api === "function") {
-      audiobookPlayerLink.href = api("/audiobooks");
-    }
-
     let libraryLayout = "rails";
     let hideEmptyLibraries = true;
     function applyLibraryLayout(value) {
@@ -2566,6 +2560,7 @@
       document.querySelector("#allowLAN").checked = !!settingsData.allowLAN;
       document.querySelector("#themeSel").value = settingsData.themePreset || "earthy";
       document.querySelector("#libraryLayoutSel").value = settingsData.libraryLayout || "rails";
+      document.querySelector("#audiobookLayoutSel").value = settingsData.audiobookLayout || "rails";
       document.querySelector("#hideEmptyLibraries").checked = settingsData.hideEmptyLibraries !== false;
       const cache = settingsData.mediaCache || {};
       document.querySelector("#mediaCacheEnabled").checked = cache.enabled !== false;
@@ -2751,6 +2746,7 @@
       body.allowLAN = document.querySelector("#allowLAN").checked;
       body.themePreset = document.querySelector("#themeSel").value;
       body.libraryLayout = document.querySelector("#libraryLayoutSel").value;
+      body.audiobookLayout = document.querySelector("#audiobookLayoutSel").value;
       body.hideEmptyLibraries = document.querySelector("#hideEmptyLibraries").checked;
       const maxGiB = Number(document.querySelector("#mediaCacheMaxGiB").value);
       const minFreeGiB = Number(document.querySelector("#mediaCacheMinFreeGiB").value);
@@ -2763,9 +2759,8 @@
         maxBytes: Math.round(maxGiB * (1024 ** 3)),
         minFreeBytes: Math.round(minFreeGiB * (1024 ** 3)),
       };
-      // Keep the older per-media keys synchronized for older clients and
-      // standalone routes while the shared layout is the source of truth.
-      body.audiobookLayout = body.libraryLayout;
+      // Keep the older movie/TV keys synchronized with the shared browser
+      // layout while the audiobook player keeps its own explicit preference.
       body.moviesLayout = body.libraryLayout === "classic" ? "grid" : "rails";
       body.tvLayout = body.moviesLayout;
       await putSettings(body);

@@ -62,7 +62,7 @@ func libraryPageForThemeAndLayout(preset, layout string) *gzippedPage {
 	if layout != "classic" {
 		layout = "rails"
 	}
-	cacheKey := preset + "|" + layout
+	cacheKey := Version + "|" + preset + "|" + layout
 
 	libraryThemeMu.Lock()
 	defer libraryThemeMu.Unlock()
@@ -74,6 +74,7 @@ func libraryPageForThemeAndLayout(preset, layout string) *gzippedPage {
 		raw, _, _ := libraryPage.bytes()
 		raw = bytes.ReplaceAll(raw, []byte(`data-theme="earthy"`), []byte(`data-theme="`+preset+`"`))
 		raw = bytes.ReplaceAll(raw, []byte(`data-library-layout="rails"`), []byte(`data-library-layout="`+layout+`"`))
+		raw = bytes.ReplaceAll(raw, []byte(`__SONDER_VERSION__`), []byte(Version))
 		for _, asset := range []struct {
 			placeholder string
 			page        *gzippedPage

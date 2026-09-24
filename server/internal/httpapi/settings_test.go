@@ -120,6 +120,28 @@ func TestSettingsPutPersistsLibraryLayout(t *testing.T) {
 	}
 }
 
+func TestSettingsPutPersistsAudiobookLayout(t *testing.T) {
+	f := newFixture(t, nil)
+	path := filepath.Join(t.TempDir(), "server.json")
+	f.s.SetConfigPath(path)
+
+	req := httptest.NewRequest("PUT", "/api/settings", strings.NewReader(`{"audiobookLayout":"classic"}`))
+	req.RemoteAddr = "127.0.0.1:1111"
+	req.Host = "127.0.0.1:8797"
+	rec := httptest.NewRecorder()
+	f.s.Handler().ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status %d: %s", rec.Code, rec.Body.String())
+	}
+	if got := f.s.cfg().AudiobookLayout; got != "classic" {
+		t.Fatalf("in-memory audiobook layout = %q, want classic", got)
+	}
+	data, err := os.ReadFile(path)
+	if err != nil || !strings.Contains(string(data), `"audiobookLayout": "classic"`) {
+		t.Fatalf("audiobook layout not persisted: %v %s", err, data)
+	}
+}
+
 func TestSettingsPutPersistsHideEmptyLibraries(t *testing.T) {
 	f := newFixture(t, nil)
 	path := filepath.Join(t.TempDir(), "server.json")
