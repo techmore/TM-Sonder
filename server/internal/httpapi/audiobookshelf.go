@@ -34,20 +34,26 @@ func (s *Server) handleAudiobookshelfStatus(w http.ResponseWriter, r *http.Reque
 }
 
 func (s *Server) handleAudiobookshelfLogin(w http.ResponseWriter, r *http.Request) {
-	// BookPlayer sends username/password fields, but this local bridge is
-	// intentionally passwordless: the fields are ignored.
-	var ignored map[string]any
+	var login struct {
+		Username string `json:"username"`
+		Password string `json:"password"`
+	}
 	if r.ContentLength != 0 {
-		if err := jsonDecode(w, r, &ignored); err != nil {
+		if err := jsonDecode(w, r, &login); err != nil {
 			writeError(w, http.StatusBadRequest, "Invalid login request")
 			return
 		}
+	}
+	token, _, err := s.issueAccountSession(login.Username, login.Password)
+	if err != nil {
+		writeError(w, http.StatusUnauthorized, "Invalid username or password")
+		return
 	}
 	now := time.Now().UnixMilli()
 	writeJSON(w, http.StatusOK, map[string]any{
 		"user": map[string]any{
 			"id": audiobookshelfUserID, "username": "sonder", "type": "root",
-			"token": "", "isActive": true, "isLocked": false,
+			"token": token, "isActive": true, "isLocked": false,
 			"permissions": map[string]bool{"download": true, "accessAllLibraries": true, "accessAllTags": true},
 		},
 		"userDefaultLibraryId": audiobookshelfLibraryID,

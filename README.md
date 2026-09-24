@@ -52,13 +52,18 @@ without them, but those media features will be unavailable.
 
 The web listener defaults to Jellyfin's native HTTP port `8096`; the private
 readiness/API listener uses `8097` on `127.0.0.1`. Local-only until LAN is enabled; enabling LAN
-auto-generates a pairing token (persisted in `dataDir/pairing-token`). The
-active interface selection is stored separately in
+auto-generates a pairing token (persisted in `dataDir/pairing-token`). For a hosted
+instance, Caddy can terminate HTTPS on the same external `:8096` port while
+Sonder stays on a private local web port; the API and catalog storage remain
+private. The active interface selection is stored separately in
 `<dataDir>/runtime-state.json`, so changing adapters does not rescan or alter
 the catalog.
 The LAN-facing web listener is a pairing-protected frontend over the private
 API listener, so existing browser and Jellyfin-compatible routes keep working
-without binding the API process or catalog storage to the network.
+without binding the API process or catalog storage to the network. The first
+browser account is created once from `/account/setup?token=<pairing-token>`;
+after that, browsers use an HTTP-only session cookie and Jellyfin/Audiobookshelf
+clients authenticate with the same account and receive a session token.
 
 ### Operations
 

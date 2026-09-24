@@ -21,11 +21,21 @@ Base URL comes from `/api/discovery` as `localURL` or `lanURL`.
 
 - **Loopback peers** (connections from `127.0.0.1` / `::1`) are always allowed without a token so the host Mac keeps working.
 - **Non-loopback** requests require `allowLAN == true`.
-- When a pairing token is configured, non-loopback requests must send it as:
+- The legacy pairing token is accepted on non-loopback requests as:
   - `Authorization: Bearer <token>`, or
   - query `?token=<token>` (discouraged; may appear in logs)
 - Auth is based on the **connection peer address**, not the client-controlled `Host` header.
 - Product default: server enabled, **LAN off**. Enabling LAN auto-generates a pairing token.
+- The first local account can be created through `GET /account/setup?token=<pairing-token>` and `POST /api/auth/setup`.
+  Setup is one-time and requires a 12-character minimum password. The account file is stored with mode `0600`.
+- Browser login uses `GET /account/login`, `POST /api/auth/login`, and the HTTP-only `sonder_session` cookie.
+  `GET /api/auth/session` reports setup/authentication state and `POST /api/auth/logout` revokes the browser session.
+- Compatibility logins validate the same account: Jellyfin `POST /Users/AuthenticateByName` returns an `AccessToken`, and
+  Audiobookshelf `POST /login` returns `user.token`. Those tokens are accepted as a Bearer token, Jellyfin
+  `Authorization: MediaBrowser ... Token="..."`, or Audiobookshelf `?api_key=...`. Compatibility discovery endpoints
+  (`/System/Info/Public`, `/QuickConnect/Enabled`, `/ping`, and `/status`) remain reachable so clients can begin login.
+- Sessions are random, expire after 30 days, and are persisted with the account file so a normal service restart or upgrade
+  does not force every client to sign in again. Passwords are never stored in plaintext.
 
 ## Network binding and public proxy
 

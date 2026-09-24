@@ -14,7 +14,6 @@ import (
 const (
 	jellyfinUserID    = "sonder-user"
 	jellyfinLibraryID = "jf_audiobooks"
-	jellyfinToken     = "sonder-jellyfin-token"
 )
 
 func (s *Server) handleJellyfinPublicInfo(w http.ResponseWriter, r *http.Request) {
@@ -29,9 +28,6 @@ func (s *Server) handleJellyfinQuickConnectEnabled(w http.ResponseWriter, r *htt
 }
 
 func (s *Server) handleJellyfinAuthenticate(w http.ResponseWriter, r *http.Request) {
-	// Jellyfin's client requires an access token in the auth response, but this
-	// compatibility feed deliberately does not validate credentials or require
-	// the token on subsequent media requests.
 	var login struct {
 		Username string `json:"Username"`
 		Password string `json:"Pw"`
@@ -40,8 +36,13 @@ func (s *Server) handleJellyfinAuthenticate(w http.ResponseWriter, r *http.Reque
 		writeError(w, http.StatusBadRequest, "Invalid authentication request")
 		return
 	}
+	token, _, err := s.issueAccountSession(login.Username, login.Password)
+	if err != nil {
+		writeError(w, http.StatusUnauthorized, "Invalid username or password")
+		return
+	}
 	writeJSON(w, http.StatusOK, map[string]any{
-		"AccessToken": jellyfinToken,
+		"AccessToken": token,
 		"ServerId":    ServerID,
 		"User": map[string]any{
 			"Id": jellyfinUserID, "Name": nonEmpty(login.Username, "sonder"), "ServerId": ServerID,

@@ -23,6 +23,7 @@ import (
 
 	"tm-sonder/server/internal/api"
 	"tm-sonder/server/internal/audiobookopt"
+	"tm-sonder/server/internal/auth"
 	"tm-sonder/server/internal/config"
 	"tm-sonder/server/internal/enrich"
 	"tm-sonder/server/internal/library"
@@ -65,6 +66,8 @@ type Server struct {
 	movieMetadata      *enrich.Enricher
 	audiobookOptimizer *audiobookopt.Manager
 	runtimeControl     *runtimecontrol.Controller
+	accounts           *auth.Store
+	authLoadErr        error
 	onMutation         func()
 	onProgress         func()
 
@@ -87,12 +90,19 @@ type Server struct {
 }
 
 func New(cfg *config.Config, store *library.Store, scanner *library.Scanner, tm *transcode.Manager) *Server {
+	accountPath := filepath.Join(cfg.DataDir, "account.json")
+	accounts, authErr := auth.Open(accountPath)
 	s := &Server{
 		store:         store,
 		scanner:       scanner,
 		tm:            tm,
 		movieMetadata: enrich.New(filepath.Join(cfg.DataDir, "metadata-cache")),
 		logger:        log.New(log.Writer(), "sonder-http ", log.LstdFlags),
+		accounts:      accounts,
+		authLoadErr:   authErr,
+	}
+	if authErr != nil {
+		s.logger.Printf("account store unavailable: %v", authErr)
 	}
 	s.cfgPtr.Store(cfg)
 	s.mux = http.NewServeMux()
@@ -209,6 +219,12 @@ func (s *Server) persistPairingToken(token string) {
 
 func (s *Server) routes() {
 	m := s.mux
+	m.HandleFunc("GET /account/login", s.handleAccountLoginPage)
+	m.HandleFunc("GET /account/setup", s.handleAccountSetupPage)
+	m.HandleFunc("GET /api/auth/session", s.handleAuthSession)
+	m.HandleFunc("POST /api/auth/login", s.handleAccountLogin)
+	m.HandleFunc("POST /api/auth/setup", s.handleAccountSetup)
+	m.HandleFunc("POST /api/auth/logout", s.handleAccountLogout)
 	m.HandleFunc("GET /ping", s.handleAudiobookshelfPing)
 	m.HandleFunc("GET /status", s.handleAudiobookshelfStatus)
 	m.HandleFunc("POST /login", s.handleAudiobookshelfLogin)
@@ -500,7 +516,10 @@ func hostIsLoopback(hostport string) bool {
 	return isLoopback(host)
 }
 
-// withAuth implements API.md auth: loopback bypass, LAN gate, Bearer/?token=.
+// withAuth implements local account sessions plus the legacy pairing-token
+// path. Compatibility login endpoints remain reachable so BookPlayer and
+// Jellyfin can authenticate, but catalog/media requests require a valid
+// account session or pairing credential.
 func (s *Server) withAuth(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		// The browser requests these immutable UI assets separately after it
@@ -512,21 +531,13 @@ func (s *Server) withAuth(next http.Handler) http.Handler {
 			next.ServeHTTP(w, r)
 			return
 		}
-		// Audiobookshelf/BookPlayer compatibility endpoints intentionally have no
-		// authentication. They are a local-LAN media feed, not the Sonder admin API.
-		if isAudiobookshelfPath(r.URL.Path) || isJellyfinPath(r.URL.Path) || hasJellyfinCredentials(r) {
-			if isLoopback(peerHost(r)) && hostIsLoopback(r.Host) {
-				next.ServeHTTP(w, r)
-				return
-			}
-			if !s.cfg().AllowLAN {
-				writeError(w, http.StatusForbidden, "LAN access disabled")
-				return
-			}
+		if isAccountPath(r.URL.Path) {
 			next.ServeHTTP(w, r)
 			return
 		}
-		if isLoopback(peerHost(r)) && hostIsLoopback(r.Host) {
+
+		localTrust := isLoopback(peerHost(r)) && hostIsLoopback(r.Host)
+		if localTrust {
 			next.ServeHTTP(w, r)
 			return
 		}
@@ -534,7 +545,47 @@ func (s *Server) withAuth(next http.Handler) http.Handler {
 			writeError(w, http.StatusForbidden, "LAN access disabled")
 			return
 		}
-		if s.cfg().PairingToken != "" && !s.tokenMatches(r) {
+
+		if isJellyfinPath(r.URL.Path) {
+			if isJellyfinPublicPath(r.URL.Path) || r.URL.Path == "/Users/AuthenticateByName" {
+				next.ServeHTTP(w, r)
+				return
+			}
+			if s.validCompatibilityCredential(r) {
+				next.ServeHTTP(w, r)
+				return
+			}
+			writeError(w, http.StatusUnauthorized, "Invalid or missing account credential")
+			return
+		}
+
+		if isAudiobookshelfPath(r.URL.Path) {
+			if r.URL.Path == "/ping" || r.URL.Path == "/status" || r.URL.Path == "/login" {
+				next.ServeHTTP(w, r)
+				return
+			}
+			if s.validCompatibilityCredential(r) {
+				next.ServeHTTP(w, r)
+				return
+			}
+			writeError(w, http.StatusUnauthorized, "Invalid or missing account credential")
+			return
+		}
+
+		if s.validAccountRequest(r) {
+			next.ServeHTTP(w, r)
+			return
+		}
+		if r.Method == http.MethodGet && strings.Contains(strings.ToLower(r.Header.Get("Accept")), "text/html") && isBrowserPage(r.URL.Path) {
+			location := "/account/login?next=" + url.QueryEscape(r.URL.RequestURI())
+			http.Redirect(w, r, location, http.StatusSeeOther)
+			return
+		}
+		if s.cfg().PairingToken == "" {
+			writeError(w, http.StatusUnauthorized, "Sign in required")
+			return
+		}
+		if !s.tokenMatches(r) {
 			writeError(w, http.StatusUnauthorized, "Invalid or missing pairing token")
 			return
 		}
@@ -555,6 +606,15 @@ func isJellyfinPath(path string) bool {
 		strings.HasPrefix(path, "/Artists/") || path == "/Persons"
 }
 
+func isJellyfinPublicPath(path string) bool {
+	return path == "/System/Info/Public" || path == "/QuickConnect/Enabled"
+}
+
+func isBrowserPage(path string) bool {
+	return path == "/" || path == "/audiobooks" || path == "/audiobooks-beta" ||
+		path == "/audiobooks-classic" || path == "/ebooks"
+}
+
 func isPublicWebAsset(path string) bool {
 	switch path {
 	case "/shared.js", "/library.css", "/library.js", "/favicon.svg", "/favicon.png":
@@ -564,10 +624,35 @@ func isPublicWebAsset(path string) bool {
 	}
 }
 
-func hasJellyfinCredentials(r *http.Request) bool {
+func (s *Server) validCompatibilityCredential(r *http.Request) bool {
+	if s.validAccountRequest(r) {
+		return true
+	}
+	if token := mediaBrowserToken(r); token != "" && s.accountReady() {
+		if _, ok := s.accounts.ValidSession(token); ok {
+			return true
+		}
+	}
+	if token := strings.TrimSpace(r.URL.Query().Get("api_key")); token != "" && s.accountReady() {
+		if _, ok := s.accounts.ValidSession(token); ok {
+			return true
+		}
+	}
+	return false
+}
+
+func mediaBrowserToken(r *http.Request) string {
 	auth := r.Header.Get("Authorization")
-	return strings.HasPrefix(strings.ToLower(auth), "mediabrowser ") ||
-		r.URL.Query().Get("api_key") == jellyfinToken
+	if !strings.HasPrefix(strings.ToLower(auth), "mediabrowser ") {
+		return ""
+	}
+	for _, part := range strings.Split(auth[len("MediaBrowser "):], ",") {
+		key, value, ok := strings.Cut(strings.TrimSpace(part), "=")
+		if ok && strings.EqualFold(strings.TrimSpace(key), "token") {
+			return strings.Trim(strings.TrimSpace(value), "\"")
+		}
+	}
+	return ""
 }
 
 // tokenMatches reports whether the request carries the configured pairing
