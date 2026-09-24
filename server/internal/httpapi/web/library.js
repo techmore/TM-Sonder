@@ -2469,6 +2469,7 @@
 
     // ---------- Settings ----------
     let settingsData = null;
+    let cacheStatusData = null;
     let networkStatusData = null;
     let networkExposureApplying = false;
     document.querySelector("#settingsBtn").addEventListener("click", openSettings);
@@ -2529,6 +2530,7 @@
       status.textContent = "Loading…";
       try {
         settingsData = await (await fetch(api("/api/settings"))).json();
+        await loadCacheStatus();
         applyLibraryLayout(settingsData.libraryLayout || "rails");
         hideEmptyLibraries = settingsData.hideEmptyLibraries !== false;
         applyEmptyLibraryTabs();
@@ -2537,6 +2539,15 @@
       } catch { settingsData = null; }
       renderSettings();
       status.textContent = "";
+    }
+
+    async function loadCacheStatus() {
+      try {
+        const response = await fetch(api("/api/cache/status"), { cache: "no-store" });
+        cacheStatusData = response.ok ? await response.json() : null;
+      } catch (_) {
+        cacheStatusData = null;
+      }
     }
 
     function renderSettings() {
@@ -2556,6 +2567,19 @@
       document.querySelector("#themeSel").value = settingsData.themePreset || "earthy";
       document.querySelector("#libraryLayoutSel").value = settingsData.libraryLayout || "rails";
       document.querySelector("#hideEmptyLibraries").checked = settingsData.hideEmptyLibraries !== false;
+      const cache = settingsData.mediaCache || {};
+      document.querySelector("#mediaCacheEnabled").checked = cache.enabled !== false;
+      document.querySelector("#mediaCacheMaxGiB").value = (Number(cache.maxBytes || 0) / (1024 ** 3)).toFixed(2);
+      document.querySelector("#mediaCacheMinFreeGiB").value = (Number(cache.minFreeBytes || 0) / (1024 ** 3)).toFixed(2);
+      const cacheStatus = document.querySelector("#mediaCacheStatus");
+      if (cacheStatus) {
+        const live = cacheStatusData || {};
+        const state = live.enabled === false ? "disabled" : "enabled";
+        const cached = formatOptimizationBytes(live.cachedBytes || 0);
+        const limit = formatOptimizationBytes(live.maxBytes || cache.maxBytes || 0);
+        const free = formatOptimizationBytes(live.freeBytes || 0);
+        cacheStatus.textContent = `Currently ${state} · ${cached} cached of ${limit} · ${free} free`;
+      }
       document.querySelector("#mounts").innerHTML =
         (settingsData.suggestedMounts ?? []).map(m => `<option value="${escapeHTML(m)}">`).join("");
 
@@ -2728,6 +2752,17 @@
       body.themePreset = document.querySelector("#themeSel").value;
       body.libraryLayout = document.querySelector("#libraryLayoutSel").value;
       body.hideEmptyLibraries = document.querySelector("#hideEmptyLibraries").checked;
+      const maxGiB = Number(document.querySelector("#mediaCacheMaxGiB").value);
+      const minFreeGiB = Number(document.querySelector("#mediaCacheMinFreeGiB").value);
+      if (!Number.isFinite(maxGiB) || maxGiB <= 0 || !Number.isFinite(minFreeGiB) || minFreeGiB < 0) {
+        flashStatus("Cache limit must be greater than 0 and free-space reserve cannot be negative");
+        return;
+      }
+      body.mediaCache = {
+        enabled: document.querySelector("#mediaCacheEnabled").checked,
+        maxBytes: Math.round(maxGiB * (1024 ** 3)),
+        minFreeBytes: Math.round(minFreeGiB * (1024 ** 3)),
+      };
       // Keep the older per-media keys synchronized for older clients and
       // standalone routes while the shared layout is the source of truth.
       body.audiobookLayout = body.libraryLayout;
@@ -3249,6 +3284,7 @@
           return false;
         }
         settingsData = await r.json();
+        await loadCacheStatus();
         applyLibraryLayout(settingsData.libraryLayout || "rails");
         hideEmptyLibraries = settingsData.hideEmptyLibraries !== false;
         applyEmptyLibraryTabs();

@@ -13,6 +13,7 @@ import (
 
 	"tm-sonder/server/internal/config"
 	"tm-sonder/server/internal/library"
+	"tm-sonder/server/internal/mediacache"
 )
 
 func newEmptyStore() *library.Store { return library.New() }
@@ -146,6 +147,41 @@ func TestSettingsPutPersistsHideEmptyLibraries(t *testing.T) {
 	}
 	if payload["hideEmptyLibraries"] != false {
 		t.Errorf("response hide empty libraries = %v, want false", payload["hideEmptyLibraries"])
+	}
+}
+
+func TestSettingsPutReconfiguresMediaCache(t *testing.T) {
+	f := newFixture(t, nil)
+	path := filepath.Join(t.TempDir(), "server.json")
+	f.s.SetConfigPath(path)
+	cache, err := mediacache.New(mediacache.Config{
+		Enabled: true, Dir: filepath.Join(t.TempDir(), "media-cache"), MaxBytes: 1024, MinFreeBytes: 0,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer cache.Close()
+	f.s.SetMediaCache(cache)
+
+	req := httptest.NewRequest("PUT", "/api/settings", strings.NewReader(`{"mediaCache":{"enabled":true,"maxBytes":64,"minFreeBytes":7}}`))
+	req.RemoteAddr = "127.0.0.1:1111"
+	req.Host = "127.0.0.1:8797"
+	rec := httptest.NewRecorder()
+	f.s.Handler().ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status %d: %s", rec.Code, rec.Body.String())
+	}
+	if got := f.s.cfg().MediaCache; got.MaxBytes != 64 || got.MinFreeBytes != 7 || !got.Enabled {
+		t.Fatalf("in-memory media cache settings = %+v", got)
+	}
+	status := cache.Status()
+	if status.MaxBytes != 64 || status.MinFreeBytes != 7 || !status.Enabled {
+		t.Fatalf("live media cache settings = %+v", status)
+	}
+
+	data, err := os.ReadFile(path)
+	if err != nil || !strings.Contains(string(data), `"maxBytes": 64`) {
+		t.Fatalf("media cache settings not persisted: %v %s", err, data)
 	}
 }
 

@@ -65,6 +65,9 @@ movies when the cap is reached.
 The first request still streams from the NAS while a complete local copy is
 made in the background; a completed cache entry can continue serving if the
 NAS mount briefly disappears.
+The protected web Settings panel exposes the cache enable switch, capacity,
+and free-space reserve in GiB; saving a smaller capacity evicts inactive
+lower-priority entries immediately without rescanning the library.
 The LAN-facing web listener is a pairing-protected frontend over the private
 API listener, so existing browser and Jellyfin-compatible routes keep working
 without binding the API process or catalog storage to the network. The first

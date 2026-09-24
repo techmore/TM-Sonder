@@ -332,6 +332,24 @@ new library.
 
 Clients must store any pairing token they were given out-of-band (Keychain). The token is never returned by the API.
 
+The admin Settings panel, or `PUT/PATCH /api/settings`, can update the local
+cache without a restart:
+
+```json
+{
+  "mediaCache": {
+    "enabled": true,
+    "maxBytes": 107374182400,
+    "minFreeBytes": 21474836480
+  }
+}
+```
+
+`maxBytes` and `minFreeBytes` are byte counts. Lowering `maxBytes` immediately
+evicts inactive lower-priority entries; active streams finish normally. The
+cache directory remains managed by the server and is not changed by this
+endpoint.
+
 ## Playback
 
 | Method | Path | Purpose |

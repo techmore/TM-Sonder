@@ -15,30 +15,32 @@ import (
 	"tm-sonder/server/internal/api"
 	"tm-sonder/server/internal/config"
 	"tm-sonder/server/internal/enrich"
+	"tm-sonder/server/internal/mediacache"
 )
 
 // SettingsPayload is the GET/PUT shape for /api/settings. The pairing token
 // is only included when the request comes from loopback.
 type SettingsPayload struct {
-	Version            int            `json:"version"`
-	Port               int            `json:"port"`
-	WebPort            int            `json:"webPort,omitempty"`
-	APIPort            int            `json:"apiPort,omitempty"`
-	DataDir            string         `json:"dataDir"`
-	AllowLAN           bool           `json:"allowLAN"`
-	TokenConfigured    bool           `json:"tokenConfigured"`
-	PairingToken       *string        `json:"pairingToken,omitempty"`
-	RequiresPairing    bool           `json:"requiresPairing"`
-	ThemePreset        string         `json:"themePreset"`
-	LibraryLayout      string         `json:"libraryLayout"`
-	HideEmptyLibraries bool           `json:"hideEmptyLibraries"`
-	AudiobookLayout    string         `json:"audiobookLayout"`
-	MoviesLayout       string         `json:"moviesLayout"`
-	TVLayout           string         `json:"tvLayout"`
-	HWAccel            string         `json:"hwaccel"`
-	MaxConcurrent      int            `json:"maxConcurrent"`
-	Libraries          []LibraryEntry `json:"libraries"`
-	SuggestedMounts    []string       `json:"suggestedMounts"`
+	Version            int               `json:"version"`
+	Port               int               `json:"port"`
+	WebPort            int               `json:"webPort,omitempty"`
+	APIPort            int               `json:"apiPort,omitempty"`
+	DataDir            string            `json:"dataDir"`
+	AllowLAN           bool              `json:"allowLAN"`
+	TokenConfigured    bool              `json:"tokenConfigured"`
+	PairingToken       *string           `json:"pairingToken,omitempty"`
+	RequiresPairing    bool              `json:"requiresPairing"`
+	ThemePreset        string            `json:"themePreset"`
+	LibraryLayout      string            `json:"libraryLayout"`
+	HideEmptyLibraries bool              `json:"hideEmptyLibraries"`
+	AudiobookLayout    string            `json:"audiobookLayout"`
+	MoviesLayout       string            `json:"moviesLayout"`
+	TVLayout           string            `json:"tvLayout"`
+	HWAccel            string            `json:"hwaccel"`
+	MaxConcurrent      int               `json:"maxConcurrent"`
+	MediaCache         config.MediaCache `json:"mediaCache"`
+	Libraries          []LibraryEntry    `json:"libraries"`
+	SuggestedMounts    []string          `json:"suggestedMounts"`
 }
 
 type LibraryEntry struct {
@@ -76,6 +78,7 @@ func (s *Server) settingsPayload(includeToken bool) SettingsPayload {
 		TVLayout:           config.NormalizeMediaLayout(s.cfg().TVLayout),
 		HWAccel:            s.cfg().Transcode.HWAccel,
 		MaxConcurrent:      s.cfg().Transcode.MaxConcurrent,
+		MediaCache:         s.cfg().MediaCache,
 		Libraries:          libs,
 		SuggestedMounts:    suggestedMounts(),
 	}
@@ -137,14 +140,50 @@ func (s *Server) handleSettingsGet(w http.ResponseWriter, r *http.Request) {
 }
 
 type settingsUpdate struct {
-	AllowLAN           *bool           `json:"allowLAN"`
-	ThemePreset        *string         `json:"themePreset"`
-	LibraryLayout      *string         `json:"libraryLayout"`
-	HideEmptyLibraries *bool           `json:"hideEmptyLibraries"`
-	AudiobookLayout    *string         `json:"audiobookLayout"`
-	MoviesLayout       *string         `json:"moviesLayout"`
-	TVLayout           *string         `json:"tvLayout"`
-	Libraries          *[]LibraryEntry `json:"libraries"`
+	AllowLAN           *bool             `json:"allowLAN"`
+	ThemePreset        *string           `json:"themePreset"`
+	LibraryLayout      *string           `json:"libraryLayout"`
+	HideEmptyLibraries *bool             `json:"hideEmptyLibraries"`
+	AudiobookLayout    *string           `json:"audiobookLayout"`
+	MoviesLayout       *string           `json:"moviesLayout"`
+	TVLayout           *string           `json:"tvLayout"`
+	MediaCache         *mediaCacheUpdate `json:"mediaCache"`
+	Libraries          *[]LibraryEntry   `json:"libraries"`
+}
+
+type mediaCacheUpdate struct {
+	Enabled      *bool  `json:"enabled"`
+	MaxBytes     *int64 `json:"maxBytes"`
+	MinFreeBytes *int64 `json:"minFreeBytes"`
+}
+
+func applyMediaCacheUpdate(current config.MediaCache, update *mediaCacheUpdate) (config.MediaCache, error) {
+	if update == nil {
+		return current, nil
+	}
+	next := current
+	if update.Enabled != nil {
+		next.Enabled = *update.Enabled
+	}
+	if update.MaxBytes != nil {
+		next.MaxBytes = *update.MaxBytes
+	}
+	if update.MinFreeBytes != nil {
+		next.MinFreeBytes = *update.MinFreeBytes
+	}
+	if next.MaxBytes < 0 {
+		return config.MediaCache{}, fmt.Errorf("mediaCache.maxBytes cannot be negative")
+	}
+	if next.MinFreeBytes < 0 {
+		return config.MediaCache{}, fmt.Errorf("mediaCache.minFreeBytes cannot be negative")
+	}
+	if next.Enabled && next.MaxBytes == 0 {
+		next.MaxBytes = config.DefaultMediaCacheMaxBytes
+	}
+	if next.Enabled && next.MaxBytes <= 0 {
+		return config.MediaCache{}, fmt.Errorf("mediaCache.maxBytes must be greater than zero when enabled")
+	}
+	return next, nil
 }
 
 // handleSettingsPut implements PUT/PATCH /api/settings: applies validated
@@ -164,6 +203,11 @@ func (s *Server) handleSettingsPut(w http.ResponseWriter, r *http.Request) {
 	current := s.cfg()
 	rescanNeeded := false
 	nextLibs := current.Libraries
+	nextMediaCache, err := applyMediaCacheUpdate(current.MediaCache, upd.MediaCache)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
 	if upd.Libraries != nil {
 		// Guard against an accidental empty library table wiping the catalog:
 		// require an explicit acknowledgement when libraries already exist.
@@ -227,6 +271,9 @@ func (s *Server) handleSettingsPut(w http.ResponseWriter, r *http.Request) {
 		if upd.TVLayout != nil {
 			next.TVLayout = config.NormalizeMediaLayout(*upd.TVLayout)
 		}
+		if upd.MediaCache != nil {
+			next.MediaCache = nextMediaCache
+		}
 	})
 	if upd.Libraries != nil {
 		s.store.SetDirectories(directoriesFromLibraries(updated.Libraries))
@@ -236,6 +283,17 @@ func (s *Server) handleSettingsPut(w http.ResponseWriter, r *http.Request) {
 	}
 	if newToken != "" {
 		s.persistPairingToken(newToken)
+	}
+	if upd.MediaCache != nil && s.mediaCache != nil {
+		if err := s.mediaCache.Reconfigure(mediacache.Config{
+			Enabled:      updated.MediaCache.Enabled,
+			Dir:          updated.MediaCache.Dir,
+			MaxBytes:     updated.MediaCache.MaxBytes,
+			MinFreeBytes: updated.MediaCache.MinFreeBytes,
+		}); err != nil {
+			writeError(w, http.StatusInternalServerError, "Could not apply media cache settings: "+err.Error())
+			return
+		}
 	}
 
 	if err := s.persistConfig(); err != nil {

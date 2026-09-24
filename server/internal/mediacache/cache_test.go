@@ -99,6 +99,57 @@ func TestNewerMovieWinsAgainstOlderMovie(t *testing.T) {
 	}
 }
 
+func TestReconfigureChangesCapacityAndEnabledState(t *testing.T) {
+	root := t.TempDir()
+	cacheDir := filepath.Join(root, "cache")
+	cache, err := New(Config{Enabled: false, Dir: cacheDir, MaxBytes: 12})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer cache.Close()
+	if cache.Status().Enabled {
+		t.Fatal("cache should start disabled")
+	}
+
+	if err := cache.Reconfigure(Config{Enabled: true, Dir: cacheDir, MaxBytes: 12, MinFreeBytes: 0}); err != nil {
+		t.Fatal(err)
+	}
+	if !cache.Status().Enabled {
+		t.Fatal("cache did not enable")
+	}
+
+	first := writeMedia(t, root, "first", api.KindMovie, 1990, []byte("123456"))
+	second := writeMedia(t, root, "second", api.KindMovie, 2025, []byte("abcdef"))
+	cache.Acquire(first)
+	cache.Acquire(second)
+	waitFor(t, func() bool { return cache.Status().CachedFiles == 2 })
+
+	if err := cache.Reconfigure(Config{Enabled: true, Dir: cacheDir, MaxBytes: 6, MinFreeBytes: 0}); err != nil {
+		t.Fatal(err)
+	}
+	status := cache.Status()
+	if status.MaxBytes != 6 || status.CachedBytes > 6 || status.CachedFiles != 1 {
+		t.Fatalf("shrunk cache status = %+v", status)
+	}
+
+	if err := cache.Reconfigure(Config{Enabled: false, Dir: cacheDir, MaxBytes: 6, MinFreeBytes: 0}); err != nil {
+		t.Fatal(err)
+	}
+	if cache.Status().Enabled {
+		t.Fatal("cache did not disable")
+	}
+	if path, _, hit := cache.Acquire(first); hit || path != first.SourcePath {
+		t.Fatalf("disabled acquire = path %q hit %t", path, hit)
+	}
+	if err := cache.Reconfigure(Config{Enabled: true, Dir: cacheDir, MaxBytes: 6, MinFreeBytes: 0}); err != nil {
+		t.Fatal(err)
+	}
+	status = cache.Status()
+	if status.CachedBytes > 6 || status.CachedFiles != 1 {
+		t.Fatalf("re-enabled cache status = %+v", status)
+	}
+}
+
 func writeMedia(t *testing.T, root, id string, kind api.MediaKind, year int, data []byte) Media {
 	t.Helper()
 	path := filepath.Join(root, id+".media")

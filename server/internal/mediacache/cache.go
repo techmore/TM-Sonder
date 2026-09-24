@@ -153,30 +153,79 @@ func New(cfg Config) (*Manager, error) {
 		stop:     make(chan struct{}),
 		done:     make(chan struct{}),
 	}
-	if !m.enabled {
-		close(m.done)
-		return m, nil
-	}
-	if err := os.MkdirAll(m.dir, 0o700); err != nil {
-		return nil, fmt.Errorf("media cache directory: %w", err)
-	}
-	if err := m.load(); err != nil {
-		return nil, err
+	if m.enabled {
+		if err := m.prepareDirectory(); err != nil {
+			return nil, err
+		}
 	}
 	go m.worker()
 	return m, nil
+}
+
+func (m *Manager) prepareDirectory() error {
+	if err := os.MkdirAll(m.dir, 0o700); err != nil {
+		return fmt.Errorf("media cache directory: %w", err)
+	}
+	if err := m.load(); err != nil {
+		return err
+	}
+	return nil
 }
 
 // Close stops background copies after the current copy finishes. A partial
 // copy remains hidden and is removed on the next open.
 func (m *Manager) Close() {
 	m.closeOne.Do(func() {
-		if !m.enabled {
-			return
-		}
 		close(m.stop)
 		<-m.done
 	})
+}
+
+// Reconfigure applies cache settings without restarting the server. The
+// directory is intentionally not movable while the manager is running; the
+// admin surface changes capacity and retention policy only.
+func (m *Manager) Reconfigure(cfg Config) error {
+	if cfg.Enabled && cfg.MaxBytes <= 0 {
+		return fmt.Errorf("media cache max bytes must be greater than zero when enabled")
+	}
+	if cfg.MinFreeBytes < 0 {
+		return fmt.Errorf("media cache minimum free bytes cannot be negative")
+	}
+
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	oldDir, oldMax, oldMin, oldEnabled := m.dir, m.maxBytes, m.minFree, m.enabled
+	dir := strings.TrimSpace(cfg.Dir)
+	if dir == "" {
+		dir = m.dir
+	}
+	if dir != m.dir && (m.enabled || len(m.entries) > 0 || len(m.pending) > 0 || len(m.copying) > 0) {
+		return fmt.Errorf("media cache directory cannot change while it is active")
+	}
+
+	m.dir = dir
+	m.maxBytes = cfg.MaxBytes
+	m.minFree = cfg.MinFreeBytes
+	m.enabled = cfg.Enabled && dir != "" && cfg.MaxBytes > 0
+	if m.enabled && !oldEnabled {
+		if err := os.MkdirAll(m.dir, 0o700); err != nil {
+			m.dir, m.maxBytes, m.minFree, m.enabled = oldDir, oldMax, oldMin, oldEnabled
+			return fmt.Errorf("media cache directory: %w", err)
+		}
+		// Entries are retained while disabled. Reload only when the in-memory
+		// index is empty, otherwise scanning would double-count cached bytes.
+		if len(m.entries) == 0 {
+			if err := m.load(); err != nil {
+				m.dir, m.maxBytes, m.minFree, m.enabled = oldDir, oldMax, oldMin, oldEnabled
+				return err
+			}
+		}
+	}
+	if m.enabled {
+		m.ensureRoomLocked(0, "")
+	}
+	m.signal()
+	return nil
 }
 
 // Acquire returns the local cache path when a complete copy is available. On
@@ -184,11 +233,12 @@ func (m *Manager) Close() {
 // release function must be called when the returned path is no longer in use;
 // active entries are protected from eviction.
 func (m *Manager) Acquire(media Media) (path string, release func(), hit bool) {
-	if !m.cacheable(media) {
+	m.mu.Lock()
+	if !m.cacheableLocked(media) {
+		m.mu.Unlock()
 		return media.SourcePath, func() {}, false
 	}
 	key := cacheKey(media)
-	m.mu.Lock()
 	if e, ok := m.entries[key]; ok {
 		if st, err := os.Stat(e.path); err == nil && st.Size() == media.Size {
 			e.active++
@@ -210,11 +260,12 @@ func (m *Manager) Acquire(media Media) (path string, release func(), hit bool) {
 // caller that wants to warm one or more known-priority items while preserving
 // the same cache policy.
 func (m *Manager) Prefetch(media Media) {
-	if !m.cacheable(media) {
+	m.mu.Lock()
+	if !m.cacheableLocked(media) {
+		m.mu.Unlock()
 		return
 	}
 	key := cacheKey(media)
-	m.mu.Lock()
 	m.enqueueLocked(media, key)
 	m.mu.Unlock()
 	m.signal()
@@ -251,7 +302,7 @@ func (m *Manager) Status() Snapshot {
 	}
 }
 
-func (m *Manager) cacheable(media Media) bool {
+func (m *Manager) cacheableLocked(media Media) bool {
 	return m.enabled && media.SourcePath != "" && media.Size > 0 && media.Size <= m.maxBytes
 }
 
@@ -322,6 +373,13 @@ func (m *Manager) next() *pending {
 }
 
 func (m *Manager) copy(media Media, key string) {
+	m.mu.Lock()
+	if !m.cacheableLocked(media) {
+		m.mu.Unlock()
+		return
+	}
+	dir := m.dir
+	m.mu.Unlock()
 	if !m.sourceStillMatches(media) {
 		return
 	}
@@ -340,7 +398,7 @@ func (m *Manager) copy(media Media, key string) {
 		return
 	}
 	defer src.Close()
-	tmp, err := os.OpenFile(filepath.Join(m.dir, "."+key+".partial"), os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0o600)
+	tmp, err := os.OpenFile(filepath.Join(dir, "."+key+".partial"), os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0o600)
 	if err != nil {
 		return
 	}
@@ -357,12 +415,12 @@ func (m *Manager) copy(media Media, key string) {
 		return
 	}
 
-	path := filepath.Join(m.dir, key+".media")
+	path := filepath.Join(dir, key+".media")
 	_ = os.Remove(path)
 	if err := os.Rename(tmpPath, path); err != nil {
 		return
 	}
-	if err := writeMetadata(filepath.Join(m.dir, key+".meta"), metadata{ID: media.ID, Kind: media.Kind, Year: media.Year}); err != nil {
+	if err := writeMetadata(filepath.Join(dir, key+".meta"), metadata{ID: media.ID, Kind: media.Kind, Year: media.Year}); err != nil {
 		_ = os.Remove(path)
 		return
 	}
@@ -380,11 +438,14 @@ func (m *Manager) copy(media Media, key string) {
 }
 
 func (m *Manager) hasSpace(needed int64) bool {
-	if m.minFree <= 0 {
+	m.mu.Lock()
+	minFree, dir := m.minFree, m.dir
+	m.mu.Unlock()
+	if minFree <= 0 {
 		return true
 	}
-	free := availableBytes(m.dir)
-	return free == 0 || free >= m.minFree+needed
+	free := availableBytes(dir)
+	return free == 0 || free >= minFree+needed
 }
 
 func availableBytes(path string) int64 {
