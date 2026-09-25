@@ -451,6 +451,133 @@ func applyProbe(it *Item, res *probe.Result) {
 	it.ProbedHasCover = res.HasAttachedPicture
 	it.ProbedCoverKnown = true
 	it.ProbedUnsupportedStreams = res.UnsupportedStreams
+	applyFileTags(it, res.Tags)
+}
+
+// applyFileTags folds a file's own container tags into the catalog. Only empty
+// fields are filled: a metadata provider or a manual edit outranks the tag, and
+// the tag must never blank out something already established.
+func applyFileTags(it *Item, tags probe.FileTags) {
+	// album_artist is the more specific credit for an audiobook (the author),
+	// so it is preferred over the per-track artist.
+	if author := firstNonEmpty(tags.AlbumArtist, tags.Artist); author != "" {
+		if it.Author == nil || *it.Author == "" {
+			v := author
+			it.Author = &v
+		}
+	}
+	if it.Narrator == nil || *it.Narrator == "" {
+		if n := narratorFromTags(tags); n != "" {
+			it.Narrator = &n
+		}
+	}
+	if it.Summary == "" {
+		if s := firstNonEmpty(tags.Description, tags.Comment); s != "" {
+			it.Summary = s
+		}
+	}
+	if it.Year == 0 {
+		if y := yearFromTags(tags.Date); y > 0 {
+			it.Year = y
+		}
+	}
+	if len(it.Genres) == 0 {
+		if g := tags.Genre; g != "" {
+			it.Genres = []string{g}
+		}
+	}
+}
+
+// narratorFromTags recovers a narrator from the comment field. The retag tools
+// write "Narrated by <name>", which is the convention Audible/Libation use,
+// but the phrasing varies ("Narrated by:", "Read by", "With <name> as
+// narrator"), so accept the common shapes and nothing more.
+func narratorFromTags(tags probe.FileTags) string {
+	c := strings.TrimSpace(tags.Comment)
+	if c == "" {
+		return ""
+	}
+	lower := strings.ToLower(c)
+	for _, prefix := range []string{
+		"narrated and read by", "narrated by", "read and narrated by",
+		"narrator:", "read by", "with narrator",
+	} {
+		idx := strings.Index(lower, prefix)
+		if idx < 0 {
+			continue
+		}
+		if name := trimNamerCredit(c[idx+len(prefix):]); name != "" {
+			return name
+		}
+	}
+	// "With <name> as narrator" / "featuring <name> as the narrator": the name
+	// sits between the lead-in and the trailing "as narrator" phrase.
+	if idx := strings.Index(lower, " as "); idx > 0 {
+		if head := strings.TrimSpace(c[:idx]); isNamerLeadIn(head) {
+			name := trimNamerCredit(c[:idx])
+			for _, lead := range []string{"with ", "featuring "} {
+				if len(name) >= len(lead) && strings.EqualFold(name[:len(lead)], lead) {
+					name = strings.TrimSpace(name[len(lead):])
+					break
+				}
+			}
+			if n := strings.Trim(name, " \t-—:,"); n != "" {
+				return n
+			}
+		}
+	}
+	return ""
+}
+
+// isNamerLeadIn reports whether a fragment plausibly introduces a name, so that
+// "The narrator changes in part two" is not read as a credit.
+func isNamerLeadIn(s string) bool {
+	l := strings.ToLower(strings.TrimSpace(s))
+	return strings.HasPrefix(l, "with ") || strings.HasPrefix(l, "featuring ")
+}
+
+// trimNamerCredit takes the leading name from a credit fragment, stopping at
+// the first clause so a trailing comment is not absorbed into the name.
+func trimNamerCredit(rest string) string {
+	rest = strings.TrimSpace(rest)
+	if cut := strings.IndexAny(rest, ".;\n"); cut > 0 {
+		rest = rest[:cut]
+	}
+	return strings.TrimSpace(strings.Trim(rest, "-—:,"))
+}
+
+func yearFromTags(date string) int {
+	date = strings.TrimSpace(date)
+	if date == "" {
+		return 0
+	}
+	for _, r := range date {
+		if r >= '0' && r <= '9' {
+			continue
+		}
+		if r == '-' || r == '/' || r == ' ' {
+			continue
+		}
+		break
+	}
+	digits := make([]byte, 0, 4)
+	for _, r := range date {
+		if r < '0' || r > '9' {
+			break
+		}
+		digits = append(digits, byte(r))
+		if len(digits) == 4 {
+			break
+		}
+	}
+	if len(digits) != 4 {
+		return 0
+	}
+	y, err := strconv.Atoi(string(digits))
+	if err != nil || y < 1000 || y > 2999 {
+		return 0
+	}
+	return y
 }
 
 // scanLibraryInto walks one library root. Items whose stable ID lands in keep

@@ -35,6 +35,27 @@ type Result struct {
 	// file had no readable streams (broken/unsupported), which callers use to
 	// distinguish "probed successfully" from "probe returned nothing".
 	StreamCount int
+	// Tags carries the container's own metadata (the M4B atom tags written by
+	// the retag pass and by other rippers). Author, narrator, series, and
+	// summary live here rather than in the filename, so this is the only way
+	// the catalog learns them without a metadata provider.
+	Tags FileTags
+}
+
+// FileTags is the normalized subset of an ffprobe format.tag map that the
+// catalog consumes. Keys are matched case-insensitively because MP4 atom tags
+// arrive as "artist" from ffprobe but as "ARTIST" in FFMETADATA and "©ART" in
+// ID3-derived containers.
+type FileTags struct {
+	Title       string
+	Artist      string
+	AlbumArtist string
+	Album       string
+	Composer    string
+	Genre       string
+	Date        string
+	Comment     string
+	Description string
 }
 
 // ffprobeStream is the subset of one ffprobe stream the catalog consumes.
@@ -64,8 +85,9 @@ type ffprobeOutput struct {
 	Streams  []ffprobeStream   `json:"streams"`
 	Chapters []json.RawMessage `json:"chapters"`
 	Format   struct {
-		Duration string `json:"duration"`
-		BitRate  string `json:"bit_rate"`
+		Duration string            `json:"duration"`
+		BitRate  string            `json:"bit_rate"`
+		Tags     map[string]string `json:"tags"`
 	} `json:"format"`
 }
 
@@ -143,7 +165,89 @@ func Parse(data []byte) (*Result, error) {
 			res.Bitrate = &b
 		}
 	}
+	res.Tags = parseFileTags(raw.Format.Tags)
 	return res, nil
+}
+
+// tagAliases maps every spelling seen across containers onto one canonical
+// field. ffprobe lower-cases most MP4 atoms, but FFMETADATA1 files written by
+// the retag tools use the uppercase names, and ID3-derived containers use the
+// "©" forms. Matching is done on a case-folded, ©-stripped key.
+var tagAliases = map[string]string{
+	"title":        "Title",
+	"artist":       "Artist",
+	"art":          "Artist", // ID3 "©ART" after the © is stripped
+	"album_artist": "AlbumArtist",
+	"albumartist":  "AlbumArtist",
+	"album":        "Album",
+	"composer":     "Composer",
+	"genre":        "Genre",
+	"date":         "Date",
+	"year":         "Date",
+	"comment":      "Comment",
+	"description":  "Description",
+}
+
+// parseFileTags normalizes ffprobe's format.tags map into FileTags. Later
+// duplicate keys win only when they are non-empty, so a container that lists
+// both "©ART" and "artist" does not end up blank.
+func parseFileTags(raw map[string]string) FileTags {
+	var out FileTags
+	if len(raw) == 0 {
+		return out
+	}
+	assign := map[string]*string{
+		"Title":       &out.Title,
+		"Artist":      &out.Artist,
+		"AlbumArtist": &out.AlbumArtist,
+		"Album":       &out.Album,
+		"Composer":    &out.Composer,
+		"Genre":       &out.Genre,
+		"Date":        &out.Date,
+		"Comment":     &out.Comment,
+		"Description": &out.Description,
+	}
+	for k, v := range raw {
+		field, ok := tagAliases[normalizeTagKey(k)]
+		if !ok {
+			continue
+		}
+		if v = strings.TrimSpace(v); v == "" {
+			continue
+		}
+		if *assign[field] == "" {
+			*assign[field] = v
+		}
+	}
+	return out
+}
+
+// normalizeTagKey folds a tag name for alias lookup: lowercase, © dropped, and
+// non-alphanumerics collapsed to underscores. A freeform atom
+// ("----:com.apple.iTunes:ALBUMARTIST") is first reduced to its last dotted
+// segment, since the real field name is the trailing component.
+func normalizeTagKey(k string) string {
+	k = strings.ToLower(strings.TrimSpace(k))
+	k = strings.ReplaceAll(k, "©", "")
+	// A freeform atom is "----:com.apple.iTunes:FIELD": the real field name is
+	// the trailing segment, so cut at the last separator of any kind.
+	if i := strings.LastIndexAny(k, ".:/\\"); i >= 0 && i+1 < len(k) {
+		k = k[i+1:]
+	}
+	var b strings.Builder
+	lastUnderscore := false
+	for _, r := range k {
+		if (r >= 'a' && r <= 'z') || (r >= '0' && r <= '9') {
+			b.WriteRune(r)
+			lastUnderscore = false
+			continue
+		}
+		if !lastUnderscore && b.Len() > 0 {
+			b.WriteByte('_')
+			lastUnderscore = true
+		}
+	}
+	return strings.Trim(b.String(), "_")
 }
 
 func track(prefix string, n int, s *ffprobeStream) api.PlaybackTrack {
