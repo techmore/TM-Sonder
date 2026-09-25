@@ -104,6 +104,48 @@ folder move, not just a file rename.
 Dot-prefixed files (`._Name.m4b` AppleDouble sidecars from the NAS) and
 dot-directories are skipped, so the planner's file counts exclude them.
 
+## Compare competing copies
+
+```sh
+python3 tools/audiobooks/compare_books.py \
+  m4b_work/migration/standardize-plan.json \
+  --out m4b_work/migration/collision-comparison.json
+```
+
+Two folders claiming one canonical path is a suspicion, not a finding, and
+equal byte size is not proof of equal content. This settles it by decoding
+sampled audio to raw PCM and hashing it, which is the only test that survives a
+retag pass: rewriting metadata changes container bytes without touching a
+single audio sample, so two byte-different files can be the same recording and
+two byte-identical files can be different editions.
+
+Verdicts are `identical_file`, `same_recording_different_container`,
+`different_content_same_book`, `prefix_identical`, `different_books`, or
+`not_comparable`. Use `--no-audio` for a fast container-only check and `--full`
+to hash every byte as well. Read-only.
+
+## Resolve unknown authors
+
+```sh
+python3 tools/audiobooks/tag_audit.py m4b_work/migration/standardize-plan.json \
+  --out m4b_work/migration/unknown-author-tags.json
+python3 tools/audiobooks/resolve_authors.py \
+  m4b_work/migration/standardize-plan.json \
+  --out m4b_work/migration/author-proposal.json
+python3 tools/audiobooks/crosscheck_authors.py \
+  m4b_work/migration/author-proposal.json \
+  --out m4b_work/migration/author-crosscheck.json
+```
+
+Three read-only steps: what the files' own tags say, what a metadata provider
+proposes, and whether the independently-acquired ebook library agrees.
+
+**Treat the automated result as evidence, not an answer.** On this library it
+proposed Stephen King for "Cycle of the Werewolf" (Philip K. Dick) and
+"Publius Vergilius Maro" for "The Aeneid", and the ebook cross-check confirmed
+2 of 45 while inventing a false contradiction. The reviewed output lives in
+`m4b_work/migration/author-curation.json`; nothing is moved automatically.
+
 ## Tests
 
 ```sh

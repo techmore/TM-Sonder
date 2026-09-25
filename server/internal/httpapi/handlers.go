@@ -43,6 +43,16 @@ func themeFor(preset string) api.ThemeSnapshot {
 			Accent:     "#526C3F",
 			Text:       "#403D36",
 		}
+	case "bunny":
+		return api.ThemeSnapshot{
+			Preset:     preset,
+			Background: "#080910CC",
+			Sidebar:    "#191C31E6",
+			Surface:    "#101223F2",
+			Border:     "#2A2F4D",
+			Accent:     "#6FE3C3",
+			Text:       "#EEF0FF",
+		}
 	default:
 		return api.ThemeSnapshot{
 			Preset:     preset,

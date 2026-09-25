@@ -1,7 +1,10 @@
     let items = [];
     let lists = [];
     let selectedListID = null;
-    let listCandidateState = null;
+    // Curated-shelf candidate pools, keyed by sorted media kinds. Rebuilt when
+    // the catalog or the copy grouping changes.
+    const listCandidateState = new Map();
+    let listIndexGeneration = 0;
     const progressByID = new Map();
 
     const TOP_100_BOOKS = [
@@ -89,6 +92,244 @@
       ["Best Philosophy Books", "Foundational works for thinking about life.", ["Meditations", "The Republic", "Nicomachean Ethics", "The Prince", "Being and Time"]],
       ["Best Poetry Books", "Poetry collections and epics that changed the form.", ["The Iliad", "The Divine Comedy", "Leaves of Grass", "The Waste Land", "The Complete Poems"]]
     ].map(([name, description, titles], index) => ({ id: `recommended-${index}`, name, description, titles }));
+
+    // ── Curated shelves for every catalog ──────────────────────────────────
+    // The book shelves above were the only curated data in Sonder, and they
+    // only ever matched ebooks and audiobooks. Nothing about a list is
+    // book-specific, so the same engine now also drives movies, shows, and
+    // documentaries: each list declares which media kinds it can match, and
+    // each entry is either "Title" or "Title (Year)".
+    //
+    // The year is what makes a film list trustworthy. "The Thing" is both a
+    // 1982 Carpenter film and a 2011 prequel, "Dune" spans 1984 and 2021, and
+    // "It" spans every decade. An entry that names a year only matches a
+    // catalog entry carrying the same year; an entry without one stays
+    // title-only, which is all that genre shelves ever needed.
+    //
+    // These are selections, not complete canons, and each list says so. The
+    // goal is a shelf that is mostly present in a real library: a list you
+    // already half own is what makes the remaining half a queue.
+    const CURATED_KINDS = {
+      book: ["ebook", "audiobook"],
+      movie: ["movie"],
+      tv: ["tvShow"],
+      doc: ["documentary"],
+    };
+
+    const CURATED_MOVIE_LISTS = [
+      ["Greatest Movies of All Time", "A cross-decade selection from the major critics' polls — the films the canon cannot be argued without.", "movie", [
+        "Metropolis (1927)", "M (1931)", "Bicycle Thieves (1948)", "Citizen Kane (1941)", "Rashomon (1950)",
+        "Tokyo Story (1953)", "Seven Samurai (1954)", "The Searchers (1956)", "On the Waterfront (1954)", "Sunset Boulevard (1950)",
+        "Vertigo (1958)", "Yojimbo (1961)", "Lawrence of Arabia (1962)", "8½ (1963)", "2001: A Space Odyssey (1968)",
+        "Psycho (1960)", "The Godfather (1972)", "The Godfather Part II (1974)", "Jaws (1975)", "Taxi Driver (1976)",
+        "Annie Hall (1977)", "Apocalypse Now (1979)", "Raging Bull (1980)", "Chinatown (1974)", "Blade Runner (1982)",
+        "Rear Window (1954)", "Casablanca (1942)", "Modern Times (1936)", "Some Like It Hot (1959)", "Singin' in the Rain (1952)",
+        "The Apartment (1960)", "Star Wars (1977)", "The Shining (1980)", "Das Boot (1981)", "Ran (1985)",
+        "Cinema Paradiso (1988)", "Goodfellas (1990)", "Schindler's List (1993)", "Pulp Fiction (1994)", "Fight Club (1999)",
+        "Good Will Hunting (1997)", "In the Mood for Love (2000)", "Mulholland Drive (2001)", "There Will Be Blood (2007)",
+        "Get Out (2017)", "La Haine (1995)", "Oldboy (2003)", "Solaris (1972)", "Stalker (1979)",
+        "Portrait of a Lady on Fire (2019)", "Parasite (2019)", "Platoon (1986)", "Amadeus (1984)", "The Untouchables (1987)",
+        "Fargo (1996)", "Titanic (1997)", "No Country for Old Men (2007)", "Whiplash (2014)", "Moonlight (2016)"
+      ]],
+      ["American Cinema Essentials", "A selection from AFI's 100 American Classics and the wider canon of American film.", "movie", [
+        "Citizen Kane (1941)", "The Grapes of Wrath (1940)", "Casablanca (1942)", "Gone with the Wind (1939)", "The Maltese Falcon (1941)",
+        "The Bridge on the River Kwai (1957)", "Ben-Hur (1959)", "Singin' in the Rain (1952)", "On the Waterfront (1954)", "Some Like It Hot (1959)",
+        "The Apartment (1960)", "West Side Story (1961)", "The Godfather (1972)", "The Godfather Part II (1974)", "Jaws (1975)",
+        "Rocky (1976)", "Annie Hall (1977)", "Star Wars (1977)", "Apocalypse Now (1979)", "Raging Bull (1980)",
+        "E.T. the Extra-Terrestrial (1982)", "Terms of Endearment (1983)", "Amadeus (1984)", "Platoon (1986)", "The Untouchables (1987)",
+        "Rain Man (1988)", "Goodfellas (1990)", "The Silence of the Lambs (1991)", "Schindler's List (1993)", "Forrest Gump (1994)",
+        "Braveheart (1995)", "Pulp Fiction (1994)", "Fargo (1996)", "Titanic (1997)", "Saving Private Ryan (1998)",
+        "The Matrix (1999)", "Gladiator (2000)", "A Beautiful Mind (2001)", "Chicago (2002)", "Million Dollar Baby (2004)",
+        "Crash (2005)", "The Departed (2006)", "No Country for Old Men (2007)", "Slumdog Millionaire (2008)", "The Hurt Locker (2008)",
+        "The Social Network (2010)", "The Artist (2011)", "Argo (2012)", "12 Years a Slave (2013)", "Birdman (2014)",
+        "The Revenant (2015)", "Moonlight (2016)", "La La Land (2016)", "Get Out (2017)", "Green Book (2018)",
+        "Parasite (2019)", "Nomadland (2020)", "Everything Everywhere All at Once (2022)"
+      ]],
+      ["The Criterion Essentials", "Restorations and filmmaker spotlights that made the standard for serious home viewing.", "movie", [
+        "Bicycle Thieves (1948)", "Pather Panchali (1955)", "Tokyo Story (1953)", "Rashomon (1950)", "Seven Samurai (1954)",
+        "Yojimbo (1961)", "High and Low (1963)", "Persona (1966)", "Andrei Rublev (1966)", "Stalker (1979)",
+        "Apocalypse Now (1979)", "The Godfather (1972)", "Vertigo (1958)", "Rear Window (1954)", "Sunset Boulevard (1950)",
+        "Some Like It Hot (1959)", "The 400 Blows (1959)", "Breathless (1960)", "La Dolce Vita (1960)", "The Saragossa Manuscript (1965)",
+        "The Battle of Algiers (1966)", "Black Girl (1966)", "In the Mood for Love (2000)", "Beau Travail (1999)", "Wanda (1970)",
+        "The Last Emperor (1987)", "Fitzcarraldo (1982)", "Paris, Texas (1984)", "Wings of Desire (1987)", "Cleo from 5 to 7 (1962)",
+        "Last Year at Marienbad (1971)", "The 39 Steps (1935)", "Kind Hearts and Coronets (1949)", "The Ascent (1977)", "Black Orpheus (1959)"
+      ]],
+      ["Science Fiction and Space", "The ideas, machines, and first contacts that keep the genre moving forward.", "movie", [
+        "2001: A Space Odyssey (1968)", "Solaris (1972)", "Star Wars (1977)", "Close Encounters of the Third Kind (1977)", "Alien (1979)",
+        "Blade Runner (1982)", "The Thing (1982)", "E.T. the Extra-Terrestrial (1982)", "Tron (1982)", "The Terminator (1984)",
+        "Back to the Future (1985)", "Aliens (1986)", "Total Recall (1990)", "Terminator 2: Judgment Day (1991)", "12 Monkeys (1995)",
+        "The Fifth Element (1997)", "Gattaca (1997)", "The Matrix (1999)", "Primer (2004)", "Serenity (2005)",
+        "District 9 (2009)", "Moon (2009)", "Inception (2010)", "Source Code (2011)", "Looper (2012)",
+        "Gravity (2013)", "Her (2013)", "Under the Skin (2013)", "Interstellar (2014)", "Ex Machina (2014)",
+        "Arrival (2016)", "Passengers (2016)", "Annihilation (2018)", "Upgrade (2018)", "The Martian (2015)",
+        "Blade Runner 2049 (2017)", "Dune (2021)", "Everything Everywhere All at Once (2022)", "Nope (2022)", "Poor Things (2023)",
+        "The Substance (2024)", "Coherence (2013)", "Sunshine (2007)", "Stalker (1979)", "Minority Report (2002)"
+      ]],
+      ["Crime, Noir and Thrillers", "Traps, cons, and moral pressure — the sharpest plot-driven films in the library.", "movie", [
+        "The Maltese Falcon (1941)", "Double Indemnity (1944)", "The Big Sleep (1946)", "Out of the Past (1947)", "Laura (1944)",
+        "Touch of Evil (1958)", "Vertigo (1958)", "The Manchurian Candidate (1962)", "Rosemary's Baby (1968)", "The French Connection (1971)",
+        "Chinatown (1974)", "Jaws (1975)", "The Deer Hunter (1978)", "The Shining (1980)", "Blade Runner (1982)",
+        "Scarface (1983)", "Prizzi's Honor (1985)", "The Untouchables (1987)", "Die Hard (1988)", "Goodfellas (1990)",
+        "The Silence of the Lambs (1991)", "Cape Fear (1991)", "Basic Instinct (1992)", "Reservoir Dogs (1992)", "True Romance (1993)",
+        "Léon: The Professional (1994)", "Pulp Fiction (1994)", "Fargo (1996)", "L.A. Confidential (1997)", "Heat (1995)",
+        "The Usual Suspects (1995)", "Se7en (1995)", "Good Will Hunting (1997)", "Memento (2000)", "Snatch (2001)",
+        "The Prestige (2006)", "Zodiac (2007)", "No Country for Old Men (2007)", "The Departed (2006)", "Collateral (2004)",
+        "Prisoners (2013)", "Gone Girl (2014)", "The Town (2010)", "Drive (2011)", "Nightcrawler (2014)", "Argo (2012)"
+      ]],
+      ["Horror and Dread", "The genre's essentials, from practical effects to the films that made being scared respectable.", "movie", [
+        "Night of the Living Dead (1968)", "The Omen (1976)", "The Wicker Man (1973)", "The Texas Chain Saw Massacre (1974)", "Jaws (1975)",
+        "Alien (1979)", "The Shining (1980)", "The Evil Dead (1981)", "The Thing (1982)", "Poltergeist (1982)",
+        "A Nightmare on Elm Street (1984)", "The Fly (1986)", "The Exorcist (1973)", "The Silence of the Lambs (1991)", "Misery (1990)",
+        "Halloween (1978)", "The Blair Witch Project (1999)", "The Sixth Sense (1999)", "Final Destination (2000)", "Scream (1996)",
+        "The Ring (2002)", "28 Days Later (2002)", "The Descent (2005)", "Ginger Snaps (2006)", "REC (2007)",
+        "Let the Right One In (2008)", "Sinister (2012)", "The Conjuring (2013)", "It (2017)", "Hereditary (2018)",
+        "Us (2019)", "Midsommar (2019)", "Get Out (2017)", "A Quiet Place (2018)", "The Lighthouse (2019)", "The Babadook (2014)",
+        "The Witch (2015)", "It Follows (2014)", "Suspiria (1977)", "Possession (1981)", "The Others (2001)", "Coraline (2009)"
+      ]],
+      ["Animation and Family Favourites", "Hand-drawn milestones and modern studio peaks for the whole household.", "movie", [
+        "Akira (1988)", "My Neighbor Totoro (1988)", "Grave of the Fireflies (1988)", "The Nightmare Before Christmas (1993)", "Aladdin (1992)",
+        "Beauty and the Beast (1991)", "The Lion King (1994)", "Toy Story (1995)", "Mulan (1998)", "Princess Mononoke (1997)",
+        "The Iron Giant (1999)", "Spirited Away (2001)", "Shrek (2001)", "Finding Nemo (2003)", "The Triplets of Belleville (2003)",
+        "The Incredibles (2004)", "Howl's Moving Castle (2004)", "Ratatouille (2007)", "Ponyo (2008)", "WALL-E (2008)",
+        "Up (2009)", "Coraline (2009)", "The Secret of Kells (2009)", "Toy Story 3 (2010)", "Ernest & Celestine (2012)",
+        "Frozen (2013)", "Song of the Sea (2014)", "Inside Out (2015)", "Moana (2016)", "Your Name (2016)",
+        "Kubo and the Two Strings (2016)", "Coco (2017)", "The Boss Baby (2017)", "Wolfwalkers (2020)", "Turning Red (2022)",
+        "Belle (2021)", "The Boy and the Heron (2023)", "Only Yesterday (1991)", "Whisper of the Heart (1995)", "Persepolis (2007)",
+        "When Marnie Was There (2014)", "The Red Turtle (2016)", "The Willoughbys (2020)", "Poupelle of Chimney Town (2020)"
+      ]],
+      ["Recent Award Winners", "Best Picture and Best Director winners of the last fifteen years.", "movie", [
+        "The Departed (2006)", "No Country for Old Men (2007)", "Slumdog Millionaire (2008)", "The Hurt Locker (2009)", "The King's Speech (2010)",
+        "The Artist (2011)", "Argo (2012)", "12 Years a Slave (2013)", "Birdman (2014)", "The Revenant (2015)",
+        "Spotlight (2015)", "Moonlight (2016)", "La La Land (2016)", "The Shape of Water (2017)", "Get Out (2017)",
+        "Black Panther (2018)", "Green Book (2018)", "Parasite (2019)", "Nomadland (2020)", "CODA (2021)",
+        "Everything Everywhere All at Once (2022)", "Oppenheimer (2023)", "Anora (2024)", "The Substance (2024)", "Sinners (2025)"
+      ]]
+    ];
+
+    const CURATED_TV_LISTS = [
+      ["Greatest Television of All Time", "The dramatic canon: the shows that made prestige television a form.", "tv", [
+        "The Twilight Zone (1959)", "NYPD Blue (1993)", "The X-Files (1993)", "Oz (1997)", "The Sopranos (1999)",
+        "The West Wing (1999)", "24 (2001)", "Band of Brothers (2001)", "Six Feet Under (2001)", "The Wire (2002)",
+        "The Shield (2002)", "Arrested Development (2003)", "Deadwood (2004)", "Rome (2005)", "The Office (2005)",
+        "Damages (2007)", "Breaking Bad (2008)", "Boston Legal (2004)", "Fargo (2014)", "Halt and Catch Fire (2014)",
+        "Justified (2010)", "Mad Men (2007)", "Boardwalk Empire (2010)", "Downton Abbey (2010)", "The Leftovers (2014)",
+        "Bates Motel (2013)", "The Americans (2013)", "Ozark (2017)", "Succession (2018)", "The Marvelous Mrs. Maisel (2018)",
+        "Mr. Robot (2015)", "Better Call Saul (2015)", "The Expanse (2015)", "Twin Peaks (1990)", "The Simpsons (1989)",
+        "Chernobyl (2019)", "Andor (2022)", "Severance (2022)", "Fleabag (2016)", "The Bear (2022)"
+      ]],
+      ["Prestige and Period Drama", "Corsets, empires, matriarchs, and the slow burn of a serious period production.", "tv", [
+        "Downton Abbey (2010)", "Mad Men (2007)", "The Crown (2016)", "Boardwalk Empire (2010)", "The Tudors (2007)",
+        "Wolf Hall (2015)", "The Knick (2015)", "The Gilded Age (2022)", "Victoria (2016)", "Poldark (2015)",
+        "The White Princess (2017)", "Peaky Blinders (2013)", "Narcos (2015)", "The Man in the High Castle (2015)", "Brave New World (2020)",
+        "Chernobyl (2019)", "The Terror (2018)", "The Last Kingdom (2015)", "Black Sails (2014)", "Versailles (2015)",
+        "Outlander (2014)", "The Alienist (2018)", "Normal People (2020)", "Anne with an E (2017)"
+      ]],
+      ["Comedy Worth Rewatching", "Sitcoms and dramedies with a long shelf life and a quotable line per episode.", "tv", [
+        "Seinfeld (1989)", "The Simpsons (1989)", "Friends (1994)", "That '70s Show (1998)", "Futurama (1999)",
+        "Black Books (2000)", "Curb Your Enthusiasm (2000)", "Arrested Development (2003)", "Peep Show (2003)", "The Office (2005)",
+        "It's Always Sunny in Philadelphia (2005)", "30 Rock (2006)", "Community (2009)", "Parks and Recreation (2009)", "Modern Family (2009)",
+        "Sherlock (2010)", "Silicon Valley (2014)", "BoJack Horseman (2014)", "Brooklyn Nine-Nine (2013)", "Schitt's Creek (2015)",
+        "The Good Place (2016)", "Insecure (2016)", "Derry Girls (2016)", "Detectorists (2014)", "Veep (2012)",
+        "Ramy (2019)", "Abbott Elementary (2021)", "The Bear (2022)", "Atlanta (2018)", "Shrill (2019)",
+        "Ted Lasso (2020)", "Mythic Quest (2019)", "Never Have I Ever (2020)", "Rick and Morty (2013)", "Beef (2023)",
+        "Raising Dion (2019)", "Cobra Kai (2018)", "GLOW (2017)", "Baskets (2016)", "Nathan for You (2013)"
+      ]],
+      ["Speculative and Genre Series", "The shows that turned genre television into a delivery system for ideas.", "tv", [
+        "The X-Files (1993)", "Buffy the Vampire Slayer (1997)", "Firefly (2002)", "Lost (2004)", "Battlestar Galactica (2004)",
+        "Doctor Who (2005)", "Supernatural (2005)", "Fringe (2008)", "True Blood (2008)", "The Vampire Diaries (2009)",
+        "Game of Thrones (2011)", "Person of Interest (2011)", "Black Mirror (2011)", "The Walking Dead (2010)", "Stranger Things (2016)",
+        "Westworld (2016)", "The Handmaid's Tale (2017)", "Dark (2017)", "The Expanse (2015)", "The Orville (2017)",
+        "Better Call Saul (2015)", "Mr. Robot (2015)", "Legion (2017)", "Maniac (2018)", "Devs (2020)",
+        "Foundation (2021)", "The Wheel of Time (2021)", "Severance (2022)", "Silo (2022)", "The Last of Us (2023)",
+        "Fallout (2024)", "3 Body Problem (2024)", "Shōgun (2024)", "The Sympathizer (2024)", "Ripley (2024)",
+        "Scavengers Reign (2023)", "His Dark Materials (2019)", "Arcane (2021)", "Pantheon (2022)", "Blue Eye Samurai (2023)", "Andor (2022)"
+      ]]
+    ];
+
+    const CURATED_DOC_LISTS = [
+      ["Greatest Documentaries", "Non-fiction features that made the form feel like a category worth chasing.", "doc", [
+        "Nanook of the North (1922)", "Häxan (1922)", "Man with a Movie Camera (1929)", "Let There Be Light (1946)", "Tokyo Olympiad (1961)",
+        "Titicut Follies (1967)", "Salesman (1969)", "7 Up (1969)", "Grey Gardens (1975)", "Harlan County War (1976)",
+        "The Last Waltz (1978)", "The Thin Blue Line (1988)", "Paris Is Burning (1990)", "Hoop Dreams (1994)", "Crumb (1994)",
+        "When We Were Kings (1996)", "The Last Days (1998)", "One Day in September (1999)", "Spellbound (2002)", "Born into Brothels (2004)",
+        "Grizzly Man (2005)", "March of the Penguins (2005)", "Man on Wire (2008)", "The Cove (2009)", "Winter on Fire (2012)",
+        "Searching for Sugar Man (2012)", "The Act of Killing (2012)", "20 Feet from Stardom (2013)", "Citizenfour (2014)", "Amy (2015)",
+        "13th (2016)", "I Am Not Your Negro (2016)", "American Factory (2019)", "The Cave (2019)", "Crip Camp (2019)",
+        "Knife Skills (2019)", "The Social Dilemma (2020)", "Collective (2020)", "The Reason I Jump (2020)", "My Octopus Teacher (2020)",
+        "The Dissident (2020)", "All That Breathes (2021)", "Fire of Love (2022)", "The Territory (2022)", "OJ: Made in America (2016)",
+        "Summer of Soul (2021)", "The Greatest Night in Pop (2024)", "Get Back (2021)", "Super/Man (2022)"
+      ]],
+      ["Nature, Science and Space", "Oceans, planets, and animals — the nonfiction shelf that makes a living room feel bigger.", "doc", [
+        "Nanook of the North (1922)", "Microcosmos (1996)", "Winged Migration (2001)", "The Blue Planet (2001)", "Volcanoes of the Deep Sea (2003)",
+        "Deep Sea 3D (2006)", "Earth (2007)", "Oceans (2009)", "The Planets (2009)", "Island (2011)",
+        "African Cats (2011)", "Chasing Ice (2012)", "Cave of Forgotten Dreams (2010)", "The Elephant Queen (2018)", "The Hunt (2015)",
+        "Planet Earth II (2016)", "Deep Blue (2017)", "The Biggest Little Farm (2018)", "Honeyland (2019)", "Free Solo (2018)",
+        "Night on Earth (2020)", "A Life on Our Planet (2020)", "My Octopus Teacher (2020)", "The Elephant Whisperers (2022)", "Sea Rex (2020)",
+        "The Last Honey Hunter (2017)", "Antarctica (2015)", "The Hottest August (2019)", "Fire (2015)", "The Story of Plastic (2018)",
+        "Wildcat (2022)", "Snow (2023)", "The Secret Life of Elephants (2018)", "Cosmos: A Spacetime Odyssey (2014)", "The Planets (2019)"
+      ]],
+      ["History, War and Power", "Archives, tribunals, and turning points told by people who were in the room.", "doc", [
+        "Hearts and Minds (1974)", "Shoah (1985)", "The Thin Blue Line (1988)", "The War (1994)", "The War Rooms (1993)",
+        "The Longest Day (1962)", "Sahara (1943)", "The Last Days (1998)", "The Fog of War (2003)", "The Lookout (2009)",
+        "The Gatekeepers (2012)", "How to Survive a Plague (2012)", "Winter on Fire (2012)", "The Tillman Story (2010)", "The Queen of Versailles (2012)",
+        "The 5th Estate (2013)", "Citizenfour (2014)", "The Program (2015)", "The Panama Papers (2016)", "Into the Whirlwind (2016)",
+        "Icarus (2017)", "Last Men in Aleppo (2017)", "The Price of Everything (2018)", "American Factory (2019)", "The Reason I Jump (2020)",
+        "Collective (2020)", "Navalny (2022)", "The 12th Victim (2020)", "Attica (2021)", "The Commandant's Shadow (2023)",
+        "The Territory (2022)", "Fire of Love (2022)", "The Dissident (2020)", "Crip Camp (2019)", "OJ: Made in America (2016)"
+      ]],
+      ["Music, Art and Performance", "Concert films, studio documentaries, and the people behind the records.", "doc", [
+        "Let There Be Light (1946)", "Gimme Shelter (1970)", "Wattstax (1973)", "The Last Waltz (1978)", "The Decline of Western Civilization (1978)",
+        "Stop Making Sense (1983)", "Kurt & Courtney (1997)", "Buena Vista Social Club (1999)", "Standing in the Shadows of Motown (2002)", "Tin Drum (2008)",
+        "The Yes Men (2003)", "Moonage Daydream (2012)", "Searching for Sugar Man (2012)", "20 Feet from Stardom (2013)", "Amy (2015)",
+        "The Beatles: Eight Days a Week (2016)", "The Myth of Fingerprints (2018)", "The Last Movie Painter (2019)", "Be Water (2020)", "Stardust (2020)",
+        "Summer of Soul (2021)", "The Lady and the Dale (2021)", "Catching Fire: The Story of Anita Pallenberg (2022)", "The Greatest Night in Pop (2024)", "Get Back (2021)",
+        "Serge Gainsbourg: Gainsbourg et ses complices (2010)", "Jaco (2015)", "Listen to Me Marlon (2015)", "Chasing Great (2016)", "The Velvet Underground (2021)", "I Am Divine (2019)"
+      ]]
+    ];
+
+    // Curated entries are "Title" or "Title (Year)". Parsing is memoized because
+    // dozens of book shelves share one 100-title array.
+    const CURATED_TITLE_YEAR = /^(.+?)\s*\((\d{4})\)\s*$/;
+    const curatedEntryCache = new Map();
+    function parseCuratedEntry(entry) {
+      const value = String(entry || "");
+      const hit = curatedEntryCache.get(value);
+      if (hit) return hit;
+      const match = CURATED_TITLE_YEAR.exec(value);
+      const parsed = match
+        ? { title: match[1].trim(), year: Number(match[2]) }
+        : { title: value, year: 0 };
+      curatedEntryCache.set(value, parsed);
+      return parsed;
+    }
+
+    // One registry for every catalog. Books keep their historical `titles`
+    // field so the existing shelf UI keeps working; every list also exposes
+    // parsed `entries` and the `kinds` it can match against.
+    const CURATED_LISTS = [
+      ...RECOMMENDED_LISTS.map(list => ({
+        id: list.id, name: list.name, description: list.description,
+        kinds: CURATED_KINDS.book, titles: list.titles,
+        entries: list.titles.map(parseCuratedEntry),
+      })),
+      ...[...CURATED_MOVIE_LISTS, ...CURATED_TV_LISTS, ...CURATED_DOC_LISTS].map(
+        ([name, description, kind, titles], index) => ({
+          id: `curated-${index}`, name, description, kinds: CURATED_KINDS[kind],
+          titles, entries: titles.map(parseCuratedEntry),
+        })),
+    ];
+
+    // Which media kinds does this tab browse? Drives both the curated shelf
+    // picker and the list add-row search so neither offers an item the user
+    // cannot see.
+    function tabCatalogKinds(tab = activeTab) {
+      return (kindByTab[tab] ? [kindByTab[tab]] : null) ?? [];
+    }
+
+    function curatedListsForKinds(kinds) {
+      if (!kinds || !kinds.length) return [];
+      return CURATED_LISTS.filter(list => list.kinds.some(kind => kinds.includes(kind)));
+    }
 
     const { api, escapeHTML, formatTime } = window.Sonder;
 
@@ -1112,6 +1353,7 @@
       return GENERIC_EXTRAS.has(title) || GENERIC_EXTRA_PREFIXES.some(prefix => title.startsWith(prefix));
     }
     function rebuildCopyGroups() {
+      listIndexGeneration++;
       copyGroups = new Map();
       const extrasGroups = new Map();  // generic bonus-feature titles: never merged
       const yearsByKey = new Map();
@@ -1623,40 +1865,109 @@
       return String(value || "").toLowerCase().replace(/[^a-z0-9]+/g, "");
     }
 
-    function listCandidateIndex() {
-      if (listCandidateState?.items === items) return listCandidateState;
-      const candidates = items.filter(item => ["audiobook", "ebook"].includes(item.kind))
-        .sort((a, b) => String(a.title || "").localeCompare(String(b.title || "")));
-      const records = candidates.map(item => ({ item, key: listTitleKey(item.title) }));
+    // Every media kind in a curated list needs its own candidate pool, because
+    // a shelf for movies must never match a documentary with the same title.
+    // The pool key is the sorted kind list, and TV pools are built from show
+    // groups rather than episodes so a list entry names a series, not S01E01.
+    function listCandidateIndex(kinds = CURATED_KINDS.book) {
+      const wanted = [...kinds].sort();
+      const signature = wanted.join(",");
+      const cached = listCandidateState.get(signature);
+      if (cached && cached.items === items && cached.generation === listIndexGeneration) return cached;
+
+      const records = [];
+      if (wanted.includes("tvShow")) {
+        for (const show of buildShowGroups()) {
+          const item = show.posterItem || [...show.seasons.values()].flat()[0];
+          if (!item) continue;
+          records.push({ item, show, year: item.year || 0, title: show.name, key: listTitleKey(show.name) });
+        }
+      }
+      for (const kind of wanted) {
+        if (kind === "tvShow") continue;
+        for (const item of items) {
+          if (item.kind !== kind || item.isPlaceholder) continue;
+          records.push({ item, show: null, year: item.year || 0, title: item.title || "", key: listTitleKey(item.title) });
+        }
+      }
+      records.sort((a, b) => String(a.title || "").localeCompare(String(b.title || "")));
+
+      // Exact-title buckets hold one record per year so a year-aware lookup
+      // resolves a remake without scanning, and a title-only lookup still finds
+      // something when the catalog has the film under an unrecorded year.
       const exact = new Map();
       for (const record of records) {
-        if (record.key && !exact.has(record.key)) exact.set(record.key, record.item);
+        if (!record.key) continue;
+        if (!exact.has(record.key)) exact.set(record.key, { any: null, byYear: new Map() });
+        const bucket = exact.get(record.key);
+        if (record.year) {
+          if (!bucket.byYear.has(record.year)) bucket.byYear.set(record.year, record);
+          else if (!bucket.any) bucket.any = record;
+        } else if (!bucket.any) {
+          bucket.any = record;
+        }
       }
-      listCandidateState = { items, candidates, records, exact, matches: new Map() };
-      return listCandidateState;
+      const candidates = records.map(record => record.item);
+      const state = {
+        items, generation: listIndexGeneration, signature, candidates, records, exact, matches: new Map(),
+      };
+      listCandidateState.set(signature, state);
+      return state;
     }
 
-    function listCandidates() {
-      return listCandidateIndex().candidates;
+    // listCandidates keeps its historical meaning: the pool of items the current
+    // tab's lists may add. An unfiltered tab (home) offers every kind.
+    function listCandidates(kinds = tabCatalogKinds()) {
+      return listCandidateIndex(kinds.length ? kinds : allListKinds()).candidates;
     }
 
-    function candidateForListTitle(title, candidates) {
-      const wanted = listTitleKey(title);
-      const state = listCandidateIndex();
+    function allListKinds() {
+      return Object.values(CURATED_KINDS).flat();
+    }
+
+    // A curated entry resolves to a candidate record. `entry` is either a parsed
+    // {title, year} or a bare title string from a hand-written list.
+    function candidateForEntry(entry, kinds) {
+      const parsed = typeof entry === "string" ? parseCuratedEntry(entry) : entry;
+      if (!parsed?.title) return null;
+      const state = listCandidateIndex(kinds);
+      const wanted = listTitleKey(parsed.title);
+      const cacheKey = wanted + "|" + (parsed.year || 0);
+      if (state.matches.has(cacheKey)) return state.matches.get(cacheKey) || null;
+
+      let match = null;
+      const bucket = state.exact.get(wanted);
+      if (bucket) {
+        if (parsed.year) {
+          // Prefer the same year, then a catalog entry with no year at all.
+          // A different known year is a different film, not a near miss.
+          match = bucket.byYear.get(parsed.year) || (bucket.any && !bucket.any.year ? bucket.any : null);
+        } else {
+          match = bucket.any || [...bucket.byYear.values()][0] || null;
+        }
+      }
+      if (!match && wanted) {
+        const loose = state.records.find(record =>
+          (record.key.includes(wanted) || wanted.includes(record.key)) &&
+          (!parsed.year || !record.year || record.year === parsed.year));
+        match = loose || null;
+      }
+      state.matches.set(cacheKey, match || false);
+      return match;
+    }
+
+    // Kept for the reading-list UI, which still speaks in bare titles.
+    function candidateForListTitle(title, candidates, kinds) {
+      const state = listCandidateIndex(kinds);
       const pool = candidates || state.candidates;
       if (pool !== state.candidates) {
+        const wanted = listTitleKey(title);
         return pool.find(item => {
           const actual = listTitleKey(item.title);
           return actual === wanted || actual.includes(wanted) || wanted.includes(actual);
         });
       }
-      if (state.matches.has(wanted)) return state.matches.get(wanted) || null;
-      let match = state.exact.get(wanted);
-      if (!match && wanted) {
-        match = state.records.find(record => record.key.includes(wanted) || wanted.includes(record.key))?.item;
-      }
-      state.matches.set(wanted, match || false);
-      return match || null;
+      return candidateForEntry(parseCuratedEntry(title), kinds)?.item || null;
     }
 
     function updateListBookChoices(input) {
@@ -1665,29 +1976,90 @@
       if (!select) return;
       const wanted = listTitleKey(input.value);
       if (!wanted) {
-        select.innerHTML = '<option value="">Type to search for a book…</option>';
+        select.innerHTML = '<option value="">Type to search for a title…</option>';
         select.disabled = true;
         return;
       }
-      const matches = listCandidateIndex().records
+      const matches = listCandidateIndex(listPoolKinds()).records
         .filter(record => record.key.includes(wanted))
         .slice(0, 80)
         .map(record => record.item);
       select.innerHTML = matches.length
-        ? `<option value="">Choose a matching book…</option>${matches.map(item => `<option value="${escapeHTML(item.id)}">${escapeHTML(item.title || item.id)}</option>`).join("")}`
-        : '<option value="">No matching books</option>';
+        ? `<option value="">Choose a matching title…</option>${matches.map(item => `<option value="${escapeHTML(item.id)}">${escapeHTML(item.title || item.id)}</option>`).join("")}`
+        : '<option value="">No matching titles</option>';
       select.disabled = matches.length === 0;
+    }
+
+    // The kinds the add-row and the shelf picker should offer right now. A list
+    // can hold any kind, so an existing list keeps the pool of whatever catalog
+    // it was opened from; the home tab offers everything.
+    function listPoolKinds() {
+      const kinds = tabCatalogKinds();
+      return kinds.length ? kinds : allListKinds();
+    }
+
+    // ── Curated shelves as discovery rails ─────────────────────────────────
+    // The curated data used to be an admin surface: you could save a shelf but
+    // never browse one. A shelf earns a rail once the library already holds
+    // enough of it to be worth looking at — that is the interesting case,
+    // because the titles still missing become an obvious shopping list. The
+    // rail keeps the list's own ranking, which is the whole point of a canon:
+    // the top of a "greatest films" shelf is not its first letter.
+    const CURATED_RAIL_MIN = 4;
+    const CURATED_RAIL_MAX = 2;
+
+    function curatedShelves(kinds, limit = CURATED_RAIL_MAX) {
+      const shelves = curatedListsForKinds(kinds)
+        .map(list => {
+          const records = list.entries.map(entry => candidateForEntry(entry, kinds)).filter(Boolean);
+          return { list, records, missing: list.entries.length - records.length };
+        })
+        .filter(shelf => shelf.records.length >= CURATED_RAIL_MIN);
+      // Most covered first, then by name so a shelf cannot reorder between
+      // renders just because two lists tie on coverage.
+      shelves.sort((a, b) => b.records.length - a.records.length || a.list.name.localeCompare(b.list.name));
+      return shelves.slice(0, limit);
+    }
+
+    function curatedShelfSub(shelf) {
+      const owned = shelf.records.length;
+      const total = shelf.list.entries.length;
+      return shelf.missing
+        ? `${owned} of ${total} owned · ${shelf.missing} still to find`
+        : `all ${total} of this shelf is in your library`;
+    }
+
+    function curatedShelfControl(shelf) {
+      const saved = lists.some(list => list.name === shelf.list.name);
+      return `<button type="button" class="rail-browse" data-action="use-recommended-list" data-recommended-id="${escapeHTML(shelf.list.id)}">${saved ? "Saved · open" : "Save shelf"}</button>`;
+    }
+
+    function curatedShelfCards(shelf, limit = 18) {
+      return shelf.records
+        .slice(0, limit)
+        .map(record => (record.show ? showCardHTML(record.show) : cardHTML(record.item)));
+    }
+
+    // The curated shelf picker only offers lists that can match the tab's own
+    // catalog, so the Movies tab never proposes a book shelf and a film's
+    // coverage count is measured against movies alone.
+    function curatedListsForTab() {
+      const kinds = tabCatalogKinds();
+      return kinds.length ? curatedListsForKinds(kinds) : CURATED_LISTS;
     }
 
     function renderLists() {
       const host = $("#listsView");
       if (!host) return;
-      const candidates = listCandidates();
+      const kinds = listPoolKinds();
+      const candidates = listCandidates(kinds);
+      const poolLabel = listPoolLabel(kinds);
+      const curated = curatedListsForTab();
       const selectedList = selectedListID ? lists.find(list => list.id === selectedListID) : null;
-      const recommended = selectedList ? "" : `<section class="recommended-lists"><div class="recommended-lists-head"><div><h3>Best-of-all-time lists</h3><p class="muted">Click any card to add that ordered recommendation shelf to Sonder.</p></div><span class="muted">${RECOMMENDED_LISTS.length} lists</span></div><div class="recommended-list-grid">${RECOMMENDED_LISTS.map(list => {
-        const present = list.titles.filter(title => candidateForListTitle(title, candidates)).length;
+      const recommended = selectedList ? "" : `<section class="recommended-lists"><div class="recommended-lists-head"><div><h3>Curated shelves for ${escapeHTML(poolLabel)}</h3><p class="muted">Click any card to add that ordered shelf to Sonder, ordered as the list ranks it.</p></div><span class="muted">${curated.length} lists</span></div><div class="recommended-list-grid">${curated.map(list => {
+        const present = list.entries.filter(entry => candidateForEntry(entry, kinds)).length;
         const alreadyAdded = lists.some(existing => existing.name === list.name);
-        return `<button class="recommended-list-card" data-action="use-recommended-list" data-recommended-id="${list.id}"><span class="recommended-list-icon">▦</span><strong>${escapeHTML(list.name)}</strong><span class="muted">${escapeHTML(list.description)}</span><span class="recommended-list-meta">${present}/${list.titles.length} in library · ${alreadyAdded ? "Added" : "Add list"}</span></button>`;
+        return `<button class="recommended-list-card" data-action="use-recommended-list" data-recommended-id="${escapeHTML(list.id)}"><span class="recommended-list-icon">▦</span><strong>${escapeHTML(list.name)}</strong><span class="muted">${escapeHTML(list.description)}</span><span class="recommended-list-meta">${present}/${list.entries.length} in library · ${alreadyAdded ? "Added" : "Add list"}</span></button>`;
       }).join("")}</div></section>`;
       const savedLists = selectedList ? [selectedList] : lists;
       const saved = savedLists.map(list => {
@@ -1695,30 +2067,40 @@
           const item = entry.item || {};
           const cover = item.posterURL ? `<img class="list-entry-cover" src="${escapeHTML(api(item.posterURL))}" alt="" loading="lazy">` : `<span class="list-entry-cover list-entry-cover-empty" aria-hidden="true">▧</span>`;
           const tags = (entry.tags || []).map(tag => `<span class="tag">${escapeHTML(tag)}</span>`).join("");
-          return `<li>${cover}<span class="list-position">${index + 1}.</span><button class="list-entry-title" data-action="open-detail" data-id="${escapeHTML(item.id || "")}">${escapeHTML(item.title || item.id || "Unknown book")}</button><span class="list-entry-tags">${tags}</span><span class="list-entry-actions"><button data-action="move-list-item" data-list-id="${escapeHTML(list.id)}" data-index="${index}" data-direction="up" ${index === 0 ? "disabled" : ""}>↑</button><button data-action="move-list-item" data-list-id="${escapeHTML(list.id)}" data-index="${index}" data-direction="down" ${index === list.items.length - 1 ? "disabled" : ""}>↓</button><button data-action="remove-list-item" data-list-id="${escapeHTML(list.id)}" data-item-id="${escapeHTML(item.id || "")}">Remove</button></span></li>`;
+          return `<li>${cover}<span class="list-position">${index + 1}.</span><button class="list-entry-title" data-action="open-detail" data-id="${escapeHTML(item.id || "")}">${escapeHTML(item.title || item.id || "Unknown title")}</button><span class="list-entry-tags">${tags}</span><span class="list-entry-actions"><button data-action="move-list-item" data-list-id="${escapeHTML(list.id)}" data-index="${index}" data-direction="up" ${index === 0 ? "disabled" : ""}>↑</button><button data-action="move-list-item" data-list-id="${escapeHTML(list.id)}" data-index="${index}" data-direction="down" ${index === list.items.length - 1 ? "disabled" : ""}>↓</button><button data-action="remove-list-item" data-list-id="${escapeHTML(list.id)}" data-item-id="${escapeHTML(item.id || "")}">Remove</button></span></li>`;
         }).join("");
         const addRow = selectedList
-          ? `<div class="list-add-row"><input class="list-book-search" data-list-book-search placeholder="Search books to add…" aria-label="Search books to add"><select data-list-select aria-label="Book to add" disabled><option value="">Type to search for a book…</option></select><input data-list-tags placeholder="Entry tags, comma separated" aria-label="Entry tags"><button class="primary" data-action="add-list-item" data-list-id="${escapeHTML(list.id)}">Add</button></div>`
+          ? `<div class="list-add-row"><input class="list-book-search" data-list-book-search placeholder="Search ${escapeHTML(poolLabel.toLowerCase())} to add…" aria-label="Search titles to add"><select data-list-select aria-label="Title to add" disabled><option value="">Type to search for a title…</option></select><input data-list-tags placeholder="Entry tags, comma separated" aria-label="Entry tags"><button class="primary" data-action="add-list-item" data-list-id="${escapeHTML(list.id)}">Add</button></div>`
           : "";
         const listTags = (list.tags || []).map(tag => `<span class="tag">${escapeHTML(tag)}</span>`).join("");
-        const recommendation = RECOMMENDED_LISTS.find(candidate => candidate.name === list.name);
-        const missing = recommendation ? recommendation.titles.filter(title => !candidateForListTitle(title, candidates)) : [];
-        const missingHTML = missing.length ? `<section class="list-missing"><div><strong>${missing.length} missing books</strong><p class="muted">These titles are not currently in your Books or Audiobooks collection.</p></div><button data-action="export-missing" data-list-id="${escapeHTML(list.id)}">Export missing .txt</button><ol>${missing.map(title => `<li>${escapeHTML(title)}</li>`).join("")}</ol></section>` : "";
+        const recommendation = CURATED_LISTS.find(candidate => candidate.name === list.name);
+        const missing = recommendation ? recommendation.entries.filter(entry => !candidateForEntry(entry, recommendation.kinds)) : [];
+        const missingHTML = missing.length ? `<section class="list-missing"><div><strong>${missing.length} missing titles</strong><p class="muted">Not currently anywhere in your ${escapeHTML(listPoolLabel(recommendation.kinds).toLowerCase())}.</p></div><button data-action="export-missing" data-list-id="${escapeHTML(list.id)}">Export missing .txt</button><ol>${missing.map(entry => `<li>${escapeHTML(entry.year ? `${entry.title} (${entry.year})` : entry.title)}</li>`).join("")}</ol></section>` : "";
         const title = selectedList
           ? `<h3>${escapeHTML(list.name)}</h3>`
           : `<h3><button class="list-open-title" data-action="open-reading-list" data-list-id="${escapeHTML(list.id)}">${escapeHTML(list.name)}</button></h3>`;
-        return `<article class="reading-list${selectedListID === list.id ? " selected-reading-list" : ""}" data-list-id="${escapeHTML(list.id)}"><div class="reading-list-head"><div>${title}${list.description ? `<p>${escapeHTML(list.description)}</p>` : ""}<div>${listTags}</div></div><button data-action="delete-list" data-list-id="${escapeHTML(list.id)}">Delete</button></div>${addRow}<ol>${entries || '<li class="list-empty">No books yet.</li>'}</ol>${missingHTML}</article>`;
+        return `<article class="reading-list${selectedListID === list.id ? " selected-reading-list" : ""}" data-list-id="${escapeHTML(list.id)}"><div class="reading-list-head"><div>${title}${list.description ? `<p>${escapeHTML(list.description)}</p>` : ""}<div>${listTags}</div></div><button data-action="delete-list" data-list-id="${escapeHTML(list.id)}">Delete</button></div>${addRow}<ol>${entries || '<li class="list-empty">No titles yet.</li>'}</ol>${missingHTML}</article>`;
       }).join("");
-      const detailHeader = selectedList ? `<div class="list-detail-header"><button data-action="back-to-lists">‹ All reading lists</button><span class="muted">Dedicated list page</span></div>` : "";
-      host.innerHTML = detailHeader + recommended + (saved || '<div class="empty-state">Create a list to start building a reading plan.</div>');
+      const detailHeader = selectedList ? `<div class="list-detail-header"><button data-action="back-to-lists">‹ All lists</button><span class="muted">Dedicated list page</span></div>` : "";
+      host.innerHTML = detailHeader + recommended + (saved || '<div class="empty-state">Create a list to start building a queue.</div>');
+    }
+
+    function listPoolLabel(kinds) {
+      const names = (kinds || []).map(kindLabel);
+      if (!names.length) return "this catalog";
+      // The home tab pools every kind; naming all five would be noise.
+      if (names.length > 2) return "your whole library";
+      if (names.length === 1) return names[0];
+      return names[0] + " and " + names[1];
     }
 
     function exportMissingList(listID) {
       const list = lists.find(candidate => candidate.id === listID);
-      const recommendation = list && RECOMMENDED_LISTS.find(candidate => candidate.name === list.name);
+      const recommendation = list && CURATED_LISTS.find(candidate => candidate.name === list.name);
       if (!recommendation) return;
-      const missing = recommendation.titles.filter(title => !candidateForListTitle(title));
-      const body = [`${recommendation.name} — missing books`, "", ...missing.map((title, index) => `${index + 1}. ${title}`), ""].join("\n");
+      const missing = recommendation.entries.filter(entry => !candidateForEntry(entry, recommendation.kinds));
+      const label = (entry) => (entry.year ? `${entry.title} (${entry.year})` : entry.title);
+      const body = [`${recommendation.name} — missing titles`, "", ...missing.map((entry, index) => `${index + 1}. ${label(entry)}`), ""].join("\n");
       const link = document.createElement("a");
       link.href = URL.createObjectURL(new Blob([body], { type: "text/plain;charset=utf-8" }));
       link.download = `${recommendation.name.replace(/[^a-z0-9]+/gi, "-").toLowerCase()}-missing.txt`;
@@ -1726,8 +2108,10 @@
       URL.revokeObjectURL(link.href);
     }
 
+    // Materializing a curated shelf keeps the list's own ranking, so a saved
+    // shelf is a queue rather than an alphabetical dump.
     async function useRecommendedList(recommendedID) {
-      const recommendation = RECOMMENDED_LISTS.find(list => list.id === recommendedID);
+      const recommendation = CURATED_LISTS.find(list => list.id === recommendedID);
       if (!recommendation) return;
       const existing = lists.find(list => list.name === recommendation.name);
       if (existing) {
@@ -1737,13 +2121,15 @@
         return;
       }
       try {
-        const created = await fetch(api("/api/lists"), { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ name: recommendation.name, description: recommendation.description, tags: ["recommended", "all-time"] }) });
+        const created = await fetch(api("/api/lists"), { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ name: recommendation.name, description: recommendation.description, tags: ["recommended", "curated"] }) });
         if (!created.ok) throw new Error((await created.text()) || "Could not create recommendation list");
         const list = await created.json();
-        for (const [position, title] of recommendation.titles.entries()) {
-          const item = candidateForListTitle(title);
-          if (!item) continue;
-          await fetch(api(`/api/lists/${encodeURIComponent(list.id)}/items`), { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ itemID: item.id, position, tags: ["recommended"] }) });
+        let position = 0;
+        for (const entry of recommendation.entries) {
+          const record = candidateForEntry(entry, recommendation.kinds);
+          if (!record) continue;
+          const response = await fetch(api(`/api/lists/${encodeURIComponent(list.id)}/items`), { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ itemID: record.item.id, position, tags: ["recommended"] }) });
+          if (response.ok) position++;
         }
         selectedListID = list.id;
         syncHash(true);
@@ -1919,10 +2305,13 @@
       renderMovieCatalog(visibleItems());
     }
 
+    // Lists and curated shelves are a whole-catalog feature, not a books-only
+    // one. The panel stays open on every browsing tab; Storage and Optimize are
+    // the only pages that have no use for a queue.
     function renderReadingLists() {
       const panel = $("#listsPanel");
       if (!panel) return;
-      const visible = ["audiobooks", "books"].includes(activeTab);
+      const visible = !["storage", "optimize"].includes(activeTab);
       panel.hidden = !visible;
       if (visible) renderLists();
     }
@@ -1975,14 +2364,21 @@
       if (railsActive) {
         const byUpdated = (a, b) => (progressByID.get(b.id)?.updatedAt || "")
           .localeCompare(progressByID.get(a.id)?.updatedAt || "");
-        const shelfHeading = (title, sub, browseTab = "") => `
+        const shelfHeading = (title, sub, control = "") => `
           <div class="web-rail-heading">
             <div><h2>${escapeHTML(title)}</h2><p class="sub">${escapeHTML(sub)}</p></div>
-            ${browseTab ? `<button type="button" class="rail-browse" data-action="browse-tab" data-tab="${escapeHTML(browseTab)}">Browse all</button>` : ""}
+            ${control}
           </div>`;
-        const railStrip = (title, sub, cards, browseTab = "") => cards.length ? `
-          <section class="web-rail">${shelfHeading(title, sub, browseTab)}
+        const railStrip = (title, sub, cards, control = "") => cards.length ? `
+          <section class="web-rail">${shelfHeading(title, sub, control)}
           <div class="grid rail-mode">${cards.join("")}</div></section>` : "";
+        const browseAll = (tab, label = "Browse all") =>
+          `<button type="button" class="rail-browse" data-action="browse-tab" data-tab="${escapeHTML(tab)}">${label}</button>`;
+        // Curated rails, in one place, so every catalog gets the same treatment
+        // and a shelf that is already saved says so instead of offering again.
+        const curatedRails = (kinds, count = 2) => curatedShelves(kinds, count)
+          .map(shelf => railStrip(shelf.list.name, curatedShelfSub(shelf), curatedShelfCards(shelf), curatedShelfControl(shelf)))
+          .join("");
         const fullShelf = (title, sub, cards, renderCard) => {
           if (!cards.length) return "";
           const shown = cards.slice(0, libraryShelfLimit);
@@ -2008,11 +2404,12 @@
           const audiobooks = visible.filter(i => i.kind === "audiobook").slice(0, 12);
           const books = visible.filter(i => i.kind === "ebook").slice(0, 12);
           blocks = railStrip("Continue Watching", `${cont.length} in progress`, cont.map(cardHTML)) +
-                   railStrip("Movies", `${movies.length} in the shelf`, movies.map(cardHTML), "movies") +
-                   railStrip("TV Shows", `${shows.length} shows in the shelf`, shows.map(showCardHTML), "tvshows") +
-                   railStrip("Documentaries", `${documentaries.length} in the shelf`, documentaries.map(cardHTML), "documentaries") +
-                   railStrip("Audiobooks", `${audiobooks.length} titles in the shelf`, audiobooks.map(cardHTML), "audiobooks") +
-                   railStrip("Books", `${books.length} titles in the shelf`, books.map(cardHTML), "books");
+                   curatedRails(allListKinds()) +
+                   railStrip("Movies", `${movies.length} in the shelf`, movies.map(cardHTML), browseAll("movies")) +
+                   railStrip("TV Shows", `${shows.length} shows in the shelf`, shows.map(showCardHTML), browseAll("tvshows")) +
+                   railStrip("Documentaries", `${documentaries.length} in the shelf`, documentaries.map(cardHTML), browseAll("documentaries")) +
+                   railStrip("Audiobooks", `${audiobooks.length} titles in the shelf`, audiobooks.map(cardHTML), browseAll("audiobooks")) +
+                   railStrip("Books", `${books.length} titles in the shelf`, books.map(cardHTML), browseAll("books"));
         } else if (activeTab === "tvshows") {
           const shows = showGroups(visible);
           const showProg = s => {

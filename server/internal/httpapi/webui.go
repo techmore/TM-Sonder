@@ -55,7 +55,7 @@ func libraryPageForTheme(preset string) *gzippedPage {
 // matches the persisted experience and cannot flash the default mode.
 func libraryPageForThemeAndLayout(preset, layout string) *gzippedPage {
 	preset = strings.ToLower(strings.TrimSpace(preset))
-	if preset != "dark" && preset != "techmore" {
+	if preset != "dark" && preset != "techmore" && preset != "bunny" {
 		preset = "earthy"
 	}
 	layout = strings.ToLower(strings.TrimSpace(layout))

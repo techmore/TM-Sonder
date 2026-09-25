@@ -1,17 +1,16 @@
-# Audiobook layout standardization — current state (2026-09-25)
+# Audiobook library — state and decisions (2026-09-25)
 
-Regenerated against the live library with the committed planner
-(`tools/audiobooks/standardize.py`), so this plan is reproducible from source
-control rather than hand-built.
+Regenerated against the live library with committed tools, so every number here
+is reproducible rather than hand-counted.
 
 - Root: `/Users/seandolbec/NAS/plex/Audiobooks` (`~/NAS` → `/Volumes/14tb`, NFSv3)
-- Plan: `m4b_work/migration/standardize-plan-2026-09-25.json` (read-only run)
 - Target layout: `Audiobooks/<Author>/<Book>/<Book>.m4b`
+- Plan: `m4b_work/migration/standardize-plan-2026-09-25.json`
 
 ## Inventory correction
 
-The previous status (933 `.m4b`) was a *filtered* count. The current tree holds
-1,575 `.m4b` paths, of which:
+The earlier "1,575 `.m4b`" figure was a raw `find` count that included
+AppleDouble sidecars. Corrected:
 
 | Kind | Count |
 | --- | --- |
@@ -20,130 +19,143 @@ The previous status (933 `.m4b`) was a *filtered* count. The current tree holds
 | Real audio under the legacy `M4B Forge Compact/compact-m4b-80k` wrapper | 12 |
 | Zero-byte `.m4b` | 2 |
 
-So the real library is 1,065 books, not 1,575. The AppleDouble files are a NAS
-artifact: they are dot-prefixed, the scanner already skips them, and the
-planner skips them. They are pure noise in `find`-based counts and should not be
-counted as books.
+The scanner and the planner both skip dot-prefixed files, so 510 of those are
+noise that should never appear in an inventory count.
 
-The planner groups by *book folder* rather than by file, because a folder
-holding several files is a different problem from a rename:
+## Layout plan: nothing left to apply
 
-| Group | Folders |
+The 6 unambiguous changes were applied (receipt:
+`m4b_work/migration/standardize-receipt-2026-09-25.json`). The regenerated plan
+now reports **0 renames** and **971 keep / 4 keep-multi-part / 79 review**.
+
+Applied:
+
+| Change | Kind |
 | --- | --- |
-| `single_file` | 1,024 |
-| `series_collection` | 20 |
-| `multi_part_book` | 4 |
-| `mixed_parts_and_extras` | 3 |
-| `single_book_plus_leftovers` | 2 |
-| `identical_size_duplicates` | 1 |
+| `David Brooks/How to Know a Person/` — file renamed to match the folder | rename |
+| `Isaac Asimov/Foundation and Earth/` — file renamed | rename |
+| `Isaac Asimov/The Robots of Dawn/` — file renamed | rename |
+| `James S. A. Corey/Leviathan Wakes/` — file renamed | rename |
+| `Miguel de Cervantes/Don Quixote [AmazonClassics Edition] (Classics) (2020)/` → `Don Quixote (Classics) (2020)/` | folder move |
+| `Philip K. Dick/The Three Stigmata of Palmer Eldritch (Weiner) 128k 07.31.44 {417mb}/` → `… (Weiner) 07.31.44/` | folder move |
 
-| Action | Folders |
-| --- | --- |
-| `keep` | 963 |
-| `keep_multi_part` | 4 |
-| `review` | 81 |
-| `rename` | 4 |
-| `rename_book` | 2 |
+Note on the Don Quixote move: it was planned under an earlier, looser noise
+rule that stripped every bracketed token. The rule has since been tightened
+(see below) so `[Unabridged]` and similar edition markers survive. The
+`[AmazonClassics Edition]` marker was dropped by that earlier run; the book is
+still unambiguously identified, and no other book in the library shares the
+name, so nothing was made ambiguous by it.
 
-1,054 folders / 1,277 files were examined. Nothing on the NAS was modified.
+## Two planner rules that were wrong and are now fixed
 
-## Proposed changes (6, all unambiguous)
+**Bracketed text is not automatically noise.** The first version stripped every
+`[...]` token, which merged genuine editions: `Jurassic Park` and
+`Jurassic Park [Unabridged]` were reported as two folders competing for one
+canonical path. They are two different recordings. Only clearly technical
+brackets are stripped now (`[64kbps]`, `[417mb]`, `[audible-…]`), while
+`[Unabridged]`, `[Abridged]`, `[Full Cast]` and similar are preserved. This
+removed a false collision and dropped the real collision count from 4 to 3.
 
-Renames inside an already-correctly-named folder:
+**A plan's unit of decision is the book folder, not the file.** Deciding per
+file produced 305 "review" entries for what is really a few dozen folder-level
+decisions, because every part of a multi-part book collided with every other
+part. The folder-level model classifies instead of guessing.
 
-- `David Brooks/How to Know a Person/David Brooks - How to Know a Person.m4b` → `How to Know a Person.m4b`
-- `Isaac Asimov/Foundation and Earth/Isaac Asimov - Foundation 07 - Foundation and Earth [Hope-2023].m4b` → `Foundation and Earth.m4b`
-- `Isaac Asimov/The Robots of Dawn/The Robots of Dawn The Robot, Book 3.m4b` → `The Robots of Dawn.m4b`
-- `James S. A. Corey/Leviathan Wakes/The Expanse, Book 1 - Leviathan Wakes.m4b` → `Leviathan Wakes.m4b`
+## Collisions: 3 remaining, all resolved by content
 
-Folder moves, because the parser and players display the *folder* name as the
-book title — renaming only the file would leave the catalog title wrong:
+A collision is a *suspicion*, not a finding. `tools/audiobooks/compare_books.py`
+settles them by decoding sampled audio to raw PCM and hashing it. Container
+bytes cannot answer the question, because the retag pass rewrites metadata
+without touching a single audio sample — two of these pairs differ byte-for-byte
+while being the same recording.
 
-- `Miguel de Cervantes/Don Quixote [AmazonClassics Edition] (Classics) (2020)/` → `Miguel de Cervantes/Don Quixote (Classics) (2020)/`
-- `Philip K. Dick/The Three Stigmata of Palmer Eldritch (Weiner) 128k 07.31.44 {417mb}/` → `Philip K. Dick/The Three Stigmata of Palmer Eldritch (Weiner) 07.31.44/`
+| Folders | Verdict | What to do |
+| --- | --- | --- |
+| `Iain M. Banks/The Player of Games` + its `M4B Forge Compact` twin | `same_recording_different_container` | Keep the top-level copy; the wrapper copy is a pre-retag duplicate |
+| `Iain M. Banks/The State of the Art (BBC Adaptation)` + its wrapper twin | `same_recording_different_container` | Same |
+| `Larry Niven/Ringworld` + `M4B Forge Compact/…/Larry Niven/Ringworld/Ringworld (Unabridged).m4b` | `different_books` | Genuinely different: 10.93 h Opus 49 kb/s vs 10.93 h AAC 129 kb/s. Decide which to keep; do not merge |
+| `Michael Crichton/Jurassic Park` + `Jurassic Park [Unabridged]` | `different_books` (no longer a collision) | Two different recordings, 15.17 h vs 13.84 h. Keep both |
 
-## Review required (81 folders)
+Evidence: `m4b_work/migration/collision-comparison.json`.
 
-### Two folders claiming one canonical path (4 targets, 8 folders)
+## Remaining reviews (79 folders)
 
-Never merge these without comparing audio content; equal byte size is not proof.
+- **47 unknown author** — see below
+- **20 series collection** — `Isaac Asimov/Foundation - The Complete Series/`,
+  one subfolder per book with three narrators each (Jack Fox, Scott Brick,
+  William Hope). This is a deliberate multi-narrator set, not a layout error.
+  The planner reports it and leaves it alone. It needs no fix; it needs a
+  decision about whether multi-narrator sets should be a supported layout
+  everywhere or flattened to one book per narrator.
+- **10 multi-file folders** — 4 genuine multi-part books (already correct), 3
+  mixed parts-plus-extras, 2 single-book-plus-leftovers (each with a 0-byte
+  file, one a `.sonder-retag.m4b` temp artifact), 1 identical-size duplicate
+  pair (`Iain M. Banks/The State of the Art` has `03 - …` and `…` at 96.3 MB
+  each)
+- **2 zero-byte files** — `Black Library/…/Shadows of Treachery…wcqr1ulr.m4b`
+  and `Unknown Author/…/….m4b.sonder-retag.m4b`
+- **1 stray** — `compact-m4b-80k/Test-ebook/Test-ebook.m4b`, a test fixture
+  left at the library root with a half-applied unwrap
 
-- `Iain M. Banks/The Player of Games` vs `M4B Forge Compact/compact-m4b-80k/Iain M. Banks/The Player of Games` — both 173.5 MB, likely the same file
-- `Iain M. Banks/The State of the Art (BBC Adaptation)` — canonical and wrapper copy, both 27.3 MB
-- `Larry Niven/Ringworld` — canonical 244.7 MB vs wrapper `Ringworld (Unabridged).m4b` 635.5 MB, two different editions
-- `Michael Crichton/Jurassic Park` 433.5 MB vs `Michael Crichton/Jurassic Park [Unabridged]` 518.9 MB, two different editions
+## The 47 unknown-author books
 
-### Series collection (20 books)
+This was attempted automatically and **rejected**. Of 45 distinct books:
 
-`Isaac Asimov/Foundation - The Complete Series/` nests one subfolder per book
-with three narrators each (Jack Fox, Scott Brick, William Hope). This is a
-deliberate multi-narrator set, not a layout error. It needs a series-level
-policy, not per-file renames.
+- Embedded tags: only 1 of 48 files carried any author credit at all. The
+  retag pass never reached these files.
+- Open Library lookup: returned 29 "high confidence" answers, of which several
+  were plainly wrong — "Cycle of the Werewolf" → **Stephen King** (it is Philip
+  K. Dick), "The Aeneid" → "Publius Vergilius Maro", "Threshold" → Bill Myers,
+  "Influence" → Robert Cialdini, "The Broom of the System" → David Foster
+  Wallace. Folder names here are too short and too generic for fuzzy matching
+  to be evidence.
+- Cross-check against the 4,641-book ebook library: confirmed 2, and
+  manufactured a false contradiction ("State of Fear" matched the ebook
+  "State of the Art"). The matching threshold was then raised, which removed the
+  false contradiction but also left the cross-check with almost nothing to say.
 
-### Multi-file folders (10)
+So the automated pipeline is recorded as a dead end, and the result is a curated
+proposal in `m4b_work/migration/author-curation.json`: 30 attributions with a
+stated reason, 15 marked `needs-verification`, and 7 left explicitly
+`UNIDENTIFIED` (they may not be books at all — several look like lectures or
+radio interviews).
 
-Correctly left alone, classified so the intent is recorded:
+Nothing has been moved. Applying that curation is a separate, reviewed step.
 
-- Multi-part books, already in the right place: `Atul Gawande/Being Mortal` (9), `C. S. Lewis/The Screwtape Letters` (6), `David Brooks/The Road to Character` (10), `Larry Niven/The Ringworld Engineers` (36)
-- Mixed parts plus an extra: `Atul Gawande/Better` (7), `Atul Gawande/Complications` (148), `Peter Watts/Echopraxia` (11) — each has a cover track or similar extra that the part heuristic does not recognize
-- A real book plus leftovers: `Black Library/Shadows of Treachery` (2, one 0-byte) and `Unknown Author/Selected Stories of Philip K. Dick` (2, one 0-byte `.sonder-retag.m4b` — a retag temp artifact)
-- Identical-size duplicates: `Iain M. Banks/The State of the Art` has `03 - The State of the Art.m4b` and `The State of the Art.m4b`, both 96.3 MB
+## Server-side fixes
 
-### Unknown author (47 folders)
+All three were found by comparing the on-disk layout with the catalog.
 
-Mostly Philip K. Dick, Iain M. Banks/Robertsonian, Robert A. Heinlein, and
-various anthologies whose author is recoverable from the title. These need
-metadata resolution, not a folder move; the planner refuses to guess.
+1. **The audiobook parser ignored the folder layout.** It took the title from
+   the filename and never derived an author. It now uses the book folder as the
+   title and its parent as the author. Author coverage went from 2 of 1,279 to
+   1,278 of 1,279.
+2. **The rebuild merge erased the author.** `item.Author = prev.Author` ran
+   unconditionally, so a previous nil author overwrote the freshly parsed one on
+   every rebuild. It now only lets a prior value win when non-empty.
+3. **ffprobe already received the tags; the parser discarded them.**
+   `ffprobeOutput` had no `Tags` field at all, so the author and narrator
+   written by the retag pass were on hand and thrown away. Tags are now parsed
+   (with alias resolution for ffprobe's lowercase MP4 atoms, uppercase
+   FFMETADATA1 names, and ID3 `©` forms) and folded into empty catalog fields
+   only, so a metadata provider still outranks them.
 
-### Wrapper remnants (2)
+A fourth issue was found while testing the third: an audiobook with no narrator
+tag would be re-probed on *every* scan, forever. `ProbedTagsRead` makes tag
+reading a one-shot marker rather than a standing condition.
 
-- `M4B Forge Compact/compact-m4b-80k/` still holds 12 books; 8 are canonical
-  duplicates of top-level copies, 3 collide (see above), and 1 is
-  `Unknown/Change and Quality`
-- `compact-m4b-80k/Test-ebook/Test-ebook.m4b` — a stray test fixture at the
-  library root with a half-applied unwrap
-
-## Two server bugs fixed alongside this
-
-Both made the *catalog* disagree with a correct on-disk layout:
-
-1. `server/internal/library/parser.go` — the audiobook parser ignored the
-   `Author/Book/Book.m4b` structure entirely, taking the title from the filename
-   and never deriving an author. It now prefers the book folder as the title and
-   its parent as the author, and still works inside the legacy wrapper. Junk
-   directory names (`audiobooks`, `audio book`, …) are not mistaken for authors.
-2. `server/internal/library/scanner.go` — the rebuild merge assigned
-   `item.Author = prev.Author` unconditionally, so a previous entry with a nil
-   author erased the newly parsed author on every rebuild. It now only lets a
-   prior value win when that value is non-empty.
-
-`ParserVersion` is bumped so a rebuild actually happens; without the bump the
-incremental scan skips unchanged files and the nil rows survive.
-
-**Do not skip the version bump when parser or scanner output semantics change.**
-An earlier run of exactly this bug looked fixed but was not, because the second
-restart matched the already-bumped parse version and skipped the rebuild.
-
-## Applying
-
-```bash
-cd tools/audiobooks
-python3 standardize.py /Users/seandolbec/NAS/plex/Audiobooks --out plan.json            # plan
-python3 standardize.py /Users/seandolbec/NAS/plex/Audiobooks --out plan.json --apply \
-  --receipt m4b_work/migration/receipt.json --limit 6                                    # apply
-```
-
-`--apply` only renames the unambiguous single-file books and moves the two
-unambiguous book folders. It refuses to overwrite an existing path, never
-deletes, never merges, and never re-encodes. `--limit` bounds the batch; the
-receipt records every applied and skipped path.
+**Bump `ParserVersion` whenever parser or scanner output changes.** The
+incremental scan skips files whose parse version already matches, so without
+the bump a catalog fix appears to have no effect. This exact trap produced one
+misleading "the fix didn't work" result during this work.
 
 ## Still open
 
-- Narrator is still empty for all 1,279 cataloged audiobooks. Authors were
-  already written into the `.m4b` tags by the retag pass, but nothing reads
-  them back. This needs an ffprobe-based tag read during probe.
-- 47 unknown-author books and 4 canonical-path collisions need human decisions.
-- The 20-book Foundation series needs a series-level organization policy.
-- 510 AppleDouble sidecars remain on the NAS. They are harmless to the scanner
-  but should be excluded from any future inventory counts.
+- Narrator coverage was still climbing when this was written (0 → 128 of 1,279
+  and draining); many files genuinely carry no narrator tag.
+- The 3 remaining collisions need a keep/delete decision.
+- 15 curated attributions need verification; 7 are unidentified.
+- 510 AppleDouble sidecars remain on the NAS. Harmless to the scanner, but they
+  should be excluded from any future count and are worth deleting at the share
+  level.
+- The Foundation multi-narrator set needs a series-level organization decision.

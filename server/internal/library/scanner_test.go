@@ -229,6 +229,69 @@ func TestScanPreservesCatalogWhenLibraryUnreadable(t *testing.T) {
 
 // With safeScan on (the default), a library that resolves but contains no
 // media files while the catalog still holds items for it keeps those items.
+// A book that was probed before tag reading existed has a nil author, so the
+// scan must re-probe it rather than skip it as unchanged.
+func TestScanReprobesAudiobookMissingAuthor(t *testing.T) {
+	root := t.TempDir()
+	book := filepath.Join(root, "Audiobooks", "Andy Weir", "Dune", "Dune.m4b")
+	if err := os.MkdirAll(filepath.Dir(book), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(book, []byte("v1"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	lib := []config.Library{{ID: "books", Name: "Audiobooks", Path: filepath.Join(root, "Audiobooks"), Kind: "audiobook"}}
+	store := New()
+	sc := NewScanner(store)
+	// A prober that records what it saw and reports no streams, so the item
+	// ends up with an author but no probe-derived audio state.
+	fp := &fakeProber{}
+	sc.SetProber(fp, 1)
+	if _, err := sc.ScanAll(lib); err != nil {
+		t.Fatal(err)
+	}
+	if fp.calls.Load() != 1 {
+		t.Fatalf("first scan probed %d files, want 1", fp.calls.Load())
+	}
+	// Second scan: unchanged file, already has an author, so it is skipped.
+	fp.calls.Store(0)
+	if _, err := sc.ScanAll(lib); err != nil {
+		t.Fatal(err)
+	}
+	if n := fp.calls.Load(); n != 0 {
+		t.Errorf("unchanged book with an author was re-probed %d times", n)
+	}
+
+	// Simulate a catalog written before tag reading existed: tags unread.
+	id := store.Items()[0].ID
+	store.Update(id, func(it *Item) bool {
+		it.ProbedTagsRead = false
+		return true
+	})
+	fp.calls.Store(0)
+	if _, err := sc.ScanAll(lib); err != nil {
+		t.Fatal(err)
+	}
+	if n := fp.calls.Load(); n != 1 {
+		t.Errorf("book with unread tags was re-probed %d times, want 1", n)
+	}
+
+	// A book whose file genuinely carries no narrator must NOT be re-probed on
+	// every subsequent scan. ProbedTagsRead makes tag reading a one-shot.
+	fp.calls.Store(0)
+	for i := 0; i < 3; i++ {
+		if _, err := sc.ScanAll(lib); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if n := fp.calls.Load(); n != 0 {
+		t.Errorf("tag probe repeated %d times after the first, want 0", n)
+	}
+	if store.Items()[0].Author == nil {
+		t.Error("author lost")
+	}
+}
+
 // A rebuild must not lose the parser-derived author: the Author/Book/Book.m4b
 // layout supplies it from the path, and a rebuild used to overwrite it with
 // the (nil) author of the previous catalog entry.

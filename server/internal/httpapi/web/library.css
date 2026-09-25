@@ -1,8 +1,16 @@
+    /* Palette tokens live in one place. A theme only redeclares these; every
+       surface, control, and card reads them, so a new palette is a token
+       block rather than a stylesheet rewrite.
+       --accent-2 is an optional second accent for decorative gradients.
+       --chrome is the translucent sticky-header color.
+       --frame-from/--frame-to are the poster-placeholder gradient stops. */
     :root {
       color-scheme: dark;
       --bg:#0b0e09; --panel:#151a12; --panel2:#1f2618; --line:#2f3a24;
       --text:#eff4e8; --muted:#9aa78d; --accent:#b6d56d; --accent-dark:#11160f;
-      --gold:#e0a14a; --radius:10px;
+      --text-soft:#cfd8c2; --accent-2:#b6d56d; --gold:#e0a14a; --radius:10px;
+      --chrome:rgba(11,14,9,.95);
+      --frame-from:#2c3721; --frame-to:#12170d;
     }
     * { box-sizing:border-box; }
     body { margin:0; font:14px -apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif; background:var(--bg); color:var(--text); }
@@ -16,7 +24,7 @@
     header {
       position:sticky; top:0; z-index:5; display:flex; flex-wrap:wrap;
       align-items:center; gap:12px; padding:14px 22px;
-      background:rgba(11,14,9,.95); backdrop-filter:blur(8px); border-bottom:1px solid var(--line);
+      background:var(--chrome); backdrop-filter:blur(8px); border-bottom:1px solid var(--line);
     }
     h1 { margin:0 auto 0 0; font-size:22px; letter-spacing:.3px; }
     h1 span { color:var(--accent); }
@@ -89,7 +97,7 @@
     .catalog-detail-hero { display:grid; grid-template-columns:140px minmax(0,1fr); gap:16px; align-items:start; }
     .catalog-detail-cover {
       width:140px; aspect-ratio:2/3; display:grid; place-items:center; overflow:hidden;
-      border-radius:9px; background:linear-gradient(145deg,#334124,#11160f);
+      border-radius:9px; background:linear-gradient(145deg,var(--frame-from),var(--frame-to));
       color:var(--accent); font-size:32px; font-weight:800; box-shadow:0 5px 18px rgba(0,0,0,.35);
     }
     .catalog-detail-cover img { width:100%; height:100%; object-fit:cover; display:block; }
@@ -110,7 +118,7 @@
     .movie-rating small { margin-top:2px; color:var(--muted); font-size:9.5px; }
     .movie-cast-grid { display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); gap:12px 8px; }
     .movie-cast-member { min-width:0; }
-    .movie-cast-portrait { width:100%; aspect-ratio:1/1.14; display:grid; place-items:center; overflow:hidden; border-radius:8px; background:linear-gradient(145deg,#334124,#11160f); color:var(--accent); font-size:18px; font-weight:800; }
+    .movie-cast-portrait { width:100%; aspect-ratio:1/1.14; display:grid; place-items:center; overflow:hidden; border-radius:8px; background:linear-gradient(145deg,var(--frame-from),var(--frame-to)); color:var(--accent); font-size:18px; font-weight:800; }
     .movie-cast-portrait img { width:100%; height:100%; object-fit:cover; display:block; }
     .movie-cast-member strong, .movie-cast-member > span { display:block; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
     .movie-cast-member strong { margin-top:6px; color:var(--text); font-size:11.5px; }
@@ -136,7 +144,7 @@
     }
     .card .frame {
       position:relative; aspect-ratio:2/3; border-radius:var(--radius); overflow:hidden;
-      background:linear-gradient(150deg,#2c3721,#12170d);
+      background:linear-gradient(150deg,var(--frame-from),var(--frame-to));
       box-shadow:0 2px 10px rgba(0,0,0,.45); transition:transform .15s ease, box-shadow .15s ease;
     }
     .card:hover .frame, .card:focus-visible .frame { transform:translateY(-3px); box-shadow:0 8px 22px rgba(0,0,0,.55); }
@@ -171,7 +179,7 @@
     .modal-head strong { font-size:16px; }
     dialog video { width:100%; max-height:56vh; background:#000; border-radius:8px; margin-bottom:16px; }
     .meta-line { color:var(--muted); font-size:13px; margin:2px 0 12px; }
-    .summary { line-height:1.5; color:#cfd8c2; margin:0 0 14px; }
+    .summary { line-height:1.5; color:var(--text-soft); margin:0 0 14px; }
     .tagrow { display:flex; flex-wrap:wrap; gap:6px; }
     .tag { background:var(--panel2); border:1px solid var(--line); border-radius:999px; padding:3px 10px; font-size:12px; color:var(--muted); }
     .actions { display:flex; gap:10px; margin:14px 0 4px; flex-wrap:wrap; }
@@ -254,14 +262,8 @@
 
 [hidden] { display:none !important; }
 :root { --chip-bg: var(--panel2); }
-[data-theme="techmore"] {
-  color-scheme: light;
-  --bg:#b5c8a3; --panel:#dfe7d2; --panel2:#cbd8ba; --line:#a7b891;
-  --text:#403d36; --muted:#6d7563; --accent:#526c3f; --accent-dark:#f4f5ed;
-  --gold:#a86f32; --radius:12px;
-}
 body[data-theme="techmore"] {
-  font-family:Inter, ui-sans-serif, system-ui, -apple-system, sans-serif;
+  color-scheme: light;
   background:var(--bg); color:var(--text);
 }
 body[data-theme="techmore"] h1,
@@ -299,7 +301,7 @@ body[data-theme="techmore"] .nowplaying { background:rgba(64,61,54,.96); color:#
 }
 .filter-modes button:hover, .chip:hover { border-color:var(--accent); }
 .chip:active { transform:scale(.97); }
-.filter-modes button.active, .chip.selected { background:var(--accent); color:#11160f; border-color:var(--accent); font-weight:600; }
+.filter-modes button.active, .chip.selected { background:var(--accent); color:var(--accent-dark); border-color:var(--accent); font-weight:600; }
 .chip { display:inline-flex; align-items:center; gap:6px; }
 .chip.selected::before { content:"✓"; font-size:11px; font-weight:800; }
 /* Super-category buttons are navigation, not filters: solid-ish to separate
@@ -505,12 +507,14 @@ body.optimize-mode #backRow { display:none !important; }
 }
 
 /* ── Techmore editorial pass ──────────────────────────────────────────── */
-[data-theme="techmore"] {
+body[data-theme="techmore"] {
+  color-scheme: light;
   --bg:#d7d2bd; --panel:#eeeade; --panel2:#d1d6c2; --line:#a4ac91;
   --text:#3f4038; --muted:#707565; --accent:#61734f; --accent-dark:#f7f5ea;
-  --gold:#bd7148; --radius:14px;
-}
-body[data-theme="techmore"] {
+  --text-soft:#54564a; --accent-2:#bd7148; --gold:#bd7148; --radius:14px;
+  --chrome:rgba(238,234,222,.92);
+  --frame-from:#b8c2a4; --frame-to:#f0eee2;
+  font-family:Inter, ui-sans-serif, system-ui, -apple-system, sans-serif;
   background:
     radial-gradient(circle at 12% -10%, rgba(255,255,255,.42), transparent 34%),
     linear-gradient(180deg,#dcd7c5 0%,var(--bg) 42%,#d1ccb7 100%);
@@ -518,7 +522,7 @@ body[data-theme="techmore"] {
 }
 body[data-theme="techmore"] header {
   padding:16px 28px;
-  background:rgba(238,234,222,.92);
+  background:var(--chrome);
   border-bottom:1px solid rgba(97,115,79,.34);
   box-shadow:0 5px 24px rgba(63,64,56,.09);
 }
@@ -536,7 +540,7 @@ body[data-theme="techmore"] .recommended-lists-head h3 {
 body[data-theme="techmore"] main.grid { gap:20px; padding-left:28px; padding-right:28px; }
 body[data-theme="techmore"] .card .frame {
   border:1px solid rgba(97,115,79,.26);
-  background:linear-gradient(145deg,#b8c2a4,#f0eee2);
+  background:linear-gradient(145deg,var(--frame-from),var(--frame-to));
   box-shadow:0 5px 13px rgba(63,64,56,.15);
 }
 body[data-theme="techmore"] .card:hover .frame,
@@ -593,15 +597,11 @@ body[data-theme="techmore"] .nowplaying { background:rgba(63,64,56,.96); border-
 }
 
 /* ── Rails browser: the shared default home and library experience ─────── */
-body[data-library-layout="rails"] {
-  color-scheme:dark;
-  --bg:#10130f; --panel:#171d15; --panel2:#202819; --line:#344128;
-  --text:#eff4e8; --muted:#a8b39c; --accent:#b6d56d; --accent-dark:#11160f;
-  --gold:#e0a14a; --radius:10px;
-  background:var(--bg); color:var(--text);
-}
+/* Rails is a *structure* choice, not a palette. It deliberately declares no
+   color tokens: the palette belongs to the theme, so every theme below works
+   in both browser layouts instead of being silently replaced by this one. */
 body[data-library-layout="rails"] header {
-  padding:14px 20px; background:rgba(16,19,15,.96); border-bottom-color:var(--line);
+  padding:14px 20px; background:var(--chrome); border-bottom-color:var(--line);
 }
 body[data-library-layout="rails"] input[type="search"],
 body[data-library-layout="rails"] select {
@@ -634,8 +634,8 @@ body[data-library-layout="rails"] .rail-browse {
 body[data-library-layout="rails"] .rail-browse:hover,
 body[data-library-layout="rails"] .rail-browse:focus-visible { border-color:var(--accent); }
 body[data-library-layout="rails"] .card .frame {
-  background:linear-gradient(145deg,#334124,#11160f);
-  border:1px solid var(--line); border-radius:10px;
+  background:linear-gradient(145deg,var(--frame-from),var(--frame-to));
+  border:1px solid var(--line); border-radius:var(--radius);
   box-shadow:0 2px 10px rgba(0,0,0,.45);
 }
 body[data-library-layout="rails"] .card:hover .frame,
@@ -705,4 +705,144 @@ body.np-visible { padding-bottom:116px; }
   .np-controls .np-btn { min-width:44px; height:44px; }
   .np-rate-label { display:none; }
   body.np-visible { padding-bottom:150px; }
+}
+
+/* ── Space Bunny: a deep-space palette with aurora accents ───────────────
+   A near-black indigo canvas, aurora mint for the strongest actions, and
+   nebula violet for decoration. Starlight gold stays reserved for progress
+   bars and the resume badge so "how far did I get" always reads the same.
+   Tokens first, then only the surfaces that need a distinct treatment. */
+body[data-theme="bunny"] {
+  color-scheme: dark;
+  --bg:#080910; --panel:#101223; --panel2:#191c31; --line:#2a2f4d;
+  --text:#eef0ff; --muted:#9ba0c8; --accent:#6fe3c3; --accent-dark:#080910;
+  --text-soft:#cdd0e8; --accent-2:#a78bfa; --gold:#ffc46b; --radius:14px;
+  --chrome:rgba(8,9,16,.78);
+  --frame-from:#1d2340; --frame-to:#0a0b16;
+  background:
+    radial-gradient(900px 520px at 6% -10%, rgba(167,139,250,.20), transparent 60%),
+    radial-gradient(760px 460px at 98% -4%, rgba(111,227,195,.15), transparent 62%),
+    radial-gradient(700px 700px at 50% 118%, rgba(96,110,255,.10), transparent 65%),
+    var(--bg);
+  color: var(--text);
+}
+body[data-theme="bunny"] header {
+  border-bottom-color:rgba(167,139,250,.28);
+  box-shadow:0 8px 30px rgba(0,0,0,.45);
+}
+body[data-theme="bunny"] h1 span {
+  background:linear-gradient(92deg,var(--accent),var(--accent-2));
+  -webkit-background-clip:text; background-clip:text; color:transparent;
+}
+body[data-theme="bunny"] .brand-lockup img { box-shadow:0 0 0 1px rgba(111,227,195,.4), 0 0 18px rgba(111,227,195,.18); }
+body[data-theme="bunny"] input[type="search"],
+body[data-theme="bunny"] select,
+body[data-theme="bunny"] .np-rate select {
+  background:rgba(25,28,49,.72); border-color:var(--line);
+}
+body[data-theme="bunny"] input[type="search"]:focus-visible,
+body[data-theme="bunny"] select:focus-visible { border-color:var(--accent); }
+body[data-theme="bunny"] nav.tabs { gap:8px; }
+body[data-theme="bunny"] nav.tabs button {
+  background:var(--panel2); border-color:var(--line); color:var(--muted);
+  transition:border-color .14s, color .14s, background .14s;
+}
+body[data-theme="bunny"] nav.tabs button:hover { color:var(--text); border-color:var(--accent-2); }
+body[data-theme="bunny"] nav.tabs button.active {
+  color:var(--accent-dark); font-weight:700; border-color:transparent;
+  background:linear-gradient(100deg,var(--accent),var(--accent-2));
+  box-shadow:0 4px 16px rgba(111,227,195,.24);
+}
+body[data-theme="bunny"] .card .frame {
+  background:linear-gradient(150deg,var(--frame-from),var(--frame-to));
+  border:1px solid var(--line);
+  box-shadow:0 3px 14px rgba(0,0,0,.5);
+}
+body[data-theme="bunny"] .card:hover .frame,
+body[data-theme="bunny"] .card:focus-visible .frame {
+  transform:translateY(-4px);
+  border-color:var(--accent-2);
+  box-shadow:0 14px 30px rgba(0,0,0,.6), 0 0 0 1px rgba(167,139,250,.35);
+}
+body[data-theme="bunny"] .card .play-glyph { color:var(--accent); background:rgba(8,9,16,.45); }
+body[data-theme="bunny"] .card h3 { color:var(--text); }
+body[data-theme="bunny"] .card p.meta { color:var(--muted); }
+body[data-theme="bunny"] .badge.unwatched { background:var(--gold); color:#2a1c04; }
+body[data-theme="bunny"] .badge.watched { background:rgba(16,18,35,.86); color:var(--muted); border-color:var(--line); }
+body[data-theme="bunny"] .catalog-detail {
+  background:linear-gradient(180deg,rgba(25,28,49,.9),rgba(16,18,35,.95));
+  border-left-color:rgba(167,139,250,.24);
+}
+body[data-theme="bunny"] .catalog-detail-head { border-bottom-color:rgba(167,139,250,.2); }
+body[data-theme="bunny"] .catalog-detail-head button:hover { color:var(--accent); border-color:var(--accent); }
+body[data-theme="bunny"] .catalog-detail-cover,
+body[data-theme="bunny"] .movie-cast-portrait {
+  border:1px solid var(--line);
+  box-shadow:0 8px 26px rgba(0,0,0,.55);
+}
+body[data-theme="bunny"] .catalog-kicker { color:var(--accent); }
+body[data-theme="bunny"] .summary { color:var(--text-soft); }
+body[data-theme="bunny"] .rail-browse { color:var(--accent); }
+body[data-theme="bunny"] .rail-browse:hover,
+body[data-theme="bunny"] .rail-browse:focus-visible {
+  color:var(--text); border-color:var(--accent);
+  background:linear-gradient(100deg,var(--accent),var(--accent-2));
+}
+body[data-theme="bunny"] .chip,
+body[data-theme="bunny"] .filter-modes button { background:rgba(25,28,49,.72); border-color:var(--line); }
+body[data-theme="bunny"] .chip:hover,
+body[data-theme="bunny"] .filter-modes button:hover { border-color:var(--accent-2); }
+body[data-theme="bunny"] .chip.selected,
+body[data-theme="bunny"] .filter-modes button.active {
+  color:var(--accent-dark); border-color:transparent; font-weight:600;
+  background:linear-gradient(100deg,var(--accent),var(--accent-2));
+}
+body[data-theme="bunny"] .chip.category.has-selection { border-color:var(--accent); color:var(--accent); }
+body[data-theme="bunny"] .recommended-list-card,
+body[data-theme="bunny"] .reading-list,
+body[data-theme="bunny"] section.season,
+body[data-theme="bunny"] dialog#detail {
+  background:linear-gradient(160deg,rgba(25,28,49,.86),rgba(16,18,35,.92));
+  border-color:var(--line);
+  box-shadow:0 4px 18px rgba(0,0,0,.42);
+}
+body[data-theme="bunny"] .recommended-list-card:hover {
+  border-color:var(--accent-2);
+  box-shadow:0 12px 30px rgba(0,0,0,.5), 0 0 0 1px rgba(167,139,250,.3);
+}
+body[data-theme="bunny"] .recommended-list-icon {
+  background:linear-gradient(140deg,var(--accent-2),var(--accent));
+  color:#080910;
+}
+body[data-theme="bunny"] .recommended-list-meta { color:var(--accent); }
+body[data-theme="bunny"] .list-entry-title { color:var(--accent); }
+body[data-theme="bunny"] .list-missing { background:rgba(255,196,107,.08); border-color:rgba(255,196,107,.4); }
+body[data-theme="bunny"] .movie-rating { background:rgba(8,9,16,.5); }
+body[data-theme="bunny"] .movie-rating strong { color:var(--accent); }
+body[data-theme="bunny"] .movie-ratings,
+body[data-theme="bunny"] .movie-cast { border-top-color:rgba(167,139,250,.22); }
+body[data-theme="bunny"] dialog::backdrop { background:rgba(4,4,10,.78); }
+body[data-theme="bunny"] .nowplaying {
+  background:rgba(12,14,28,.92);
+  border-top-color:rgba(167,139,250,.3);
+  box-shadow:0 -14px 40px rgba(0,0,0,.55);
+}
+body[data-theme="bunny"] .np-btn.np-play {
+  border-color:transparent; color:var(--accent-dark);
+  background:linear-gradient(100deg,var(--accent),var(--accent-2));
+}
+body[data-theme="bunny"] .np-seek input[type="range"] { accent-color:var(--accent); }
+body[data-theme="bunny"] button.ep-row .code { color:var(--accent); }
+body[data-theme="bunny"] .catalog-more button { color:var(--accent); }
+body[data-theme="bunny"] .catalog-more button:hover { border-color:var(--accent); background:var(--panel2); }
+body[data-theme="bunny"] .actions button.primary,
+body[data-theme="bunny"] .storage-scan {
+  border-color:transparent; color:var(--accent-dark); font-weight:700;
+  background:linear-gradient(100deg,var(--accent),var(--accent-2));
+}
+body[data-theme="bunny"] .actions button.primary:disabled { opacity:.55; }
+@media (max-width: 640px) {
+  body[data-theme="bunny"] header,
+  body[data-theme="bunny"] section.row { padding-left:16px; padding-right:16px; }
+  body[data-theme="bunny"] main.grid { padding-left:16px; padding-right:16px; }
 }

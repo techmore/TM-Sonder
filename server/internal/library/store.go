@@ -21,21 +21,28 @@ type Item struct {
 	// StableKey identifies the media relative to its configured library rather
 	// than by the host's absolute mount path. It lets imports and container
 	// remaps retain list/progress references without changing public IDs.
-	StableKey                string    `json:"stableKey,omitempty"`
-	SourceRelativePath       string    `json:"sourceRelativePath,omitempty"`
-	SidecarPaths             []string  `json:"sidecarPaths,omitempty"`
-	PosterPath               string    `json:"posterPath,omitempty"`
-	BackdropPath             string    `json:"backdropPath,omitempty"`
-	PosterSource             string    `json:"posterSource,omitempty"` // local|thumbnail|wikipedia|audnexus|open-library
-	SizeBytes                int64     `json:"sizeBytes,omitempty"`
-	ProbedAudioChannels      []int     `json:"probedAudioChannels,omitempty"`
-	ProbedAudioBitrates      []int     `json:"probedAudioBitrates,omitempty"`
-	ProbedVideoStreams       int       `json:"probedVideoStreams,omitempty"`
-	ProbedHasCover           bool      `json:"probedHasCover,omitempty"`
-	ProbedCoverKnown         bool      `json:"probedCoverKnown,omitempty"`
-	ProbedUnsupportedStreams int       `json:"probedUnsupportedStreams,omitempty"`
-	ModTime                  time.Time `json:"modTime"`
-	ParseVersion             int       `json:"parseVersion,omitempty"` // parser semantics stamp; older versions rebuild on rescan
+	StableKey                string   `json:"stableKey,omitempty"`
+	SourceRelativePath       string   `json:"sourceRelativePath,omitempty"`
+	SidecarPaths             []string `json:"sidecarPaths,omitempty"`
+	PosterPath               string   `json:"posterPath,omitempty"`
+	BackdropPath             string   `json:"backdropPath,omitempty"`
+	PosterSource             string   `json:"posterSource,omitempty"` // local|thumbnail|wikipedia|audnexus|open-library
+	SizeBytes                int64    `json:"sizeBytes,omitempty"`
+	ProbedAudioChannels      []int    `json:"probedAudioChannels,omitempty"`
+	ProbedAudioBitrates      []int    `json:"probedAudioBitrates,omitempty"`
+	ProbedVideoStreams       int      `json:"probedVideoStreams,omitempty"`
+	ProbedHasCover           bool     `json:"probedHasCover,omitempty"`
+	ProbedCoverKnown         bool     `json:"probedCoverKnown,omitempty"`
+	ProbedUnsupportedStreams int      `json:"probedUnsupportedStreams,omitempty"`
+	// ProbedTagsRead records that the container's metadata tags have already
+	// been read for this file. It is a one-shot marker, not a statement about
+	// what was found: a book whose file genuinely carries no narrator tag must
+	// not be re-probed on every scan forever. Author/Narrator being empty is
+	// not sufficient evidence that the tags are unread, because many files
+	// simply have no narrator to report.
+	ProbedTagsRead bool      `json:"probedTagsRead,omitempty"`
+	ModTime        time.Time `json:"modTime"`
+	ParseVersion   int       `json:"parseVersion,omitempty"` // parser semantics stamp; older versions rebuild on rescan
 }
 
 func (i *Item) clone() *Item {

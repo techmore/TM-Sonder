@@ -35,10 +35,30 @@ UNKNOWN_AUTHOR = {"unknown author", "unknown", "various", "various authors", ""}
 AUDIO_EXT = {".m4b", ".m4a", ".mp3", ".ogg", ".opus", ".flac", ".wav", ".aax", ".aaxz"}
 
 # Trailing tool/edition noise that is safe to drop from a canonical stem.
+#
+# Bracketed text is NOT unconditionally noise: "[64kbps]" is technical junk,
+# but "[Unabridged]" or "[Full Cast]" is a real edition distinction. Merging
+# those would collapse two genuinely different recordings into one book, so
+# only clearly technical brackets are stripped.
+_TECHNICAL_BRACKET = re.compile(
+    r"\[\s*"
+    r"(?:\d{2,4}\s*k(?:bps)?|[\d.]+\s*[kmg]b|"
+    r"audible|amazon|aax|abridged\s*-\s*\d+\s*h|"
+    r"\d+\s*h(?:rs?|ours?)?\s*m?(?:in)?|source|r\d+|retag|"
+    r"converted|reencoded|fixed|test)"
+    r"\s*\]",
+    re.I,
+)
+_EDITION_MARKERS = re.compile(
+    r"\[\s*(unabridged|abridged|full cast|single[- ]narrator|"
+    r"audiobook|audio book|graphic audio)\s*\]",
+    re.I,
+)
+
 NOISE_PATTERNS = [
     (re.compile(r"\{[^}]*\}"), ""),                        # {audible-B08G9PBSFV}
-    (re.compile(r"\[[^\]]*\]"), ""),                       # [64kbps]
-    (re.compile(r"\(\s*\d{2,4}\s*kbps\s*\)", re.I), ""),   # (64kbps)
+    (_TECHNICAL_BRACKET, ""),                               # [64kbps], [417mb]
+    (re.compile(r"\(\s*\d{2,4}\s*kbps\s*\)", re.I), ""),    # (64kbps)
     (re.compile(r"\s[-_]?\d{2,4}k\b", re.I), ""),            # " 128k", "-64k"
 ]
 
@@ -63,6 +83,10 @@ def clean_name(name: str) -> str:
     out = unicodedata.normalize("NFC", name).strip()
     for pattern, repl in NOISE_PATTERNS:
         out = pattern.sub(repl, out)
+    # An edition marker is meaningful and its brackets are kept, but the
+    # spacing is normalized so "Dune[Unabridged]" and "Dune [Unabridged]"
+    # resolve to the same name.
+    out = _EDITION_MARKERS.sub(lambda m: f" [{m.group(1)}]", out)
     out = re.sub(r"\s+", " ", out).strip(" -_. ")
     return out or name.strip()
 

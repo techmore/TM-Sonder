@@ -451,6 +451,7 @@ func applyProbe(it *Item, res *probe.Result) {
 	it.ProbedHasCover = res.HasAttachedPicture
 	it.ProbedCoverKnown = true
 	it.ProbedUnsupportedStreams = res.UnsupportedStreams
+	it.ProbedTagsRead = true
 	applyFileTags(it, res.Tags)
 }
 
@@ -665,6 +666,12 @@ func (sc *Scanner) scanLibraryInto(lib config.Library, keep map[string]bool, pen
 			existing.PosterPath == "" && existing.TrackProbeUpdatedAt == nil
 		wantsOptimizationProbe := unchanged && existing.Kind == api.KindAudiobook && format == api.FormatM4B &&
 			((len(existing.ProbedAudioCodecs) > 0 && len(existing.ProbedAudioChannels) == 0) || !existing.ProbedCoverKnown)
+		// A book whose container tags were never read (tag reading postdates its
+		// first probe) is re-probed exactly once, so the credit can be recovered
+		// from the file itself. ProbedTagsRead makes this a one-shot rather than
+		// a standing condition, which would otherwise re-probe every untagged
+		// book on every scan forever.
+		wantsTagProbe := unchanged && existing.Kind == api.KindAudiobook && !existing.ProbedTagsRead
 		newLocalArt := false
 		if unchanged && !wantsFirstProbe && existing.PosterPath == "" {
 			b := strings.TrimSuffix(filepath.Base(path), filepath.Ext(path))
@@ -678,7 +685,7 @@ func (sc *Scanner) scanLibraryInto(lib config.Library, keep map[string]bool, pen
 				newLocalArt = true
 			}
 		}
-		if unchanged && !wantsFirstProbe && !wantsOptimizationProbe && !newLocalArt {
+		if unchanged && !wantsFirstProbe && !wantsOptimizationProbe && !wantsTagProbe && !newLocalArt {
 			res.Skipped++
 			return nil
 		}
