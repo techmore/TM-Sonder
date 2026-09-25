@@ -74,6 +74,36 @@ Automated validation does not prove subjective quality, source completeness,
 correct artwork identity, or real-device playback. Keep originals until those
 checks pass and a separate backup/rollback policy has been established.
 
+## Standardize the folder layout
+
+```sh
+python3 tools/audiobooks/standardize.py /Users/seandolbec/NAS/plex/Audiobooks \
+  --out m4b_work/migration/standardize-plan.json
+```
+
+Plans the move to the target layout `Audiobooks/<Author>/<Book>/<Book>.m4b`,
+decided **per book folder** rather than per file. A folder holding one audio
+file is a rename candidate; a folder holding several is classified instead
+(`multi_part_book`, `multiple_editions`, `identical_size_duplicates`,
+`single_book_plus_leftovers`, `mixed_parts_and_extras`, `series_collection`)
+and left alone, because merging tracks or picking an edition is a decision a
+human has to make. Zero-byte files, unknown-author folders, half-applied
+unwraps, and two folders claiming one canonical path are all reported as
+reviews rather than resolved by guesswork.
+
+Planning never touches the disk. `--apply` only renames unambiguous single-file
+books and moves unambiguous book folders; it refuses to overwrite an existing
+path, and never deletes, merges, re-encodes, or re-tags. `--limit` bounds the
+batch and `--receipt` records every applied and skipped path.
+
+Note that the file name inside a book folder is what the layout normalizes, but
+the *folder* name is what the server parser and most players display as the
+book title. A book whose folder name is noisy therefore gets a `rename_book`
+folder move, not just a file rename.
+
+Dot-prefixed files (`._Name.m4b` AppleDouble sidecars from the NAS) and
+dot-directories are skipped, so the planner's file counts exclude them.
+
 ## Tests
 
 ```sh
@@ -82,6 +112,9 @@ python3 -m unittest discover -s tools/audiobooks -p 'test_*.py' -v
 
 Exercises actual FFmpeg encoding/remuxing, duration/chapter preservation,
 embedded and sidecar artwork, refusal to overwrite, and unchanged originals.
+The standardization planner's tests additionally cover folder-level
+classification, collision detection, and the guarantee that planning never
+modifies the library.
 
 ## Bounded batches
 

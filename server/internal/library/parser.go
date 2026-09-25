@@ -74,7 +74,7 @@ func uuidV5(ns [16]byte, name string) string {
 // (IDs are path-derived, so progress and item identity survive the rebuild),
 // which propagates parsing fixes to already-cataloged libraries without a
 // full wipe.
-const ParserVersion = 9
+const ParserVersion = 11
 
 // Parsed is the ported result of SonderMediaParser.parseTitle. Kind is chosen
 // by the scanner from library config + extension, not by the parser.
@@ -461,13 +461,32 @@ func ParseFilename(path, libraryKind string) Parsed {
 		if t == "" {
 			t = removePlexTags(raw)
 		}
-		sub := "Audiobook"
-		if y := extractYear(raw); y > 0 {
-			sub = "Audiobook - " + strconv.Itoa(y)
+		// The maintained audiobook layout is Author/Book/Book.m4b. Prefer the
+		// book folder as canonical title and its parent as author. The same
+		// relative shape holds inside the legacy compact wrapper, so this also
+		// keeps wrapped books addressable while they are being unwrapped.
+		bookFolder := strings.TrimSpace(filepath.Base(filepath.Dir(path)))
+		authorFolder := strings.TrimSpace(filepath.Base(filepath.Dir(filepath.Dir(path))))
+		bookFolderOK := bookFolder != "" && !looksLikeJunkDir(bookFolder)
+		if bookFolderOK {
+			t = bookFolder
 		}
-		p := simpleParsed(t, sub, extractYear(raw), metadataSource, metadataID, edition, splitPart)
-		if m := reSeriesNumber.FindStringSubmatch(raw); m != nil {
-			p.SeriesNumber, _ = strconv.ParseFloat(m[1], 64)
+		author := ""
+		if bookFolderOK && authorFolder != "" && !looksLikeJunkDir(authorFolder) {
+			author = authorFolder
+		}
+		year := firstNonZero(extractYear(raw), extractYear(parent))
+		sub := "Audiobook"
+		if year > 0 {
+			sub = "Audiobook - " + strconv.Itoa(year)
+		}
+		p := simpleParsed(t, sub, year, metadataSource, metadataID, edition, splitPart)
+		p.Series = author
+		for _, candidate := range []string{parent, raw} {
+			if m := reSeriesNumber.FindStringSubmatch(candidate); m != nil {
+				p.SeriesNumber, _ = strconv.ParseFloat(m[1], 64)
+				break
+			}
 		}
 		return p
 	case "ebook":
@@ -505,7 +524,16 @@ func ParseFilename(path, libraryKind string) Parsed {
 		if t == "" {
 			t = removePlexTags(raw)
 		}
-		return simpleParsed(t, "Audiobook", extractYear(raw), metadataSource, metadataID, edition, splitPart)
+		p := simpleParsed(t, "Audiobook", extractYear(raw), metadataSource, metadataID, edition, splitPart)
+		bookFolder := strings.TrimSpace(filepath.Base(filepath.Dir(path)))
+		authorFolder := strings.TrimSpace(filepath.Base(filepath.Dir(filepath.Dir(path))))
+		if bookFolder != "" && !looksLikeJunkDir(bookFolder) {
+			p.Title = bookFolder
+			if authorFolder != "" && !looksLikeJunkDir(authorFolder) {
+				p.Series = authorFolder
+			}
+		}
+		return p
 	case api.FormatForExtension(strings.TrimPrefix(filepath.Ext(path), ".")) == api.FormatEPUB ||
 		api.FormatForExtension(strings.TrimPrefix(filepath.Ext(path), ".")) == api.FormatPDF ||
 		strings.Contains(lower, "book"):
@@ -560,7 +588,8 @@ var reEbookParenAuthor = regexp.MustCompile(`^(.{2,}?)\s*\(([^)(]{2,60})\)$`)
 func looksLikeJunkDir(name string) bool {
 	n := strings.ToLower(name)
 	for _, junk := range []string{"ebook", "ebooks", "books", "book", "calibre",
-		"library", "mybooks", "download", "downloads", "converted", "unknown"} {
+		"library", "mybooks", "download", "downloads", "converted", "unknown",
+		"audio", "audiobook", "audiobooks", "audio books"} {
 		if n == junk {
 			return true
 		}

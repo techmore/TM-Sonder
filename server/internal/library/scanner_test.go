@@ -229,6 +229,50 @@ func TestScanPreservesCatalogWhenLibraryUnreadable(t *testing.T) {
 
 // With safeScan on (the default), a library that resolves but contains no
 // media files while the catalog still holds items for it keeps those items.
+// A rebuild must not lose the parser-derived author: the Author/Book/Book.m4b
+// layout supplies it from the path, and a rebuild used to overwrite it with
+// the (nil) author of the previous catalog entry.
+func TestScanRebuildKeepsParserDerivedAuthor(t *testing.T) {
+	root := t.TempDir()
+	book := filepath.Join(root, "Audiobooks", "Andy Weir", "Project Hail Mary", "Project Hail Mary.m4b")
+	if err := os.MkdirAll(filepath.Dir(book), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(book, []byte("v1"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	lib := []config.Library{{ID: "books", Name: "Audiobooks", Path: filepath.Join(root, "Audiobooks"), Kind: "audiobook"}}
+	store := New()
+	sc := NewScanner(store)
+	if _, err := sc.ScanAll(lib); err != nil {
+		t.Fatal(err)
+	}
+	items := store.InternalItems()
+	if len(items) != 1 {
+		t.Fatalf("count = %d", len(items))
+	}
+	if items[0].Author == nil || *items[0].Author != "Andy Weir" {
+		t.Fatalf("first scan author = %v", items[0].Author)
+	}
+	// Force a rebuild of the same stable ID through the merge path.
+	if err := os.WriteFile(book, []byte("v2-rebuilt"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := sc.ScanAll(lib); err != nil {
+		t.Fatal(err)
+	}
+	items = store.InternalItems()
+	if len(items) != 1 {
+		t.Fatalf("count after rebuild = %d", len(items))
+	}
+	if items[0].Author == nil || *items[0].Author != "Andy Weir" {
+		t.Errorf("rebuild dropped parser-derived author: %v", items[0].Author)
+	}
+	if items[0].Title != "Project Hail Mary" {
+		t.Errorf("rebuild title = %q", items[0].Title)
+	}
+}
+
 func TestSafeScanPreservesEmptiedLibrary(t *testing.T) {
 	root := fixtureTree(t)
 	store := New()

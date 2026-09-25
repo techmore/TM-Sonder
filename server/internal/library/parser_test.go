@@ -140,6 +140,36 @@ func TestParseFilenameBooks(t *testing.T) {
 	}
 }
 
+func TestParseFilenameAudiobookUsesAuthorBookStructure(t *testing.T) {
+	cases := []struct {
+		path, wantTitle, wantAuthor, wantSubtitle string
+	}{
+		{
+			"/audiobooks/Andy Weir/Project Hail Mary/Project Hail Mary.m4b",
+			"Project Hail Mary", "Andy Weir", "Audiobook",
+		},
+		{
+			"/audiobooks/M4B Forge Compact/compact-m4b-80k/Andy Weir/Project Hail Mary/Project Hail Mary.m4b",
+			"Project Hail Mary", "Andy Weir", "Audiobook",
+		},
+		{
+			"/audiobooks/Ursula K. Le Guin/The Lathe of Heaven (2003)/old-noisy-name.m4b",
+			"The Lathe of Heaven (2003)", "Ursula K. Le Guin", "Audiobook - 2003",
+		},
+		{
+			"/audiobooks/Project Hail Mary.m4b",
+			"Project Hail Mary", "", "Audiobook",
+		},
+	}
+	for _, c := range cases {
+		p := ParseFilename(c.path, "audiobook")
+		if p.Title != c.wantTitle || p.Series != c.wantAuthor || p.Subtitle != c.wantSubtitle {
+			t.Errorf("%s: title/author/subtitle = %q/%q/%q, want %q/%q/%q",
+				c.path, p.Title, p.Series, p.Subtitle, c.wantTitle, c.wantAuthor, c.wantSubtitle)
+		}
+	}
+}
+
 func TestParseFilenameDocumentaryKeepsKind(t *testing.T) {
 	p := ParseFilename("/docs/Planet Earth II/Planet Earth II 2016 Islands.mkv", "documentary")
 	if p.ShowTitle == "" && p.Season != nil {

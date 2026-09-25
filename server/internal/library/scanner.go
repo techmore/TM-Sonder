@@ -737,8 +737,16 @@ func (sc *Scanner) buildItem(path, id string, st os.FileInfo, format api.MediaFo
 	if prev, ok := sc.store.Get(id); ok {
 		item.Summary = prev.Summary
 		item.Tags = prev.Tags
-		item.Author = prev.Author
-		item.Narrator = prev.Narrator
+		// Only let a prior catalog entry win when it actually carries a
+		// value. Overwriting unconditionally with a nil pointer erased the
+		// parser-derived author on every rebuild, so no book ever surfaced
+		// an author even with a correct Author/Book/Book.m4b layout.
+		if prev.Author != nil && *prev.Author != "" {
+			item.Author = prev.Author
+		}
+		if prev.Narrator != nil && *prev.Narrator != "" {
+			item.Narrator = prev.Narrator
+		}
 		item.ProbedWidth = prev.ProbedWidth
 		item.ProbedHeight = prev.ProbedHeight
 		item.ProbedCodec = prev.ProbedCodec
