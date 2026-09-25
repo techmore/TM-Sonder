@@ -471,6 +471,17 @@ test('the browser layout never overrides the palette, so every theme is selectab
   assert.match(libraryHTML, /<option value="bunny">Space Bunny<\/option>/);
 });
 
+test('no palette token is aliased on :root, where var() would freeze it to Earthy', () => {
+  const css = fs.readFileSync(`${__dirname}/library.css`, 'utf8');
+  // A custom property declared on :root that references another custom property
+  // resolves against :root's value, not the body-level theme value. `--chip-bg:
+  // var(--panel2)` therefore stayed pinned to the Earthy dark #1f2618 and every
+  // theme put its own text colour on a dark chip. Palettes own their tokens.
+  const aliases = [...css.matchAll(/^\s*:root\s*\{([^}]*)\}/gm)]
+    .flatMap(([, block]) => [...block.matchAll(/(--[\w-]+)\s*:\s*var\(/g)].map(m => m[1]));
+  assert.deepEqual(aliases, [], `aliased on :root: ${aliases.join(', ')}`);
+});
+
 test('Space Bunny is a registered palette, not just a stylesheet', () => {
   // The Go page renderer rewrites data-theme before the first paint and falls
   // back to earthy for an unknown preset, so an unregistered name would be
