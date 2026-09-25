@@ -94,6 +94,12 @@
     ].map(([name, description, titles], index) => ({ id: `recommended-${index}`, name, description, titles }));
 
     // ── Curated shelves for every catalog ──────────────────────────────────
+    // Titles are compared the way the web UI always has: lowercase, alphanumerics
+    // only, so "Sapiens: A Brief History" and "sapiens a brief history" agree.
+    function listTitleKey(value) {
+      return String(value || "").toLowerCase().replace(/[^a-z0-9]+/g, "");
+    }
+
     // The book shelves above were the only curated data in Sonder, and they
     // only ever matched ebooks and audiobooks. Nothing about a list is
     // book-specific, so the same engine now also drives movies, shows, and
@@ -305,7 +311,10 @@
 
     // One registry for every catalog. Books keep their historical `titles`
     // field so the existing shelf UI keeps working; every list also exposes
-    // parsed `entries` and the `kinds` it can match against.
+    // parsed `entries` and the `kinds` it can match against. `signature`
+    // identifies shelves that hold identical titles, which is how the many
+    // differently-named "top 100 books" lists are recognised as one shelf.
+    const curatedSignature = entries => entries.map(entry => `${listTitleKey(entry.title)}|${entry.year || ""}`).join("");
     const CURATED_LISTS = [
       ...RECOMMENDED_LISTS.map(list => ({
         id: list.id, name: list.name, description: list.description,
@@ -317,7 +326,7 @@
           id: `curated-${index}`, name, description, kinds: CURATED_KINDS[kind],
           titles, entries: titles.map(parseCuratedEntry),
         })),
-    ];
+    ].map(list => ({ ...list, signature: curatedSignature(list.entries) }));
 
     // Which media kinds does this tab browse? Drives both the curated shelf
     // picker and the list add-row search so neither offers an item the user
@@ -1861,8 +1870,28 @@
       await refreshLists();
     }
 
-    function listTitleKey(value) {
-      return String(value || "").toLowerCase().replace(/[^a-z0-9]+/g, "");
+    // Media managers name files "Title (Year)", and the scanner keeps that
+    // suffix as the title. Matching a curated "Title (Year)" entry against a
+    // catalog "Title (Year)" therefore has to drop the suffix from the
+    // candidate side first, or every movie match falls through to the loose
+    // containment path below and the year check stops meaning anything.
+    function listRecordParts(rawTitle, rawYear) {
+      const title = String(rawTitle || "");
+      const match = CURATED_TITLE_YEAR.exec(title);
+      return {
+        title: match ? match[1].trim() : title,
+        year: Number(rawYear) || (match ? Number(match[2]) : 0),
+      };
+    }
+
+    // Containment is a last resort, so it needs enough shared text to mean
+    // something. Without a floor, a one-letter entry like "M" matches any
+    // title containing an "m" — which is how a bonus-feature extra ends up on
+    // a greatest-films shelf.
+    const LOOSE_MATCH_MIN = 5;
+    function looseTitleMatch(wanted, key) {
+      return Math.min(wanted.length, key.length) >= LOOSE_MATCH_MIN &&
+        (key.includes(wanted) || wanted.includes(key));
     }
 
     // Every media kind in a curated list needs its own candidate pool, because
@@ -1880,14 +1909,16 @@
         for (const show of buildShowGroups()) {
           const item = show.posterItem || [...show.seasons.values()].flat()[0];
           if (!item) continue;
-          records.push({ item, show, year: item.year || 0, title: show.name, key: listTitleKey(show.name) });
+          const parts = listRecordParts(show.name, 0);
+          records.push({ item, show, ...parts, key: listTitleKey(parts.title) });
         }
       }
       for (const kind of wanted) {
         if (kind === "tvShow") continue;
         for (const item of items) {
           if (item.kind !== kind || item.isPlaceholder) continue;
-          records.push({ item, show: null, year: item.year || 0, title: item.title || "", key: listTitleKey(item.title) });
+          const parts = listRecordParts(item.title, item.year);
+          records.push({ item, show: null, ...parts, key: listTitleKey(parts.title) });
         }
       }
       records.sort((a, b) => String(a.title || "").localeCompare(String(b.title || "")));
@@ -1948,7 +1979,7 @@
       }
       if (!match && wanted) {
         const loose = state.records.find(record =>
-          (record.key.includes(wanted) || wanted.includes(record.key)) &&
+          looseTitleMatch(wanted, record.key) &&
           (!parsed.year || !record.year || record.year === parsed.year));
         match = loose || null;
       }
@@ -2005,6 +2036,10 @@
     // because the titles still missing become an obvious shopping list. The
     // rail keeps the list's own ranking, which is the whole point of a canon:
     // the top of a "greatest films" shelf is not its first letter.
+    //
+    // Many book shelves are the same 100 titles under different publications'
+    // names. They collapse to one rail, because three identically-worded
+    // "67 of 100 owned" shelves is noise rather than choice.
     const CURATED_RAIL_MIN = 4;
     const CURATED_RAIL_MAX = 2;
 
@@ -2018,7 +2053,12 @@
       // Most covered first, then by name so a shelf cannot reorder between
       // renders just because two lists tie on coverage.
       shelves.sort((a, b) => b.records.length - a.records.length || a.list.name.localeCompare(b.list.name));
-      return shelves.slice(0, limit);
+      const seen = new Set();
+      return shelves.filter(shelf => {
+        if (seen.has(shelf.list.signature)) return false;
+        seen.add(shelf.list.signature);
+        return true;
+      }).slice(0, limit);
     }
 
     function curatedShelfSub(shelf) {
@@ -2254,6 +2294,23 @@
         ${editionsHTML(item)}`;
     }
 
+    // The movie catalog has its own renderer, so it needs its own curated
+    // rails rather than sharing the generic one.
+    function curatedMovieShelves() {
+      return curatedShelves(CURATED_KINDS.movie)
+        .map(shelf => {
+          const cards = shelf.records.slice(0, 18).map(record => cardHTML(record.item)).join("");
+          return `<section class="web-rail">
+            <div class="web-rail-heading">
+              <div><h2>${escapeHTML(shelf.list.name)}</h2><p class="sub">${escapeHTML(curatedShelfSub(shelf))}</p></div>
+              ${curatedShelfControl(shelf)}
+            </div>
+            <div class="catalog-strip">${cards}</div>
+          </section>`;
+        })
+        .join("");
+    }
+
     function renderMovieCatalog(source) {
       const layout = $("#movieCatalog");
       const rails = $("#movieRails");
@@ -2275,6 +2332,7 @@
           : "";
       rails.innerHTML = shelf("Continue watching", `${groups.continueWatching.length} movies in progress`, groups.continueWatching.slice(0, 12)) +
         shelf("Featured movies", "newest unwatched films from your shelf", groups.featured.slice(0, 18)) +
+        curatedMovieShelves() +
         shelf("Quick watches", "under two hours", groups.quick.slice(0, 18)) +
         shelf("Long-form cinema", "two hours and up", groups.long.slice(0, 18)) +
         shelf("Full movie shelf", `${groups.full.length.toLocaleString()} movies in your catalog`, fullShelf, true) +
@@ -2425,15 +2483,17 @@
           const unstarted = shows.filter(s => !showProg(s).started).slice(0, 12);
           blocks = railStrip("Continue Watching", `${cont.length} shows in progress`, cont.map(showCardHTML)) +
                    railStrip("Unstarted", "nothing played yet", unstarted.map(showCardHTML)) +
+                   curatedRails(CURATED_KINDS.tv) +
                    fullShelf("All TV shows", `${shows.length.toLocaleString()} shows in your catalog`, shows, showCardHTML);
         } else {
           const cont = visible.filter(i => inProgress(progressFor(i.id), i)).sort(byUpdated).slice(0, 10);
           const picks = fresh(visible).slice(0, 12);
           const continueLabel = activeTab === "audiobooks" ? "Continue Listening" : activeTab === "books" ? "Continue Reading" : "Continue Watching";
+          const upNextLabel = activeTab === "audiobooks" ? "Up Next" : activeTab === "books" ? "Next Reads" : "Unwatched Picks";
+          const upNextSub = activeTab === "audiobooks" ? "unstarted titles from your shelves" : activeTab === "books" ? "unstarted books from your shelves" : "newest unwatched titles";
           blocks = railStrip(continueLabel, `${cont.length} in progress`, cont.map(cardHTML)) +
-                   railStrip(activeTab === "audiobooks" ? "Up Next" : activeTab === "books" ? "Next Reads" : "Unwatched Picks",
-                     activeTab === "audiobooks" ? "unstarted titles from your shelves" : activeTab === "books" ? "unstarted books from your shelves" : "newest unwatched titles",
-                     picks.map(cardHTML)) +
+                   railStrip(upNextLabel, upNextSub, picks.map(cardHTML)) +
+                   curatedRails(tabCatalogKinds()) +
                    fullShelf(`All ${tabLabel}`, `${visible.length.toLocaleString()} titles in your catalog`, visible, cardHTML);
         }
         if (blocks) {

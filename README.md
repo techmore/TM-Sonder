@@ -209,6 +209,9 @@ the macOS unit tests (`.github/workflows/ci.yml`).
 ## Documentation
 
 - [`API.md`](API.md) — HTTP contract, auth, streaming, playback, artwork.
+- [`THEME.md`](THEME.md) — palette tokens and how to add a new one.
+- [`docs/curated-shelves.md`](docs/curated-shelves.md) — the curated
+  best-of lists, year-aware matching, and the discovery rails built from them.
 - [`docs/review-2026-09.md`](docs/review-2026-09.md) — architecture review and
   prioritized improvement roadmap.
 - [`docs/performance-audit.md`](docs/performance-audit.md) — scan/stream hot

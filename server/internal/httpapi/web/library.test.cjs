@@ -202,6 +202,7 @@ test('packed episode duplicate suffix groups only with same-season sibling', () 
 // Facet rendering needs just enough DOM to hold innerHTML; `$` reads the
 // `document` global lazily, so it can be injected after the script runs.
 function facetHarness(items, state = '') {
+
   const source = fs.readFileSync(`${__dirname}/library.js`, 'utf8');
   const nodes = new Map();
   const node = key => {
@@ -337,3 +338,146 @@ test('show navigation displays seasons before episodes and encodes names once', 
   assert.equal(node('#grid').innerHTML, '');
   assert.match(node('#seasonList').innerHTML, /Pilot/);
 });
+
+// The curated shelves, the candidate pools, and the rails built from them all
+// live above the list-form wiring, so one harness reaches the whole engine
+// without dragging in the rest of the page.
+function shelfHarness(items, state = '') {
+  const source = fs.readFileSync(`${__dirname}/library.js`, 'utf8');
+  const cut = source.indexOf('    on("#listCreateForm"');
+  const context = vm.createContext({
+    window: {
+      Sonder: { api: v => v, escapeHTML: v => String(v ?? ''), formatTime: v => String(v) },
+      addEventListener: () => {},
+    },
+    document: { querySelector: () => null, querySelectorAll: () => [] },
+  });
+  vm.runInContext(source.slice(0, cut), context);
+  context.input = items;
+  vm.runInContext(`items = input; lists = []; ${state} rebuildCopyGroups();`, context);
+  return expression => JSON.parse(JSON.stringify(vm.runInContext(expression, context)));
+}
+
+const film = (title, year, extra = {}) => ({ id: `${title}-${year}`, title, year, kind: 'movie', format: 'mkv', ...extra });
+const doc = (title, year) => ({ id: `doc-${title}`, title, year, kind: 'documentary', format: 'mkv' });
+const episode = (id, showTitle, seasonNumber, episodeNumber) =>
+  ({ id, kind: 'tvShow', title: `Episode ${episodeNumber}`, showTitle, showGroupTitle: showTitle, seasonNumber, episodeNumber });
+
+test('a curated entry with a year resolves the right cut of a remade title', () => {
+  const get = shelfHarness([film('The Thing', 1982), film('The Thing', 2011)]);
+  // Same normalized title, two catalog entries: only the year separates them.
+  assert.equal(get('candidateForEntry(parseCuratedEntry("The Thing (1982)"), ["movie"]).item.year'), 1982);
+  assert.equal(get('candidateForEntry(parseCuratedEntry("The Thing (2011)"), ["movie"]).item.year'), 2011);
+});
+
+test('a year-less curated entry still matches, and a wrong year does not', () => {
+  const get = shelfHarness([film('Dune', 1984), film('Fargo', 1996)]);
+  // No year on the entry: fall back to whatever the catalog holds.
+  assert.equal(get('candidateForEntry(parseCuratedEntry("Fargo"), ["movie"]).item.title'), 'Fargo');
+  // A year the catalog genuinely does not hold is a miss, not a near miss.
+  assert.equal(get('candidateForEntry(parseCuratedEntry("Fargo (1978)"), ["movie"])'), null);
+  assert.equal(get('candidateForEntry(parseCuratedEntry("Blade Runner (1982)"), ["movie"])'), null);
+});
+
+test('a shelf only matches titles inside the kinds it declares', () => {
+  const get = shelfHarness([doc('The Cove', 2009), film('The Thing', 1982)]);
+  assert.equal(get('candidateForEntry(parseCuratedEntry("The Cove (2009)"), ["movie"])'), null);
+  assert.equal(get('candidateForEntry(parseCuratedEntry("The Cove (2009)"), ["documentary"]).item.kind'), 'documentary');
+  // Books and audiobooks still share one pool, as they always did.
+  assert.deepEqual(get('listCandidateIndex(CURATED_KINDS.book).records.length'), 0);
+  assert.equal(get('curatedListsForKinds(["movie"]).every(l => l.kinds.includes("movie"))'), true);
+  assert.equal(get('curatedListsForKinds(["documentary"]).some(l => l.kinds.includes("ebook"))'), false);
+});
+
+test('TV shelves match show groups rather than individual episodes', () => {
+  const get = shelfHarness([
+    episode('a', 'The Wire', 1, 1), episode('b', 'The Wire', 1, 2), episode('c', 'The Wire', 2, 1),
+    episode('d', 'Succession', 1, 1),
+  ]);
+  // Three episodes of one show are one candidate, and it knows its seasons.
+  const records = get('listCandidateIndex(["tvShow"]).records');
+  assert.equal(records.length, 2);
+  const wire = records.find(r => r.title === 'The Wire');
+  assert.equal(wire.show.name, 'The Wire');
+  // All three Wire episodes hang off the one candidate, across two seasons.
+  assert.deepEqual(
+    get('[...listCandidateIndex(["tvShow"]).records.find(r => r.title === "The Wire").show.seasons.values()].flat().map(e => e.id).sort()'),
+    ['a', 'b', 'c'],
+  );
+  // The show name is what a list entry names; the episode title is not.
+  assert.equal(get('candidateForEntry(parseCuratedEntry("The Wire"), ["tvShow"]).show.id'), 'The Wire');
+  assert.equal(get('candidateForEntry(parseCuratedEntry("Succession"), ["tvShow"]).show.id'), 'Succession');
+});
+
+test('a curated shelf becomes a rail only once the library covers enough of it', () => {
+  const partial = shelfHarness([film('The Departed', 2006), film('No Country for Old Men', 2007)]);
+  assert.equal(partial('curatedShelves(["movie"]).length'), 0, 'two of fifty is not a shelf worth browsing');
+
+  const covered = shelfHarness([
+    film('The Departed', 2006), film('No Country for Old Men', 2007), film('Slumdog Millionaire', 2008),
+    film('The Hurt Locker', 2009), film("The King's Speech", 2010), film('Unrelated Comedy', 2021),
+  ]);
+  const shelves = covered('curatedShelves(["movie"], 3).map(s => ({ name: s.list.name, owned: s.records.length, sub: curatedShelfSub(s), cards: curatedShelfCards(s).length }))');
+  const awardShelf = shelves.find(s => s.name === 'Recent Award Winners');
+  assert.ok(awardShelf, 'the most-covered shelf is offered');
+  assert.equal(awardShelf.owned, 5);
+  assert.equal(awardShelf.cards, 5);
+  // The subtitle states the gap, which is the discovery signal: what is left.
+  assert.match(awardShelf.sub, /^5 of 25 owned · 20 still to find$/);
+  // A rail keeps the shelf's own ranking, not the catalog's alphabetical order.
+  assert.deepEqual(
+    covered('curatedShelves(["movie"], 1)[0].records.slice(0, 5).map(r => r.item.title)'),
+    ['The Departed', 'No Country for Old Men', 'Slumdog Millionaire', 'The Hurt Locker', "The King's Speech"],
+  );
+});
+
+test('a curated television rail shows series cards, not episode posters', () => {
+  const get = shelfHarness(
+    ['The Sopranos', 'The Wire', 'Breaking Bad', 'Succession', 'The Leftovers']
+      .flatMap(name => [episode(`a-${name}`, name, 1, 1), episode(`b-${name}`, name, 1, 2)]),
+  );
+  const cards = get('curatedShelfCards(curatedShelves(["tvShow"], 1)[0])');
+  assert.equal(cards.length, 5);
+  assert.match(cards[0], /data-action="open-show"/);
+  assert.doesNotMatch(cards[0], /data-action="open-detail"/);
+});
+
+test('a saved shelf offers to reopen itself instead of adding a duplicate', () => {
+  const get = shelfHarness([film('The Departed', 2006)], 'lists = [{ id: "l1", name: "Recent Award Winners" }];');
+  // Nothing in this library is covered, so reach for the shelf object directly.
+  const control = get('curatedShelfControl({ list: { id: "curated-0", name: "Recent Award Winners" } })');
+  assert.match(control, /Saved · open/);
+  assert.match(control, /data-action="use-recommended-list"/);
+  get('lists = []');
+  assert.match(
+    get('curatedShelfControl({ list: { id: "curated-0", name: "Recent Award Winners" } })'),
+    /Save shelf/,
+  );
+});
+
+test('the browser layout never overrides the palette, so every theme is selectable', () => {
+  const css = fs.readFileSync(`${__dirname}/library.css`, 'utf8');
+  // The layout is a structure choice. When it re-declared the palette tokens it
+  // outranked every theme block and the picker silently did nothing.
+  const block = css.slice(css.indexOf('/* ── Rails browser'), css.indexOf('/* ── Persistent now-playing'));
+  assert.doesNotMatch(block, /--(bg|panel|panel2|line|text|muted|accent|gold|accent-dark)\s*:/,
+    'the Rails layout declares no palette tokens');
+  // Earthy is the :root default; every other palette declares its own tokens at
+  // body level, where it outranks the defaults.
+  assert.match(css, /:root \{[^}]*--bg:/);
+  for (const theme of ['techmore', 'bunny']) {
+    assert.match(css, new RegExp(`body\\[data-theme="${theme}"\\][^{]*\\{[^}]*--bg:`), theme);
+  }
+  assert.match(libraryHTML, /<option value="bunny">Space Bunny<\/option>/);
+});
+
+test('Space Bunny is a registered palette, not just a stylesheet', () => {
+  // The Go page renderer rewrites data-theme before the first paint and falls
+  // back to earthy for an unknown preset, so an unregistered name would be
+  // served as Earthy and then re-painted as Space Bunny.
+  const webui = fs.readFileSync(`${__dirname}/../webui.go`, 'utf8');
+  assert.match(webui, /preset != "dark" && preset != "techmore" && preset != "bunny"/);
+  const handlers = fs.readFileSync(`${__dirname}/../handlers.go`, 'utf8');
+  assert.match(handlers, /case "bunny":[\s\S]{0,320}?Accent:\s+"#6FE3C3"/);
+});
+

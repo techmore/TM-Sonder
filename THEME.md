@@ -1,45 +1,97 @@
 # TM Sonder Theme Notes
 
-TM Sonder now uses a selectable earthy palette intended to feel warm, archival, and mac-native.
+TM Sonder uses selectable palettes intended to feel warm, archival, and mac-native.
 
-## Current Theme
+## Palettes
 
-`Earthy Tones`
+| Preset | Name | Mood |
+| --- | --- | --- |
+| `earthy` | Earthy (default) | Warm archival sage on a dark canvas |
+| `dark` | Dark | Plain system dark, no decorative treatment |
+| `techmore` | Techmore Olive | Light parchment-and-olive editorial, serif headings |
+| `bunny` | Space Bunny | Deep-space indigo with aurora mint and nebula violet |
 
-This palette is designed around gentle sage as the base tone, with the other colors acting as supporting permutations:
+The palette name shown in Settings is the preset key. Presets are registered in
+three places, and all three must agree or the first paint disagrees with the
+page after it hydrates:
 
-- `#B0C4B1` Ash Grey, the base tone
-- `#F7E1D7` Powder Petal, a light supporting surface
-- `#DEDBD2` Dust Grey, a quiet neutral layer
-- `#EDAFB8` Cherry Blossom, a limited accent
-- `#4A5759` Iron Grey, the contrast anchor
+- `server/internal/httpapi/web/library.css` — the token block
+- `server/internal/httpapi/web/library.html` — the Settings option
+- `server/internal/httpapi/handlers.go` (`themeFor`) and
+  `server/internal/httpapi/webui.go` (`libraryPageForThemeAndLayout`)
 
-## How It Is Used
+## Token Architecture
 
-- `background`: sage-tinted canvas wash that establishes the base mood
-- `sidebar`: slightly stronger sage for the navigation rail
-- `surface`: warm cream for cards and panels
-- `surfaceDeep`: taupe for depth, overlays, and quieter structural areas
-- `border`: sage-leaning line color for separators and outlines
-- `accent`: charcoal for the strongest UI actions and labels
-- `accentStrong`: same as accent for maximum contrast
-- `accentMuted`: neutral support color for secondary surfaces
-- `text`: readable charcoal for primary content
-- `textLight`: softer charcoal for secondary copy
-- `darkText`: light text on darker chips or labels
+A palette is a block of CSS custom properties on `body[data-theme="…"]`. Every
+surface, control, and card reads those properties, so adding a palette means
+adding a token block, not rewriting views.
 
-## Design Intent
+| Token | Role |
+| --- | --- |
+| `--bg` | Page canvas |
+| `--panel` | Cards, panels, dialogs, the sticky detail rail |
+| `--panel2` | Secondary surfaces: chips, secondary buttons, inactive tabs |
+| `--line` | Borders and separators |
+| `--text` | Primary content |
+| `--text-soft` | Body copy: long-form summaries, one step down from `--text` |
+| `--muted` | Secondary labels, metadata, counts |
+| `--accent` | Strongest interactive moment: active tab, focus ring, primary action |
+| `--accent-dark` | Text/icon color that sits *on* `--accent` |
+| `--accent-2` | Optional second accent, for decorative gradients only |
+| `--gold` | Progress bars and the "N% LEFT" resume badge, nothing else |
+| `--chrome` | Translucent sticky-header background |
+| `--frame-from` / `--frame-to` | Poster-placeholder gradient stops |
+| `--radius` | Corner radius |
 
-- Ash Grey should set the overall mood and visual base
-- Powder Petal and Dust Grey should support surfaces, not dominate them
-- Cherry Blossom should remain a limited accent, not the primary brand color
-- Iron Grey should anchor text, contrast, and the strongest interactive moments
+Two rules the tokens exist to enforce:
 
-## Migration Guidance
+- **`--gold` means progress.** A resume bar and a "42% LEFT" badge read the
+  same in every palette, so "how far did I get" never depends on the theme.
+- **`--accent-2` is decoration.** It appears in gradients and glows, never as
+  the sole carrier of meaning.
 
-- Use the earthy palette for all primary surfaces before introducing any new accent colors
-- Keep the base sage tone visible in the canvas, sidebar, and navigation treatment
-- Reserve Cherry Blossom for action emphasis, not large areas
-- Keep cards and panels soft, not high-contrast
-- Prefer the gray-green tones for borders and neutral controls
-- If another theme is added later, preserve the same token names so the UI can swap palettes without rewriting views
+### `color-scheme`
+
+Declared per palette, not globally. A palette that is light must set
+`color-scheme: light` so form controls and scrollbars follow.
+
+## Browser Layout Is Not a Palette
+
+`data-library-layout` (`rails` or `classic`) selects structure only. The Rails
+block deliberately declares **no** color tokens.
+
+This was a real bug. The Rails block used to redeclare the whole palette, and
+because `body[data-library-layout="rails"]` and `body[data-theme="…"]` have equal
+specificity and the layout block came later, the layout silently won — so
+selecting Techmore changed nothing on the main library page. The token blocks
+now live at body level and every palette works in both layouts.
+
+## Adding a Palette
+
+1. Copy an existing `body[data-theme="…"]` block in `library.css` and change the
+   token values. Keep the structure; drop decorative rules you do not need.
+2. Add the option to `#themeSel` in `library.html`.
+3. Add a `case` to `themeFor` in `handlers.go` (8-digit `RRGGBBAA` hex for the
+   clients) and allow the key in `libraryPageForThemeAndLayout` in `webui.go`.
+4. Add a test asserting the layout block declares no palette tokens, so the
+   override bug cannot come back.
+
+## Space Bunny
+
+A near-black indigo canvas with two soft radial glows, aurora mint for actions,
+and nebula violet for decoration. Starlight gold stays reserved for progress.
+
+- Deep space reads as calm rather than clinical, and the mint accent is
+  distinguishable from both the Earthy green and the Techmore olive.
+- Gradients carry `--accent` into `--accent-2` on the active tab, the primary
+  action, selected chips, and the play button, so the two accents always meet
+  somewhere deliberate.
+- Card hover lifts the poster and adds a violet ring, which keeps the shelves
+  feeling like a physical stack on a dark surface.
+
+## Known Gap
+
+`audiobooks.html`, `audiobooks-beta.html`, and `ebooks.html` each carry their own
+inline stylesheet hardcoded to the Earthy dark palette. They ignore the Settings
+palette entirely. Unifying them onto `library.css` tokens is the remaining
+theming work.
