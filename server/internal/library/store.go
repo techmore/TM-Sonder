@@ -88,6 +88,8 @@ func cloneMediaItem(m api.MediaItem) api.MediaItem {
 	m.SplitPart = cloneStringPtr(m.SplitPart)
 	m.Author = cloneStringPtr(m.Author)
 	m.Narrator = cloneStringPtr(m.Narrator)
+	m.BookGroupID = cloneStringPtr(m.BookGroupID)
+	m.BookGroupTitle = cloneStringPtr(m.BookGroupTitle)
 	m.PosterURL = cloneStringPtr(m.PosterURL)
 	m.BackdropURL = cloneStringPtr(m.BackdropURL)
 	m.SeasonNumber = cloneIntPtr(m.SeasonNumber)

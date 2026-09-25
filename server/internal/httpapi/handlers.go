@@ -7,6 +7,7 @@ import (
 	"errors"
 	"io"
 	"net/http"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -642,6 +643,29 @@ type audiobookChapter struct {
 	EndSeconds   *float64 `json:"endSeconds"`
 }
 
+// catalogPart is one file of a book that was delivered as many files. A book
+// is listed once; its parts are listed here so the client can play them in
+// order. IDs are real item IDs, so streaming and progress still address the
+// individual file.
+type catalogPart struct {
+	ID              string  `json:"id"`
+	Title           string  `json:"title"`
+	Index           int     `json:"index"`
+	DurationSeconds float64 `json:"durationSeconds"`
+	PosterURL       *string `json:"posterURL"`
+}
+
+// catalogConflict reports a book folder whose files could not be merged into
+// one entry. It is surfaced rather than swallowed so a wrong total never
+// reaches the UI without an explanation.
+type catalogConflict struct {
+	// BookID identifies the book folder; for a folder that produced no book
+	// entry, the affected items are listed in ItemIDs.
+	Kind    string   `json:"kind"`
+	ItemIDs []string `json:"itemIDs"`
+	Detail  string   `json:"detail"`
+}
+
 type catalogItem struct {
 	ID              string   `json:"id"`
 	Title           string   `json:"title"`
@@ -657,6 +681,15 @@ type catalogItem struct {
 	PosterURL       *string  `json:"posterURL"`
 	BackdropURL     *string  `json:"backdropURL"`
 	Tags            []string `json:"tags"`
+	// PartCount and Parts describe a book delivered as many files. A single
+	// file book omits them, so clients can treat the common case as unchanged.
+	PartCount int           `json:"partCount,omitempty"`
+	Parts     []catalogPart `json:"parts,omitempty"`
+	// BookConflict explains why a folder's files were not merged. Without it a
+	// whole-book file sitting beside its own segments would silently double
+	// the listed runtime, and a pair of duplicate copies would look like one
+	// book.
+	BookConflict *catalogConflict `json:"bookConflict,omitempty"`
 	// Playback resume state (beta rails). Zero/omitted when never played.
 	ProgressSeconds   float64    `json:"progressSeconds"`
 	ProgressUpdatedAt *time.Time `json:"progressUpdatedAt,omitempty"`
@@ -724,19 +757,148 @@ func (s *Server) toCatalogItem(it *library.Item) catalogItem {
 // mediaCatalog serves the audiobook and ebook catalog routes: kind-filtered,
 // optionally searched, with the theme snapshot. Author/Narrator participate in
 // the search so books can be found by name as well as title.
+//
+// An audiobook library is collapsed to one row per book. A book delivered as
+// many files used to appear once per file, which put a 148-file recording into
+// the listing as 148 rows and made alphabetical browsing useless. The rows for
+// one book are merged, with the parts preserved for playback.
 func (s *Server) mediaCatalog(w http.ResponseWriter, r *http.Request, kind api.MediaKind) {
 	q := strings.ToLower(strings.TrimSpace(r.URL.Query().Get("q")))
+	all := s.store.InternalItemsOfKind(kind)
 	items := []catalogItem{}
-	for _, it := range s.store.InternalItemsOfKind(kind) {
-		if q != "" && !catalogMatches(it, q) {
-			continue
+	if kind == api.KindAudiobook {
+		items = s.collapseIntoBooks(all, q)
+	} else {
+		for _, it := range all {
+			if q != "" && !catalogMatches(it, q) {
+				continue
+			}
+			items = append(items, s.toCatalogItem(it))
 		}
-		items = append(items, s.toCatalogItem(it))
 	}
 	writeJSON(w, http.StatusOK, catalogResponse{
 		Items: items, Count: len(items),
 		Theme: themeFor(s.cfg().ThemePreset), GeneratedAt: time.Now().UTC(),
 	})
+}
+
+// collapseIntoBooks merges the items of one book into a single catalog row.
+// The first part supplies the book-level metadata (title, author, narrator,
+// cover), durations and progress are summed, and the parts are returned in
+// playback order. Books whose folder cannot be resolved are listed per file so
+// they never disappear from the catalog.
+func (s *Server) collapseIntoBooks(all []*library.Item, q string) []catalogItem {
+	groups, conflicts := library.BookGroups(all, s.cfg().Libraries)
+	byGroup := map[string][]*library.Item{}
+	var ungrouped []*library.Item
+	// Files left out of a book because of a conflict still need to be listed,
+	// flagged, so nothing silently disappears from the catalog.
+	conflicted := map[string]string{}
+
+	for _, it := range all {
+		g, ok := groups[it.ID]
+		if !ok {
+			ungrouped = append(ungrouped, it)
+			continue
+		}
+		byGroup[g.ID] = append(byGroup[g.ID], it)
+	}
+	for id, c := range conflicts {
+		for _, itemID := range c.ExcludedIDs {
+			conflicted[itemID] = id
+		}
+	}
+
+	items := make([]catalogItem, 0, len(byGroup)+len(ungrouped))
+
+	// Deterministic book order: by title, then by the book id so two books
+	// sharing a title keep a stable relative order. Titles are resolved once
+	// rather than per comparison.
+	titleOf := make(map[string]string, len(byGroup))
+	for id, parts := range byGroup {
+		titleOf[id] = groups[parts[0].ID].Title
+	}
+	ids := make([]string, 0, len(byGroup))
+	for id := range byGroup {
+		ids = append(ids, id)
+	}
+	sort.Slice(ids, func(a, b int) bool {
+		if titleOf[ids[a]] != titleOf[ids[b]] {
+			return titleOf[ids[a]] < titleOf[ids[b]]
+		}
+		return ids[a] < ids[b]
+	})
+
+	for _, id := range ids {
+		parts := byGroup[id]
+		// Playback order, so a client that queues Parts gets the book's own
+		// track order rather than map iteration order.
+		order := map[string]int{}
+		for _, p := range parts {
+			order[p.ID] = groups[p.ID].Index
+		}
+		sort.Slice(parts, func(a, b int) bool { return order[parts[a].ID] < order[parts[b].ID] })
+
+		head := parts[0]
+		entry := s.toCatalogItem(head)
+		if q != "" && !catalogMatches(head, q) {
+			continue
+		}
+		if len(parts) == 1 {
+			// A single-file book is the common case and must stay exactly as it
+			// was: no parts array, no changed duration. Clients that do not know
+			// about parts keep working unchanged.
+			items = append(items, entry)
+			continue
+		}
+		entry.PartCount = len(parts)
+		entry.DurationSeconds = 0
+		entry.ProgressSeconds = 0
+		entry.ProgressUpdatedAt = nil
+		entry.Parts = make([]catalogPart, 0, len(parts))
+		if c, ok := conflicts[id]; ok {
+			entry.BookConflict = &catalogConflict{
+				Kind: c.Kind, ItemIDs: c.ExcludedIDs, Detail: c.Detail,
+			}
+		}
+		for i, p := range parts {
+			entry.DurationSeconds += p.DurationSeconds
+			entry.ProgressSeconds += p.ProgressSeconds
+			entry.Parts = append(entry.Parts, catalogPart{
+				ID:              p.ID,
+				Title:           p.Title,
+				Index:           i + 1,
+				DurationSeconds: p.DurationSeconds,
+				PosterURL:       p.PosterURL,
+			})
+			if entry.PosterURL == nil && p.PosterURL != nil {
+				entry.PosterURL = p.PosterURL
+			}
+			if entry.ProgressUpdatedAt == nil {
+				if rec, ok := s.store.ProgressFor(p.ID); ok && !rec.UpdatedAt.IsZero() {
+					u := rec.UpdatedAt
+					entry.ProgressUpdatedAt = &u
+				}
+			}
+		}
+		items = append(items, entry)
+	}
+
+	for _, it := range ungrouped {
+		if q != "" && !catalogMatches(it, q) {
+			continue
+		}
+		entry := s.toCatalogItem(it)
+		if bookID, ok := conflicted[it.ID]; ok {
+			if c, found := conflicts[bookID]; found {
+				entry.BookConflict = &catalogConflict{
+					Kind: c.Kind, ItemIDs: c.ExcludedIDs, Detail: c.Detail,
+				}
+			}
+		}
+		items = append(items, entry)
+	}
+	return items
 }
 
 // catalogMatches reports whether an item matches a lowercased query across
@@ -755,10 +917,64 @@ func (s *Server) handleAudiobooks(w http.ResponseWriter, r *http.Request) {
 	s.mediaCatalog(w, r, api.KindAudiobook)
 }
 
+// bookPartsFor returns the ordered files of the book that item belongs to. The
+// third return is false for a single-file book, so a caller can leave the
+// response byte-identical to the pre-grouping shape.
+func (s *Server) bookPartsFor(item *library.Item) ([]catalogPart, *catalogConflict, bool) {
+	all := s.store.InternalItemsOfKind(api.KindAudiobook)
+	groups, conflicts := library.BookGroups(all, s.cfg().Libraries)
+	g, ok := groups[item.ID]
+	if !ok || g.Count < 2 {
+		return nil, nil, false
+	}
+	parts := make([]catalogPart, 0, g.Count)
+	for _, p := range all {
+		if pg, ok := groups[p.ID]; ok && pg.ID == g.ID {
+			parts = append(parts, catalogPart{
+				ID:              p.ID,
+				Title:           p.Title,
+				Index:           pg.Index,
+				DurationSeconds: p.DurationSeconds,
+				PosterURL:       p.PosterURL,
+			})
+		}
+	}
+	sort.Slice(parts, func(a, b int) bool { return parts[a].Index < parts[b].Index })
+	var conflict *catalogConflict
+	if c, found := conflicts[g.ID]; found {
+		conflict = &catalogConflict{Kind: c.Kind, ItemIDs: c.ExcludedIDs, Detail: c.Detail}
+	}
+	return parts, conflict, true
+}
+
 func (s *Server) handleAudiobookDetail(w http.ResponseWriter, r *http.Request) {
 	it, ok := s.store.Get(r.PathValue("id"))
 	if !ok || it.Kind != api.KindAudiobook {
 		writeError(w, http.StatusNotFound, "Audiobook not found")
+		return
+	}
+	// A request may address any single file of a multi-file book, so the parts
+	// list is resolved from the book grouping rather than assumed to be the
+	// requested file.
+	if parts, conflict, multi := s.bookPartsFor(it); multi {
+		detail := s.toCatalogItem(it)
+		detail.PartCount = len(parts)
+		detail.Parts = parts
+		detail.BookConflict = conflict
+		chapters := []audiobookChapter{}
+		if s.chapters != nil {
+			if got, err := s.chapters.ChaptersFor(r.Context(), it.ID); err == nil && len(got) > 0 {
+				for _, c := range got {
+					chapters = append(chapters, audiobookChapter{
+						Index:        c.Index,
+						Title:        c.Title,
+						StartSeconds: c.StartSeconds,
+						EndSeconds:   c.EndSeconds,
+					})
+				}
+			}
+		}
+		writeJSON(w, http.StatusOK, catalogDetail{Item: detail, Chapters: chapters})
 		return
 	}
 	chapters := []audiobookChapter{}

@@ -71,6 +71,9 @@
     let books = [];
     let selectedID = null;
     let saveTimer = null;
+    // Ordered files of the currently open multi-file book, if any.
+    let currentParts = null;
+    let partIndex = 0;
     const q = document.querySelector("#q");
     const results = document.querySelector("#results");
     const detail = document.querySelector("#detail");
@@ -128,6 +131,18 @@
     }
 
     function renderDetail(book, chapters) {
+      // A book delivered as many files is one entry with an ordered parts
+      // list. The player walks the parts in order so the whole book plays,
+      // instead of stopping at the end of the first file.
+      const parts = Array.isArray(book.parts) && book.parts.length > 1 ? book.parts : null;
+      const partNotice = book.bookConflict
+        ? `<p class="conflict">${escapeHTML(book.bookConflict.detail)}</p>`
+        : "";
+      const partList = parts
+        ? `<div class="parts"><h4>${parts.length} files</h4><ol>${parts.map(p =>
+            `<li><button onclick="playPart(${p.index - 1})">${escapeHTML(p.title || `Part ${p.index}`)}</button>
+             <span>${formatTime(p.durationSeconds)}</span></li>`).join("")}</ol></div>`
+        : "";
       detail.innerHTML = `
         <div class="hero">
           <div class="cover">${book.posterURL ? `<img src="${api(book.posterURL)}" alt="">` : "A"}</div>
@@ -135,23 +150,51 @@
             <span class="pill">Audiobook</span>
             <h1>${escapeHTML(book.title)}</h1>
             <p>${escapeHTML([book.author, book.series, book.narrator ? `Narrated by ${book.narrator}` : null].filter(Boolean).join(" • "))}</p>
-            <audio id="player" controls src="${api("/stream/" + book.id)}"></audio>
+            <audio id="player" controls src="${api("/stream/" + (parts ? parts[0].id : book.id))}"></audio>
             <progress id="detailProgress" max="1" value="0"></progress>
             <p id="nowPlaying">Chapter 1 • 0:00 / ${formatTime(book.durationSeconds)}</p>
+            ${parts ? `<p id="partStatus" class="part-status">Part 1 of ${parts.length}</p>` : ""}
+            ${partNotice}
           </div>
         </div>
+        ${partList}
         <p>${escapeHTML(book.summary)}</p>
         <div class="chapters">
           ${chapters.map(chapter => renderChapter(chapter)).join("")}
         </div>`;
       const player = document.querySelector("#player");
+      currentParts = parts;
+      partIndex = 0;
+      if (parts) {
+        player.addEventListener("ended", () => {
+          if (partIndex + 1 < currentParts.length) playPart(partIndex + 1, true);
+        });
+      }
       player.addEventListener("loadedmetadata", () => {
-        fetch(api(`/api/playback/${book.id}`)).then(r => r.ok ? r.json() : null).then(session => {
+        const id = currentParts ? currentParts[partIndex].id : book.id;
+        fetch(api(`/api/playback/${id}`)).then(r => r.ok ? r.json() : null).then(session => {
           const resume = session?.seconds ?? 0;
           if (resume > 5 && resume < Math.max(player.duration - 8, 0)) player.currentTime = resume;
         }).catch(() => {});
       });
-      player.addEventListener("timeupdate", () => updatePlayback(book.id, chapters, player));
+      player.addEventListener("timeupdate", () => {
+        const id = currentParts ? currentParts[partIndex].id : book.id;
+        updatePlayback(id, chapters, player);
+      });
+    }
+
+    // Switch the player to another file of the same book, optionally continuing
+    // playback automatically when the previous file ended.
+    function playPart(index, autoplay) {
+      if (!currentParts || !currentParts[index]) return;
+      partIndex = index;
+      const player = document.querySelector("#player");
+      if (!player) return;
+      player.src = api("/stream/" + currentParts[index].id);
+      player.load();
+      const status = document.querySelector("#partStatus");
+      if (status) status.textContent = `Part ${index + 1} of ${currentParts.length}`;
+      if (autoplay) player.play().catch(() => {});
     }
 
     function renderChapter(chapter) {

@@ -431,6 +431,251 @@ func TestAudiobookRoutes(t *testing.T) {
 	}
 }
 
+// A book delivered as many files must be one row in the catalog. Before this
+// grouping a 148-file book listed 148 times, which is what made alphabetical
+// browsing impossible.
+func TestAudiobookCatalogCollapsesMultipartBook(t *testing.T) {
+	root := t.TempDir()
+	f := newFixture(t, func(c *config.Config) {
+		c.Libraries = []config.Library{
+			{ID: "books", Name: "Audiobooks", Path: root, Kind: "audiobook"},
+		}
+	})
+	libID := "books"
+	addPart := func(name, rel string, dur float64) {
+		full := filepath.Join(root, filepath.FromSlash(rel))
+		if err := os.MkdirAll(filepath.Dir(full), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(full, []byte("audio"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		f.store.Upsert(&library.Item{
+			MediaItem: api.MediaItem{
+				ID: name, Title: "Complications", Kind: api.KindAudiobook,
+				Format: api.FormatMP3, DurationSeconds: dur, LibraryID: &libID,
+			},
+			FilePath:           full,
+			SourceRelativePath: rel,
+			// A real part has bytes; grouping treats a zero size as an empty
+			// leftover.
+			SizeBytes: 2_000_000,
+		})
+	}
+	// Out of order on purpose, and un-padded, so the ordering has to be
+	// recovered rather than inherited from insertion order.
+	addPart("p10", "Atul Gawande/Complications/10.mp3", 100)
+	addPart("p2", "Atul Gawande/Complications/2.mp3", 200)
+	addPart("p1", "Atul Gawande/Complications/1.mp3", 300)
+	f.store.Upsert(&library.Item{
+		MediaItem: api.MediaItem{
+			ID: "dune", Title: "Dune", Kind: api.KindAudiobook,
+			Format: api.FormatM4B, DurationSeconds: 36000, LibraryID: &libID,
+		},
+		FilePath:           filepath.Join(root, "Frank Herbert/Dune/Dune.m4b"),
+		SourceRelativePath: "Frank Herbert/Dune/Dune.m4b",
+		SizeBytes:          9_000_000,
+	})
+
+	var list struct {
+		Items []struct {
+			Title           string  `json:"title"`
+			DurationSeconds float64 `json:"durationSeconds"`
+			PartCount       int     `json:"partCount"`
+			Parts           []struct {
+				ID    string `json:"id"`
+				Index int    `json:"index"`
+			} `json:"parts"`
+		} `json:"items"`
+		Count int `json:"count"`
+	}
+	body := getBody(t, f.ts.URL+"/api/audiobooks")
+	if err := json.Unmarshal([]byte(body), &list); err != nil {
+		t.Fatalf("unmarshal: %v (%s)", err, body)
+	}
+	if list.Count != 2 {
+		t.Fatalf("count = %d, want 2 (one book + one single-file book): %s", list.Count, body)
+	}
+	// Books are ordered by title: Complications before Dune.
+	if list.Items[0].Title != "Complications" {
+		t.Errorf("first = %q, want Complications", list.Items[0].Title)
+	}
+	comp := list.Items[0]
+	if comp.PartCount != 3 {
+		t.Errorf("partCount = %d, want 3", comp.PartCount)
+	}
+	if comp.DurationSeconds != 600 {
+		t.Errorf("duration = %v, want the sum 600", comp.DurationSeconds)
+	}
+	if len(comp.Parts) != 3 {
+		t.Fatalf("parts = %+v", comp.Parts)
+	}
+	// 1, 2, 10 — natural order, not lexical (which would give 1, 10, 2).
+	wantOrder := []string{"p1", "p2", "p10"}
+	for i, want := range wantOrder {
+		if comp.Parts[i].ID != want {
+			t.Errorf("part %d = %q, want %q", i, comp.Parts[i].ID, want)
+		}
+		if comp.Parts[i].Index != i+1 {
+			t.Errorf("part %d index = %d", i, comp.Parts[i].Index)
+		}
+	}
+	// A single-file book must not gain a parts array.
+	if list.Items[1].PartCount != 0 || len(list.Items[1].Parts) != 0 {
+		t.Errorf("single-file book gained parts: %+v", list.Items[1])
+	}
+	// Part IDs are real item IDs, so detail and streaming still address a file.
+	_, detailBody := get(t, f.ts.URL+"/api/audiobooks/p2")
+	if !strings.Contains(detailBody, `"id":"p2"`) {
+		t.Errorf("part detail not addressable by real item id: %s", detailBody)
+	}
+	// Searching by a part's title must still find the book.
+	filtered := getBody(t, f.ts.URL+"/api/audiobooks?q=complications")
+	if !strings.Contains(filtered, "Complications") {
+		t.Errorf("search for a book with parts failed: %s", filtered)
+	}
+}
+
+// A whole-book file sitting beside its own segments must not be summed into the
+// book: that doubled Echopraxia's listed runtime from 12.65 h to 25.3 h. The
+// catalog must list the segments and say why the other file was left out.
+func TestAudiobookCatalogReportsWholeBookSibling(t *testing.T) {
+	root := t.TempDir()
+	f := newFixture(t, func(c *config.Config) {
+		c.Libraries = []config.Library{
+			{ID: "books", Name: "Audiobooks", Path: root, Kind: "audiobook"},
+		}
+	})
+	libID := "books"
+	add := func(name string, hours float64) {
+		full := filepath.Join(root, filepath.FromSlash("Peter Watts/Echopraxia/"+name))
+		if err := os.MkdirAll(filepath.Dir(full), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(full, []byte("audio"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		f.store.Upsert(&library.Item{
+			MediaItem: api.MediaItem{
+				ID: name, Title: "Echopraxia", Kind: api.KindAudiobook,
+				Format: api.FormatM4B, DurationSeconds: hours * 3600, LibraryID: &libID,
+			},
+			FilePath:           full,
+			SourceRelativePath: "Peter Watts/Echopraxia/" + name,
+			SizeBytes:          3_000_000,
+		})
+	}
+	for i := 1; i <= 4; i++ {
+		add("part"+pad2(i)+".m4b", 1.25)
+	}
+	add("Echopraxia.m4b", 12.65)
+
+	var list struct {
+		Items []struct {
+			ID              string  `json:"id"`
+			Title           string  `json:"title"`
+			DurationSeconds float64 `json:"durationSeconds"`
+			PartCount       int     `json:"partCount"`
+			BookConflict    *struct {
+				Kind    string   `json:"kind"`
+				ItemIDs []string `json:"itemIDs"`
+				Detail  string   `json:"detail"`
+			} `json:"bookConflict"`
+		} `json:"items"`
+	}
+	body := getBody(t, f.ts.URL+"/api/audiobooks")
+	if err := json.Unmarshal([]byte(body), &list); err != nil {
+		t.Fatalf("unmarshal: %v (%s)", err, body)
+	}
+	// Two rows: the book (its four segments) and the whole-book file that was
+	// left out. The latter must stay visible so it can be inspected and
+	// deleted, rather than silently vanishing.
+	if len(list.Items) != 2 {
+		t.Fatalf("items = %d, want 2 (the book plus the flagged leftover): %s",
+			len(list.Items), body)
+	}
+	book := list.Items[0]
+	if book.PartCount != 4 {
+		t.Errorf("partCount = %d, want 4", book.PartCount)
+	}
+	if got := book.DurationSeconds / 3600; got < 4.9 || got > 5.1 {
+		t.Errorf("duration = %.2f h, want ~5.0 h (segments only, not 10.25 h)", got)
+	}
+	leftover := list.Items[1]
+	if leftover.ID != "Echopraxia.m4b" {
+		t.Errorf("second row id = %q, want the whole-book file", leftover.ID)
+	}
+	if leftover.BookConflict == nil {
+		t.Error("the leftover row is not flagged with the conflict")
+	}
+	for _, item := range list.Items {
+		if item.BookConflict == nil {
+			t.Fatal("no conflict reported for a whole-book sibling")
+		}
+		if item.BookConflict.Kind != "whole_book_sibling" {
+			t.Errorf("kind = %q", item.BookConflict.Kind)
+		}
+		if len(item.BookConflict.ItemIDs) != 1 ||
+			item.BookConflict.ItemIDs[0] != "Echopraxia.m4b" {
+			t.Errorf("itemIDs = %v, want the whole-book file", item.BookConflict.ItemIDs)
+		}
+		if item.BookConflict.Detail == "" {
+			t.Error("conflict has no human-readable detail")
+		}
+	}
+}
+
+func pad2(i int) string {
+	if i < 10 {
+		return "0" + string(rune('0'+i))
+	}
+	return string(rune('0'+i/10)) + string(rune('0'+i%10))
+}
+
+// An audiobook with no resolvable book folder must still be listed, never
+// dropped by the grouping.
+func TestAudiobookCatalogKeepsUngroupableItems(t *testing.T) {
+	f := newFixture(t, nil)
+	f.store.Upsert(&library.Item{MediaItem: api.MediaItem{
+		ID: "loose", Title: "Loose Book", Kind: api.KindAudiobook,
+		Format: api.FormatM4B, DurationSeconds: 10,
+	}})
+	body := getBody(t, f.ts.URL+"/api/audiobooks")
+	if !strings.Contains(body, "Loose Book") {
+		t.Errorf("ungroupable audiobook dropped: %s", body)
+	}
+}
+
+// Ebooks are not books-with-parts and must keep the per-file listing.
+func TestEbookCatalogIsNotCollapsed(t *testing.T) {
+	root := t.TempDir()
+	f := newFixture(t, func(c *config.Config) {
+		c.Libraries = []config.Library{
+			{ID: "ebooks", Name: "ebook", Path: root, Kind: "ebook"},
+		}
+	})
+	libID := "ebooks"
+	for i, name := range []string{"a", "b"} {
+		f.store.Upsert(&library.Item{
+			MediaItem: api.MediaItem{
+				ID: name, Title: "Dune", Kind: api.KindEbook,
+				Format: api.FormatEPUB, DurationSeconds: float64(i),
+				LibraryID: &libID,
+			},
+			FilePath:           filepath.Join(root, "Frank Herbert/Dune", name+".epub"),
+			SourceRelativePath: "Frank Herbert/Dune/" + name + ".epub",
+		})
+	}
+	var list struct {
+		Count int              `json:"count"`
+		Items []map[string]any `json:"items"`
+	}
+	json.Unmarshal([]byte(getBody(t, f.ts.URL+"/api/ebooks")), &list)
+	if list.Count != 2 {
+		t.Errorf("ebook count = %d, want 2 (must not be collapsed)", list.Count)
+	}
+}
+
 func TestAuthMatrix(t *testing.T) {
 	token := "pair-me"
 	newSrv := func(allowLAN bool) *fixture {

@@ -113,8 +113,18 @@ type MediaItem struct {
 	// Author/Narrator are populated for audiobooks and ebooks (enrichment
 	// and filename parsing); they are distinct from Tags, which holds
 	// genres plus provider keywords.
-	Author                 *string         `json:"author,omitempty"`
-	Narrator               *string         `json:"narrator,omitempty"`
+	Author   *string `json:"author,omitempty"`
+	Narrator *string `json:"narrator,omitempty"`
+	// BookGroupID/BookGroupTitle identify the *book* an audiobook file belongs
+	// to, which is the folder it lives in. A book delivered as many files (a
+	// multi-part recording) is one book with N parts, not N books, and clients
+	// that list per file render a 148-file book as 148 rows. BookPartIndex and
+	// BookPartCount give the position within the book so a client can present
+	// one entry and still play the parts in order.
+	BookGroupID            *string         `json:"bookGroupID,omitempty"`
+	BookGroupTitle         *string         `json:"bookGroupTitle,omitempty"`
+	BookPartIndex          int             `json:"bookPartIndex,omitempty"`
+	BookPartCount          int             `json:"bookPartCount,omitempty"`
 	CoverAvailable         bool            `json:"coverAvailable"`
 	CoverEmbedded          bool            `json:"coverEmbedded"`
 	IsPlaceholder          bool            `json:"isPlaceholder"`

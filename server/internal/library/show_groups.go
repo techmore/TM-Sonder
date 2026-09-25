@@ -17,8 +17,10 @@ type browsingRoot struct {
 }
 
 // GroupedItems adds browsing identity without overwriting parsed identity.
-// A TV library follows Show/Season/Files. Flat files retain legacy grouping.
-// Opaque IDs never reveal absolute filesystem paths to clients.
+// A TV library follows Show/Season/Files; an audiobook follows
+// Author/Book/Files, where one book may be many files. Flat files retain
+// legacy grouping. Opaque IDs never reveal absolute filesystem paths to
+// clients.
 func (s *Store) GroupedItems(libraries []config.Library) []api.MediaItem {
 	roots := map[string]browsingRoot{}
 	for _, lib := range libraries {
@@ -35,8 +37,18 @@ func (s *Store) GroupedItems(libraries []config.Library) []api.MediaItem {
 		}
 	}
 	s.mu.RLock()
-	result := make([]api.MediaItem, 0, len(s.items))
+	internal := make([]*Item, 0, len(s.items))
 	for _, item := range s.items {
+		internal = append(internal, item)
+	}
+	s.mu.RUnlock()
+
+	// Book grouping needs every audiobook at once to order the parts, so it is
+	// derived from the snapshot taken above rather than inside the loop.
+	books := BookGroupings(internal, libraries)
+
+	result := make([]api.MediaItem, 0, len(internal))
+	for _, item := range internal {
 		wire := item.MediaItem
 		wire.CoverEmbedded = item.ProbedHasCover
 		wire.CoverAvailable = item.PosterPath != "" && item.PosterSource != "thumbnail"
@@ -51,9 +63,13 @@ func (s *Store) GroupedItems(libraries []config.Library) []api.MediaItem {
 				}
 			}
 		}
+		if g, ok := books[item.ID]; ok {
+			id, title := g.ID, g.Title
+			wire.BookGroupID, wire.BookGroupTitle = &id, &title
+			wire.BookPartIndex, wire.BookPartCount = g.Index, g.Count
+		}
 		result = append(result, wire)
 	}
-	s.mu.RUnlock()
 	// Store updates are copy-on-write, so the wire values and their nested
 	// slices remain stable after the read lock is released. Sorting outside the
 	// lock keeps catalog assembly from blocking individual artwork requests.
