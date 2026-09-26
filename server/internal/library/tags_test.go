@@ -1,9 +1,12 @@
 package library
 
 import (
+	"os"
+	"path/filepath"
 	"testing"
 
 	"tm-sonder/server/internal/api"
+	"tm-sonder/server/internal/config"
 	"tm-sonder/server/internal/probe"
 )
 
@@ -130,6 +133,73 @@ func TestNarratorFromTags(t *testing.T) {
 func TestNarratorFromTagsDoesNotInventNames(t *testing.T) {
 	if got := narratorFromTags(probe.FileTags{Comment: "The narrator changes in part two"}); got != "" {
 		t.Errorf("invented narrator %q", got)
+	}
+}
+
+// A tag read must be able to correct an earlier tag read. Before provenance
+// was tracked, "Narrated by R.C. Bray" was parsed to "R", and no amount of
+// re-reading could ever repair it because a non-empty field was never
+// overwritten.
+func TestApplyFileTagsRefreshesItsOwnEarlierValue(t *testing.T) {
+	stale := "R"
+	it := &Item{MediaItem: api.MediaItem{Narrator: &stale}, NarratorFromTags: true}
+	applyFileTags(it, probe.FileTags{Comment: "Narrated by R.C. Bray"})
+	if it.Narrator == nil || *it.Narrator != "R.C. Bray" {
+		t.Errorf("narrator = %v, want the corrected %q", it.Narrator, "R.C. Bray")
+	}
+	if !it.NarratorFromTags {
+		t.Error("provenance was lost")
+	}
+}
+
+// A provider's narrator must still win, or an enrichment pass would be undone
+// by the next re-probe.
+func TestApplyFileTagsNeverDisplacesProviderNarrator(t *testing.T) {
+	provider := "Enriched Narrator"
+	it := &Item{MediaItem: api.MediaItem{Narrator: &provider}}
+	applyFileTags(it, probe.FileTags{Comment: "Narrated by Someone Else"})
+	if it.Narrator == nil || *it.Narrator != "Enriched Narrator" {
+		t.Errorf("narrator = %v, want the provider value to survive", it.Narrator)
+	}
+	if it.NarratorFromTags {
+		t.Error("provenance was claimed for a value the tags did not set")
+	}
+}
+
+// Provenance has to survive a rebuild, or the value looks provider-supplied on
+// the next pass and becomes uncorrectable again.
+func TestNarratorProvenanceSurvivesRebuild(t *testing.T) {
+	root := t.TempDir()
+	book := filepath.Join(root, "Audiobooks", "Andy Weir", "The Martian", "The Martian.m4b")
+	if err := os.MkdirAll(filepath.Dir(book), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(book, []byte("v1"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	store := New()
+	sc := NewScanner(store)
+	lib := []config.Library{{ID: "books", Name: "Audiobooks", Path: filepath.Join(root, "Audiobooks"), Kind: "audiobook"}}
+	fp := &fakeProber{}
+	sc.SetProber(fp, 1)
+	if _, err := sc.ScanAll(lib); err != nil {
+		t.Fatal(err)
+	}
+	// Simulate a tag read that produced a wrong value.
+	id := store.Items()[0].ID
+	store.Update(id, func(it *Item) bool {
+		bad := "R"
+		it.Narrator = &bad
+		it.NarratorFromTags = true
+		it.ProbedTagsRead = false
+		return true
+	})
+	if _, err := sc.ScanAll(lib); err != nil {
+		t.Fatal(err)
+	}
+	it := store.InternalItems()[0]
+	if !it.NarratorFromTags {
+		t.Error("provenance was not carried through the rebuild")
 	}
 }
 

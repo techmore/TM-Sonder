@@ -74,11 +74,14 @@ func uuidV5(ns [16]byte, name string) string {
 // (IDs are path-derived, so progress and item identity survive the rebuild),
 // which propagates parsing fixes to already-cataloged libraries without a
 // full wipe.
-// 13: narrator credits are no longer truncated at an initial's period, so
-// "Narrated by R.C. Bray" yields "R.C. Bray" instead of "R". Entries that were
-// already probed keep the old value until they are re-probed, so this must be
-// bumped for the fix to reach the catalog.
-const ParserVersion = 13
+// 14: a tag read can now correct an earlier tag read of the same field.
+// Version 13 fixed the initial-period bug in the narrator credit, but the
+// rebuild merge carried the previously-derived "R" forward and a non-empty
+// field was never overwritten, so the bad value could not be repaired. This
+// bump forces the one rebuild that re-reads those tags. A "suspiciously short
+// narrator" heuristic would have been cheaper but would re-probe forever if the
+// re-read ever produced a short value again.
+const ParserVersion = 14
 
 // Parsed is the ported result of SonderMediaParser.parseTitle. Kind is chosen
 // by the scanner from library config + extension, not by the parser.

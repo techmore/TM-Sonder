@@ -468,9 +468,13 @@ func applyFileTags(it *Item, tags probe.FileTags) {
 			it.Author = &v
 		}
 	}
-	if it.Narrator == nil || *it.Narrator == "" {
-		if n := narratorFromTags(tags); n != "" {
+	// A tag read is a pure function of the file, so a fresh read must be able to
+	// correct an earlier one -- but it must never displace a value a metadata
+	// provider supplied. NarratorFromTags records which case this is.
+	if n := narratorFromTags(tags); n != "" {
+		if it.Narrator == nil || *it.Narrator == "" || it.NarratorFromTags {
 			it.Narrator = &n
+			it.NarratorFromTags = true
 		}
 	}
 	if it.Summary == "" {
@@ -953,6 +957,9 @@ func (sc *Scanner) buildItem(path, id string, st os.FileInfo, format api.MediaFo
 		}
 		if prev.Narrator != nil && *prev.Narrator != "" {
 			item.Narrator = prev.Narrator
+			// Provenance must survive the rebuild, or a tag-derived value would
+			// look provider-supplied and become uncorrectable.
+			item.NarratorFromTags = prev.NarratorFromTags
 		}
 		item.ProbedWidth = prev.ProbedWidth
 		item.ProbedHeight = prev.ProbedHeight
