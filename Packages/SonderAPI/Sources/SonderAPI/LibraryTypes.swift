@@ -45,6 +45,101 @@ public struct SonderPublicMediaItem: Codable, Sendable, Identifiable, Hashable {
     public var author: String?
     public var narrator: String?
 
+    // Book structure. The server has always sent these; until now no Swift
+    // client declared them, so every native player decoded the item and threw
+    // the book's shape away. A book delivered as many files then looked like N
+    // unrelated titles: each file's own runtime on its own card, and playback
+    // that stopped at the end of the first one.
+    //
+    // All optional, deliberately. The wire format omits zero and empty values
+    // (`omitempty`), and a non-optional property would make decoding fail
+    // outright on a perfectly ordinary single-file book.
+    public var bookGroupID: String?
+    public var bookGroupTitle: String?
+    public var bookPartIndex: Int?
+    public var bookPartCount: Int?
+
+    // Ordering keys. SortTitle is the A-Z key (the raw title may start with a
+    // year or embed a narrator credit), and the series fields carry what the
+    // sort key removed, so ordering on the cleaner key loses nothing.
+    public var sortTitle: String?
+    public var seriesName: String?
+    public var seriesPosition: String?
+    public var seriesNumber: Double?
+    public var publicationYear: Int?
+
+    /// True when this file is one part of a multi-file book.
+    ///
+    /// A client must key its "one card per book" grouping on ``bookGroupID`` and
+    /// must represent the book with the *head* part -- bookPartIndex 1 -- because
+    /// a trailing part is only reachable through the head. Promoting a trailing
+    /// part to be the card would orphan the parts before it.
+    public var isPartOfMultiFileBook: Bool {
+        guard kind == .audiobook, let count = bookPartCount else { return false }
+        return count > 1 && bookGroupID != nil
+    }
+
+    /// The file that represents its book, given every file of that book.
+    ///
+    /// This is the one place the head-part rule should live, so four players
+    /// cannot each invent a different answer.
+    public func bookRepresentative(in siblings: [SonderPublicMediaItem]) -> SonderPublicMediaItem? {
+        guard let groupID = bookGroupID else { return nil }
+        let parts = siblings.filter { $0.bookGroupID == groupID }
+        guard !parts.isEmpty else { return nil }
+        return parts.min { lhs, rhs in
+            let li = lhs.bookPartIndex ?? Int.max
+            let ri = rhs.bookPartIndex ?? Int.max
+            if li != ri { return li < ri }
+            return lhs.id.uuidString < rhs.id.uuidString
+        }
+    }
+
+    /// Total runtime of the book this file belongs to, across every file.
+    ///
+    /// A single file's own duration is the whole book's length only when the
+    /// book *is* one file; otherwise the card reports one fragment of a long
+    /// recording as if it were the entire work.
+    public func bookDuration(in siblings: [SonderPublicMediaItem]) -> Double {
+        guard let groupID = bookGroupID else { return durationSeconds }
+        let parts = siblings.filter { $0.bookGroupID == groupID }
+        guard parts.count > 1 else { return durationSeconds }
+        return parts.reduce(0) { $0 + $1.durationSeconds }
+    }
+
+    /// Listening position as a fraction of the whole book, 0...1.
+    ///
+    /// One part's seconds divided by the book's full runtime reports a finished
+    /// recording as barely started, so the two must be measured over the same
+    /// span: this part's seconds over this part's duration.
+    public func bookProgressFraction(in siblings: [SonderPublicMediaItem]) -> Double {
+        guard let groupID = bookGroupID else {
+            guard durationSeconds > 0 else { return 0 }
+            return min(max(progressSeconds / durationSeconds, 0), 1)
+        }
+        let parts = siblings.filter { $0.bookGroupID == groupID }
+        guard parts.count > 1 else { return 0 }
+        let total = parts.reduce(0) { $0 + $1.durationSeconds }
+        guard total > 0 else { return 0 }
+        let done = parts.reduce(0) { $0 + $1.progressSeconds }
+        return min(max(done / total, 0), 1)
+    }
+
+    /// True only when every file of the book has been listened to.
+    public func isBookFinished(in siblings: [SonderPublicMediaItem]) -> Bool {
+        guard let groupID = bookGroupID else {
+            guard durationSeconds > 0 else { return false }
+            return progressSeconds / durationSeconds >= 0.96
+        }
+        let parts = siblings.filter { $0.bookGroupID == groupID }
+        guard !parts.isEmpty else { return false }
+        return parts.allSatisfy { part in
+            let dur = part.durationSeconds
+            guard dur > 0 else { return false }
+            return part.progressSeconds / dur >= 0.96
+        }
+    }
+
     public init(
         id: UUID = UUID(),
         title: String,
@@ -80,7 +175,16 @@ public struct SonderPublicMediaItem: Codable, Sendable, Identifiable, Hashable {
         coverSource: String? = nil,
         genres: [String] = [],
         author: String? = nil,
-        narrator: String? = nil
+        narrator: String? = nil,
+        bookGroupID: String? = nil,
+        bookGroupTitle: String? = nil,
+        bookPartIndex: Int? = nil,
+        bookPartCount: Int? = nil,
+        sortTitle: String? = nil,
+        seriesName: String? = nil,
+        seriesPosition: String? = nil,
+        seriesNumber: Double? = nil,
+        publicationYear: Int? = nil
     ) {
         self.id = id
         self.title = title
@@ -117,6 +221,15 @@ public struct SonderPublicMediaItem: Codable, Sendable, Identifiable, Hashable {
         self.genres = genres
         self.author = author
         self.narrator = narrator
+        self.bookGroupID = bookGroupID
+        self.bookGroupTitle = bookGroupTitle
+        self.bookPartIndex = bookPartIndex
+        self.bookPartCount = bookPartCount
+        self.sortTitle = sortTitle
+        self.seriesName = seriesName
+        self.seriesPosition = seriesPosition
+        self.seriesNumber = seriesNumber
+        self.publicationYear = publicationYear
     }
 
     public var episodeCode: String {
