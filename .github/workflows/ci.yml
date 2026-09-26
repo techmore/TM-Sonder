@@ -70,14 +70,18 @@ jobs:
           # was the one architecture CI never built.
           CGO_ENABLED=0 GOOS=linux  GOARCH=amd64 go build -trimpath -ldflags "$LDFLAGS" -o ../bin/sonder-linux-amd64  ./cmd/sonder
       - name: Web client tests
+        # This job defaults its working directory to server/, so a step that
+        # needs a path from the repository root has to say so. Left implicit it
+        # looks for server/server/internal/... and fails with "Could not find".
+        working-directory: .
         run: node --test server/internal/httpapi/web/library.test.cjs
       - name: Deploy script tests
         # The deploy script is what runs on the server, and it is the one piece
         # of this repo that cannot be exercised by the server's own test suite.
         # Its architecture guard and both rollback paths are driven here against
         # stubs, which is how the same-second backup collision was found.
-        run: go test ./...
         working-directory: deploy
+        run: go test ./...
       - name: Upload artifacts
         uses: actions/upload-artifact@v4
         with:
