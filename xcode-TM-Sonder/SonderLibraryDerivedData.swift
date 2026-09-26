@@ -34,18 +34,35 @@ nonisolated struct SonderDerivedData {
                 if lhs.episodeNumber != rhs.episodeNumber { return (lhs.episodeNumber ?? 0) < (rhs.episodeNumber ?? 0) }
                 return lhs.title < rhs.title
             }
-        let tvShowGroups = Dictionary(grouping: episodes, by: { $0.showTitle ?? $0.title })
-            .map { showName, showEpisodes in
-                let seasons = Dictionary(grouping: showEpisodes, by: { $0.seasonNumber ?? SonderTVSeasonGroup.unknownSeasonNumber })
-                    .map { seasonNumber, seasonEpisodes in
-                        SonderTVSeasonGroup(
-                            seasonNumber: seasonNumber,
-                            episodes: seasonEpisodes.sorted { ($0.episodeNumber ?? 0, $0.title) < ($1.episodeNumber ?? 0, $1.title) }
-                        )
+        // Broken into named steps with explicit types.
+        //
+        // As one nested expression -- Dictionary(grouping:).map { Dictionary(
+        // grouping:).map { ... }.sorted }.sorted -- the Swift type checker gives
+        // up on it: "unable to type-check this expression in reasonable time" on
+        // Xcode 26.6, while a newer compiler manages. Naming each intermediate
+        // means nothing has to be inferred through the nesting, so it compiles
+        // the same way on every toolchain instead of depending on how capable
+        // the checker happens to be that day.
+        let episodesByShow: [String: [SonderMediaItem]] = Dictionary(
+            grouping: episodes,
+            by: { $0.showTitle ?? $0.title }
+        )
+        let showGroups: [SonderTVShowGroup] = episodesByShow.map { showName, showEpisodes in
+            let episodesBySeason: [Int: [SonderMediaItem]] = Dictionary(
+                grouping: showEpisodes,
+                by: { $0.seasonNumber ?? SonderTVSeasonGroup.unknownSeasonNumber }
+            )
+            let seasons: [SonderTVSeasonGroup] = episodesBySeason
+                .map { seasonNumber, seasonEpisodes in
+                    let orderedEpisodes: [SonderMediaItem] = seasonEpisodes.sorted { lhs, rhs in
+                        (lhs.episodeNumber ?? 0, lhs.title) < (rhs.episodeNumber ?? 0, rhs.title)
                     }
-                    .sorted { $0.sortOrder < $1.sortOrder }
-                return SonderTVShowGroup(name: showName, seasons: seasons)
-            }
+                    return SonderTVSeasonGroup(seasonNumber: seasonNumber, episodes: orderedEpisodes)
+                }
+                .sorted { $0.sortOrder < $1.sortOrder }
+            return SonderTVShowGroup(name: showName, seasons: seasons)
+        }
+        let tvShowGroups: [SonderTVShowGroup] = showGroups
             .sorted { $0.name.localizedStandardCompare($1.name) == .orderedAscending }
 
         return SonderDerivedData(
