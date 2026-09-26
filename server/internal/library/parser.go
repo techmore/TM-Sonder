@@ -74,14 +74,15 @@ func uuidV5(ns [16]byte, name string) string {
 // (IDs are path-derived, so progress and item identity survive the rebuild),
 // which propagates parsing fixes to already-cataloged libraries without a
 // full wipe.
-// 16: a leading series parenthetical is a position, not part of the title, so
-// "(Culture 1) Race and Culture" shows as "Race and Culture" with the series
-// and position in their own fields. Before this the sort key began with "(" and
-// the Culture series sorted away from its own title. History: 10 upstream's
+// 17: the parser now carries the series name and position onto the item.
+// Version 16 stripped the marker from the title but did not persist it, and the
+// marker cannot be recovered from a cleaned title, so the fields stayed empty.
+// This bump forces the one rebuild that stores them. History: 10 upstream's
 // baseline, 11 the author/book fix, 12 container tag reading, 13 the
 // initial-period narrator fix, 14 tag reads able to correct themselves, 15 the
-// upstream reconciliation. The number only has to keep increasing.
-const ParserVersion = 16
+// upstream reconciliation, 16 the series parenthetical, 17 persisting it. The
+// number only has to keep increasing.
+const ParserVersion = 17
 
 // Parsed is the ported result of SonderMediaParser.parseTitle. Kind is chosen
 // by the scanner from library config + extension, not by the parser.
