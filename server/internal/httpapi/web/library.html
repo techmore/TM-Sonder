@@ -192,6 +192,16 @@
   <!-- Persistent player: lives outside every re-rendered region so audio and
        video keep playing while you browse, and follows you across tabs. -->
   <section id="nowPlaying" class="nowplaying np-audio-mode" hidden aria-label="Now playing">
+    <div class="np-mobile-header">
+      <div class="np-mobile-heading">
+        <span class="np-mobile-overline">NOW PLAYING</span>
+        <span class="np-mobile-kind" id="npMobileKind">Audiobook</span>
+      </div>
+      <button type="button" class="np-mobile-toggle" id="npMobileToggle" aria-label="Open full player" aria-expanded="false">
+        <span id="npMobileToggleIcon" aria-hidden="true">⌃</span>
+        <span id="npMobileToggleText">Open player</span>
+      </button>
+    </div>
     <div class="np-video" id="npVideoWrap">
       <video id="npMedia" playsinline preload="metadata"></video>
     </div>
@@ -225,9 +235,20 @@
             <option value="2">2×</option>
           </select>
         </label>
+        <button type="button" class="np-link" id="npDetails" aria-label="Open book details">Details</button>
         <button type="button" class="np-btn" id="npExpand" aria-label="Expand video" title="Expand video" hidden>⤢</button>
         <button type="button" class="np-btn" id="npClose" aria-label="Stop player" title="Stop">✕</button>
       </div>
+    </div>
+    <div class="np-queue" id="npQueue" hidden>
+      <div class="np-queue-head">
+        <div>
+          <span class="np-queue-kicker">BOOK PARTS</span>
+          <strong id="npQueueTitle">Parts</strong>
+        </div>
+        <button type="button" class="np-link" id="npQueueToggle" aria-expanded="false">Show list</button>
+      </div>
+      <ol class="np-part-list" id="npQueueList" hidden></ol>
     </div>
     <p class="np-status" id="npStatus" role="status" aria-live="polite"></p>
   </section>

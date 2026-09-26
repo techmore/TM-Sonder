@@ -399,6 +399,7 @@
     // is the granularity the server stores it at.
     let nowPlayingParts = null;
     let nowPlayingPartIndex = 0;
+    let npQueueOpen = false;
 
     function npMedia() { return $("#npMedia"); }
 
@@ -430,6 +431,7 @@
       npSeeking = false;
       prepareNowPlayingShell(item, "audio");
       loadBookPart(false);
+      closeDetailOnMobile();
     }
 
     // Move to a part of the current book. `autoplay` is false when the user
@@ -476,6 +478,92 @@
       return `Part ${nowPlayingPartIndex + 1} of ${nowPlayingParts.length}`;
     }
 
+    function setClassEnabled(node, className, enabled) {
+      if (!node || !node.classList) return;
+      if (typeof node.classList.toggle === "function") node.classList.toggle(className, !!enabled);
+      else if (enabled && typeof node.classList.add === "function") node.classList.add(className);
+      else if (!enabled && typeof node.classList.remove === "function") node.classList.remove(className);
+    }
+
+    // Mobile gets a real listening surface instead of asking the compact
+    // desktop dock to carry every control. The same media element remains in
+    // place, so expanding or minimizing never interrupts playback.
+    function setPlayerExpanded(expanded) {
+      const host = $("#nowPlaying");
+      const body = typeof document !== "undefined" ? document.body : null;
+      setClassEnabled(host, "np-mobile-expanded", expanded);
+      setClassEnabled(body, "np-expanded", expanded);
+      const button = $("#npMobileToggle");
+      const icon = $("#npMobileToggleIcon");
+      const label = $("#npMobileToggleText");
+      if (button) {
+        button.setAttribute("aria-expanded", expanded ? "true" : "false");
+        button.setAttribute("aria-label", expanded ? "Minimize player" : "Open full player");
+      }
+      if (icon) icon.textContent = expanded ? "⌄" : "⌃";
+      if (label) label.textContent = expanded ? "Minimize" : "Open player";
+      const list = $("#npQueueList");
+      if (list) list.hidden = !(expanded && npQueueOpen);
+    }
+
+    // On a phone the detail dialog is an entry point into the player, not a
+    // second surface that should remain stacked above it. Desktop keeps the
+    // dialog open so the existing browse-and-play flow is unchanged.
+    function closeDetailOnMobile() {
+      if (typeof window === "undefined" || typeof window.matchMedia !== "function") return;
+      if (!window.matchMedia("(max-width: 700px)").matches) return;
+      const detail = $("#detail");
+      if (detail?.open && typeof detail.close === "function") detail.close();
+    }
+
+    function renderPartQueue() {
+      const queue = $("#npQueue");
+      const list = $("#npQueueList");
+      const title = $("#npQueueTitle");
+      const toggle = $("#npQueueToggle");
+      if (!queue || !list) return;
+      if (!nowPlayingParts || nowPlayingParts.length < 2 || !nowPlayingItem || nowPlayingItem.kind !== "audiobook") {
+        queue.hidden = true;
+        list.innerHTML = "";
+        return;
+      }
+      queue.hidden = false;
+      if (title) title.textContent = `${nowPlayingParts.length} parts`;
+      if (toggle) {
+        toggle.textContent = npQueueOpen ? "Hide list" : "Show list";
+        toggle.setAttribute("aria-expanded", npQueueOpen ? "true" : "false");
+      }
+      list.innerHTML = nowPlayingParts.map((part, index) => {
+        const rec = progressByID.get(part.id);
+        const duration = part.durationSeconds || rec?.duration || 0;
+        const seconds = Math.max(0, rec?.seconds || 0);
+        const ratio = duration > 0 ? Math.min(seconds / duration, 1) : 0;
+        const state = index === nowPlayingPartIndex ? "Playing"
+          : ratio >= 0.96 ? "Finished"
+          : seconds > 5 ? `${Math.round(ratio * 100)}%` : "";
+        const partTitle = part.title && part.title !== nowPlayingItem.title
+          ? part.title : `Part ${index + 1}`;
+        return `<li class="${index === nowPlayingPartIndex ? "current" : ""}">
+          <button type="button" data-np-part-index="${index}" aria-current="${index === nowPlayingPartIndex ? "true" : "false"}">
+            <span class="np-part-index">${String(index + 1).padStart(2, "0")}</span>
+            <span class="np-part-name">${escapeHTML(partTitle)}</span>
+            <span class="np-part-time">${formatTime(duration)}${state ? ` · ${state}` : ""}</span>
+          </button>
+        </li>`;
+      }).join("");
+      const expanded = typeof document !== "undefined" && document.body?.classList?.contains?.("np-expanded");
+      list.hidden = !(npQueueOpen && expanded);
+    }
+
+    function selectBookPart(index) {
+      if (!nowPlayingParts || !nowPlayingParts[index] || !nowPlayingItem) return;
+      const media = npMedia();
+      const shouldPlay = !!(media && !media.paused && !media.ended);
+      saveProgress(true);
+      nowPlayingPartIndex = index;
+      loadBookPart(shouldPlay);
+    }
+
     // Shared one-time setup for the player panel: visibility, the expand
     // control, the status line, and the media-session metadata.
     function prepareNowPlayingShell(item, mode) {
@@ -499,6 +587,7 @@
           ? "Plays in the background — these controls stay while you browse."
           : "";
       }
+      setPlayerExpanded(false);
       updateMediaSession(item);
     }
 
@@ -532,6 +621,7 @@
 
       prepareNowPlayingShell(item, plan.mode);
       renderNowPlaying();
+      closeDetailOnMobile();
 
       media.addEventListener("loadedmetadata", () => {
         const duration = media.duration || 0;
@@ -565,6 +655,8 @@
       nowPlayingItem = null;
       nowPlayingParts = null;
       nowPlayingPartIndex = 0;
+      npQueueOpen = false;
+      setPlayerExpanded(false);
       const host = $("#nowPlaying");
       if (host) host.hidden = true;
       if (typeof document !== "undefined") document.body.classList.remove("np-visible");
@@ -619,15 +711,19 @@
         // "Part 140 of 147" is the only way to tell where you are in a book
         // whose files are all titled the same thing.
         sub.textContent = [kindLabel(item.kind), item.author || item.studio || "",
-                           item.year || "", bookPartLabel()]
+                           item.narrator ? `Narrated by ${item.narrator}` : "",
+                           item.series || "", item.year || "", bookPartLabel()]
           .filter(Boolean).join(" • ");
       }
+      const mobileKind = $("#npMobileKind");
+      if (mobileKind) mobileKind.textContent = item.kind === "audiobook" ? "Audiobook" : mediaLabel(nowPlayingMode);
       const art = $("#npArt");
       if (art) {
         const src = item.posterURL ? api(item.posterURL) : "";
         art.innerHTML = src ? `<img src="${escapeHTML(src)}" alt="">` : "♪";
         art.setAttribute("aria-label", `Now playing: ${item.title}`);
       }
+      renderPartQueue();
       onPlayStateChange();
     }
 
@@ -684,7 +780,7 @@
       const eta = $("#npEta");
       if (!eta) return;
       const tl = bookTimeline();
-      if (!tl.multi || !(tl.total > 0)) { eta.hidden = true; return; }
+      if (!(tl.total > 0) || (!tl.multi && nowPlayingMode !== "audio")) { eta.hidden = true; return; }
       const remaining = Math.max(0, tl.total - tl.position);
       eta.hidden = false;
       eta.textContent = remaining <= 0 ? "Finished" : `${formatTime(remaining)} left`;
@@ -814,6 +910,21 @@
     on("#npBack", "click", () => skipBy(-30));
     on("#npFwd", "click", () => skipBy(30));
     on("#npClose", "click", () => stopPlayback());
+    on("#npMobileToggle", "click", () => {
+      const host = $("#nowPlaying");
+      const expanded = !!(host && host.classList && host.classList.contains && host.classList.contains("np-mobile-expanded"));
+      setPlayerExpanded(!expanded);
+    });
+    on("#npDetails", "click", () => { if (nowPlayingItem) openDetail(nowPlayingItem.id, true); });
+    on("#npQueueToggle", "click", () => {
+      npQueueOpen = !npQueueOpen;
+      renderPartQueue();
+    });
+    on("#npQueueList", "click", event => {
+      const button = event.target.closest?.("[data-np-part-index]");
+      if (!button) return;
+      selectBookPart(Number(button.dataset.npPartIndex));
+    });
     on("#npArt", "click", () => { if (nowPlayingItem) openDetail(nowPlayingItem.id, true); });
     on("#npExpand", "click", () => {
       const host = $("#nowPlaying");
@@ -865,6 +976,14 @@
       const typing = target && (target.tagName === "INPUT" || target.tagName === "SELECT" ||
         target.tagName === "TEXTAREA" || target.isContentEditable);
       if (typing) return;
+      if (event.key === "Escape") {
+        const host = $("#nowPlaying");
+        if (host?.classList?.contains?.("np-mobile-expanded")) {
+          event.preventDefault();
+          setPlayerExpanded(false);
+          return;
+        }
+      }
       if (event.code === "Space" || event.key === " ") { event.preventDefault(); togglePlay(); }
       else if (event.key === "ArrowLeft") { event.preventDefault(); skipBy(-15); }
       else if (event.key === "ArrowRight") { event.preventDefault(); skipBy(15); }
