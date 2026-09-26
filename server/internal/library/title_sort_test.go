@@ -25,7 +25,9 @@ func TestSplitTitleStripsLeadingYear(t *testing.T) {
 }
 
 func TestSplitTitleStripsLeadingOrdinal(t *testing.T) {
-	cases := []struct{ in, display, series string }{
+	// A bare leading number is a position but names no series, so Series stays
+	// empty and SeriesPosition carries it.
+	cases := []struct{ in, display, position string }{
 		{"04 The Shadow Rising", "The Shadow Rising", "4"},
 		{"06 Lord of Chaos", "Lord of Chaos", "6"},
 		{"13 Towers of Midnight", "Towers of Midnight", "13"},
@@ -34,9 +36,12 @@ func TestSplitTitleStripsLeadingOrdinal(t *testing.T) {
 	}
 	for _, c := range cases {
 		p := SplitTitle(c.in)
-		if p.Display != c.display || p.Series != c.series {
-			t.Errorf("%q -> display=%q series=%q, want %q/%q",
-				c.in, p.Display, p.Series, c.display, c.series)
+		if p.Display != c.display || p.SeriesPosition != c.position {
+			t.Errorf("%q -> display=%q position=%q, want %q/%q",
+				c.in, p.Display, p.SeriesPosition, c.display, c.position)
+		}
+		if p.Series != "" {
+			t.Errorf("%q: series name = %q, want empty for a bare position", c.in, p.Series)
 		}
 	}
 }
@@ -215,6 +220,9 @@ func TestSplitTitleHandlesLeadingSeriesParenthetical(t *testing.T) {
 		if p.Display != c.display || p.Series != c.series || p.SeriesNumber != c.num {
 			t.Errorf("%q -> display=%q series=%q num=%d, want %q/%q/%d",
 				c.in, p.Display, p.Series, p.SeriesNumber, c.display, c.series, c.num)
+		}
+		if p.SeriesPosition == "" {
+			t.Errorf("%q: no series position text, which a client needs to show", c.in)
 		}
 		if p.Sort != sortKey(c.display) {
 			t.Errorf("%q: sort %q should equal the display key %q", c.in, p.Sort, sortKey(c.display))

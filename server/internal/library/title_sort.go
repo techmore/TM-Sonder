@@ -61,11 +61,12 @@ type TitleParts struct {
 	// Sort is the key an A-Z ordering should use. Empty articles are dropped so
 	// "The Lathe of Heaven" files under L.
 	Sort string
-	// Series is the series name and SeriesNumber the position within it, when the
-	// name carried a series marker. SeriesPosition is the position as text,
-	// which is what a client should show.
-	Series       string
-	SeriesNumber int
+	// Series is the series name, SeriesNumber the position within it, and
+	// SeriesPosition that position as text for display. All three are set only
+	// when the name actually carried a marker.
+	Series         string
+	SeriesNumber   int
+	SeriesPosition string
 	// Year is the leading or trailing four-digit year, when present.
 	Year int
 	// NarratorHint is a trailing credit that was moved out of the sort key,
@@ -100,6 +101,7 @@ func SplitTitle(raw string) TitleParts {
 				out.Series = strings.TrimSuffix(name, ".")
 			}
 			out.SeriesNumber = atoiSafe(strings.TrimRight(pos, "abcdefghijklmnopqrstuvwxyz"))
+			out.SeriesPosition = pos
 			s = rest
 			out.HadPrefix = true
 		}
@@ -120,12 +122,16 @@ func SplitTitle(raw string) TitleParts {
 		// not a series entry.
 		rest := strings.TrimSpace(s[len(m[0]):])
 		if rest != "" && unicode.IsLetter(rune(rest[0])) {
-			// Normalize the padding: "04" and "4" are the same position, and
-			// the position is not the sort key's business.
+			// Normalize the padding: "04" and "4" are the same position. The
+			// letter suffix stays attached ("14b"). A bare position names no
+			// series, so Series is left empty rather than holding the position.
 			if n := atoiSafe(pos); n > 0 {
 				pos = strconv.Itoa(n)
 			}
-			out.Series = pos + suffix
+			out.SeriesPosition = pos + suffix
+			if n := atoiSafe(pos); n > 0 {
+				out.SeriesNumber = n
+			}
 			s = rest
 			out.HadPrefix = true
 		}

@@ -687,6 +687,7 @@ type catalogItem struct {
 	// number and year the sort key removed.
 	SortTitle       string `json:"sortTitle"`
 	SeriesPosition  string `json:"seriesPosition,omitempty"`
+	SeriesName      string `json:"seriesName,omitempty"`
 	PublicationYear int    `json:"publicationYear,omitempty"`
 	// PartCount and Parts describe a book delivered as many files. A single
 	// file book omits them, so clients can treat the common case as unchanged.
@@ -759,7 +760,8 @@ func (s *Server) toCatalogItem(it *library.Item) catalogItem {
 		BackdropURL:     it.BackdropURL,
 		Tags:            it.Tags,
 		SortTitle:       sortTitle,
-		SeriesPosition:  parts.Series,
+		SeriesPosition:  parts.SeriesPosition,
+		SeriesName:      parts.Series,
 		PublicationYear: parts.Year,
 		ProgressSeconds: it.ProgressSeconds,
 	}
