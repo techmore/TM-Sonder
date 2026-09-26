@@ -69,6 +69,10 @@ func (h *harness) stubs(t *testing.T) {
 	if err := os.MkdirAll(bindir, 0o755); err != nil {
 		t.Fatal(err)
 	}
+	// The real script feeds curl its URL on stdin (`-K -`) so the pairing token
+	// never appears in another process's argv. The stub accepts that shape and
+	// ignores the URL, so a regression back to a token-in-argv form is caught
+	// here rather than on the server.
 	// `systemctl --user restart tm-sonder` puts "restart" in $2, and the
 	// rollback path calls it again, so the stub looks for the verb anywhere in
 	// the arguments rather than at a fixed position.
@@ -84,8 +88,13 @@ func (h *harness) stubs(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(bindir, "systemctl"), []byte(systemctl), 0o755); err != nil {
 		t.Fatal(err)
 	}
+	// The real script feeds curl its URL on stdin (`-K -`) so the pairing token
+	// never appears in another process's argv. The stub accepts that shape and
+	// ignores the URL, so a regression back to a token-in-argv form is caught
+	// here rather than on the server.
 	curl := "#!/usr/bin/env bash\n" +
 		"if [ -n \"$FAKE_CURL_FAILS\" ]; then exit 7; fi\n" +
+		"cat >/dev/null 2>&1 || true\n" +
 		"printf '{\"version\":\"%s\",\"itemCount\":21738}' \"$FAKE_VERSION\"\n"
 	if err := os.WriteFile(filepath.Join(bindir, "curl"), []byte(curl), 0o755); err != nil {
 		t.Fatal(err)

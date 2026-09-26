@@ -82,7 +82,12 @@ fi
 token="$(python3 -c "import json,os,sys;print(json.load(open(os.path.expanduser(sys.argv[1]))).get('pairingToken',''))" "$CONFIG" 2>/dev/null || true)"
 served=""
 for ((i = 1; i <= HEALTH_ATTEMPTS; i++)); do
-  body="$(curl -sS --max-time 10 "http://127.0.0.1:${API_PORT}/api/status?token=${token}" 2>/dev/null || true)"
+  # The token goes in via curl's config on stdin rather than in the URL argument.
+  # Anything can read another process's argv, so a credential in the command line
+  # is readable by every other user on the host, and this script runs on a
+  # machine that also runs a media server for other people.
+  body="$(printf 'url = "http://127.0.0.1:%s/api/status?token=%s"\n' "$API_PORT" "$token" \
+    | curl -sS --max-time 10 -K - 2>/dev/null || true)"
   if [[ -n "$body" ]]; then
     served="$(printf '%s' "$body" | python3 -c 'import json,sys; print(json.load(sys.stdin).get("version",""))' 2>/dev/null || true)"
     [[ -n "$served" ]] && break
