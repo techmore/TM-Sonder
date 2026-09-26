@@ -10,13 +10,21 @@ nonisolated struct SonderLibraryScanCoordinator {
     let progressStride: Int
     let discoveryBatchSize: Int
 
+    /// Scan `directories` in order, reporting progress as it goes.
+    ///
+    /// The callbacks are `@Sendable` because `store.mediaFiles` invokes the two
+    /// progress closures from its own background work, and a scan runs detached
+    /// from whatever actor started it. Without `@Sendable` these captures are
+    /// errors under the Swift 6 language mode, which is how the release build on
+    /// CI failed while a local build in Swift 5 mode passed: the annotations
+    /// describe what was already true rather than changing behaviour.
     func scan(
         directories: [SonderMediaDirectory],
         existingPaths: Set<String>,
-        onDirectoryStart: @escaping (SonderMediaDirectory, Int, Int, Int, Int) async -> Void,
-        onProgress: @escaping (SonderScanProgress) async -> Void,
-        onDiscoveredChunk: @escaping ([SonderMediaItem], SonderMediaDirectory, String, Int, Int, Int, Int, Int) async -> Void,
-        onDirectoryFailure: @escaping (SonderMediaDirectory, Error) async -> Void
+        onDirectoryStart: @escaping @Sendable (SonderMediaDirectory, Int, Int, Int, Int) async -> Void,
+        onProgress: @escaping @Sendable (SonderScanProgress) async -> Void,
+        onDiscoveredChunk: @escaping @Sendable ([SonderMediaItem], SonderMediaDirectory, String, Int, Int, Int, Int, Int) async -> Void,
+        onDirectoryFailure: @escaping @Sendable (SonderMediaDirectory, Error) async -> Void
     ) async -> SonderLibraryScanCoordinatorResult {
         var directoryUpdates: [UUID: SonderScanDiagnostics] = [:]
         var totalFilesSeen = 0

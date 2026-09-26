@@ -29,11 +29,17 @@ jobs:
         run: sudo xcode-select -s /Applications/Xcode.app || sudo xcode-select -s /Applications/Xcode-beta.app
       - name: Build Mac host
         run: |
+          # SWIFT_VERSION=6 is pinned deliberately. Without it this job passed
+          # or failed depending on the runner image's default language mode,
+          # which is how the same commit built on a developer Mac and failed
+          # here. Pinning it means the strict concurrency checking is the thing
+          # being tested, rather than whatever the image happens to default to.
           xcodebuild build \
             -project xcode-TM-Sonder.xcodeproj \
             -scheme xcode-TM-Sonder \
             -configuration Release \
             -destination 'platform=macOS' \
+            SWIFT_VERSION=6 \
             CODE_SIGNING_ALLOWED=NO
       - name: Test shared API package
         run: swift test --package-path Packages/SonderAPI

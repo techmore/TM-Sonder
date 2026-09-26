@@ -350,7 +350,13 @@ nonisolated enum SonderProgressRecords {
 nonisolated enum SonderConcurrencyLimiter {
     /// Runs `work` over `items` with at most `limit` concurrent invocations. Each work
     /// closure awaits completion before the slot is released.
-    static func run<Item>(
+    ///
+    /// `Item: Sendable` because each element is handed to a child task, which may
+    /// run concurrently with the loop still pulling from the iterator. Without the
+    /// constraint the compiler cannot prove the element is not read again after
+    /// being sent, and under the Swift 6 language mode that is an error rather
+    /// than a warning.
+    static func run<Item: Sendable>(
         limit: Int,
         over items: [Item],
         work: @escaping @Sendable (Item) async -> Void
