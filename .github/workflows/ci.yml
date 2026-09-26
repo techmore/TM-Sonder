@@ -22,7 +22,10 @@ jobs:
 
   mac-app:
     name: macOS Release build
-    runs-on: macos-15
+    # macos-15 ships at most Xcode 26.x, while this project is developed on
+    # 27.0. Pinning the toolchain is only meaningful if the image can actually
+    # provide it, so the image is the newer one.
+    runs-on: macos-26
     steps:
       - uses: actions/checkout@v4
       - name: Select Xcode
