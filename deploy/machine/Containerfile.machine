@@ -1,0 +1,108 @@
+# TM Sonder container machine — a full Linux environment, not a single app.
+#
+# Build:  container build -t tm-sonder-machine -f deploy/machine/Containerfile.machine .
+# Create: container machine create tm-sonder-machine:latest --name sonder
+# Shell:  container machine run -n sonder
+#
+# Why a machine and not the plain app image in deploy/Containerfile: this repo
+# deploys a systemd *user* service. Reproducing that here means the thing under
+# test is the real deployment shape -- same unit, same ~/.config/sonder/server.json,
+# same ~/.config/sonder/data -- instead of a container-shaped approximation of
+# it. Two consequences worth having:
+#
+#   * The binary built inside is a real Linux static binary, byte-identical to
+#     what gets shipped to the server host. Build here, scp the same file, and
+#     "works on my machine" stops being a category of bug.
+#   * ~/.config/sonder is the developer's real home directory config, so the
+#     service reads and writes the same paths it will on the host.
+#
+# ENV container container is what marks an image as a machine image; the image
+# must also provide /sbin/init, hence systemd.
+FROM ubuntu:24.04
+
+ENV container container
+
+# Go builds the server; ffmpeg/ffprobe are runtime requirements (transcode,
+# artwork, duration probing) so a missing codec shows up here rather than in
+# production. git and make are here because the repo is mounted in and this is
+# where a developer actually builds.
+#
+# nodejs is not optional: the web client's test suite is `node --test`, and a
+# machine that cannot run the suite it is meant to develop is just a slower CI
+# runner. python3 and jq are here for the inspection and audit scripts in
+# tools/, which are how the catalog gets checked rather than eyeballed.
+#
+# python3, not python3-minimal: the minimal package ships an interpreter without
+# the standard library, so `import json` -- which half the audit scripts do on
+# their first line -- fails with a ModuleNotFoundError that reads like a broken
+# script rather than a missing package.
+#
+# libc6-dev alongside gcc: `go vet` compiles with cgo enabled by default, and
+# without the C headers it fails on `stdlib.h: No such file or directory`, which
+# looks like a broken toolchain rather than a missing package. The server itself
+# builds with CGO_ENABLED=0 and needs none of this.
+#
+# staticcheck and delve are deliberately absent: neither is needed to build,
+# test or run, and a machine image is re-pulled on every create.
+RUN apt-get update && \
+    apt-get install -y --no-install-recommends \
+      ca-certificates curl git make gcc libc6-dev \
+      ffmpeg \
+      nodejs \
+      python3 jq \
+      systemd dbus \
+      sudo vim-tiny less procps iproute2 iputils-ping netcat-openbsd \
+      openssh-server && \
+    apt-get clean && \
+    rm -rf /var/lib/apt/lists/* && \
+    yes | unminimize
+
+# Go, from the tarball rather than a PPA: the toolchain version is pinned here
+# so the machine, CI and the release build cannot drift apart.
+ARG GO_VERSION=1.25.1
+ARG TARGETARCH
+RUN set -eux; \
+    case "${TARGETARCH:-amd64}" in \
+      arm64) goarch=arm64 ;; \
+      *)     goarch=amd64 ;; \
+    esac; \
+    curl -fsSL "https://go.dev/dl/go${GO_VERSION}.linux-${goarch}.tar.gz" -o /tmp/go.tgz; \
+    tar -C /usr/local -xzf /tmp/go.tgz; \
+    rm /tmp/go.tgz; \
+    ln -sf /usr/local/go/bin/go /usr/local/bin/go; \
+    ln -sf /usr/local/go/bin/gofmt /usr/local/bin/gofmt; \
+    go version
+
+# A machine identity must not be baked into the image: a cloned machine-id makes
+# systemd, dbus and journald misbehave in ways that look like application bugs.
+RUN >/etc/machine-id && \
+    >/var/lib/dbus/machine-id
+
+# The one line that decides whether a machine boots at all. plain ubuntu:24.04
+# ships no /sbin/init, and a container machine boots by execing it -- without
+# this the create fails with "failed to start process ... No such process",
+# which reads like a VM fault and is not one.
+RUN ln -sf /lib/systemd/systemd /sbin/init
+
+# multi-user, not graphical: there is no console, and a getty that can never
+# succeed just adds noise to every boot.
+RUN systemctl set-default multi-user.target && \
+    systemctl mask \
+      dev-hugepages.mount \
+      sys-fs-fuse-connections.mount \
+      systemd-update-utmp.service \
+      systemd-tmpfiles-setup.service \
+      console-getty.service && \
+    # Apple's own reference Containerfile disables networkd-dispatcher here, but
+    # plain ubuntu:24.04 has no such unit, so `systemctl disable` exits non-zero
+    # and fails the build. The unit is absent rather than enabled, so there is
+    # nothing to turn off; masking is the safe no-op that keeps the build honest.
+    systemctl mask networkd-dispatcher.service
+
+# The default sshd config accepts LANG from the client, which then leaks through
+# into a UTF-8 assumption the server does not make.
+RUN sed -i -e 's/^AcceptEnv LANG LC_\*$/#AcceptEnv LANG LC_*/' /etc/ssh/sshd_config
+
+# The server is developed and run as the mapped host user, never as root, so the
+# permission behaviour under test matches the host.
+RUN useradd --create-home --shell /bin/bash developer 2>/dev/null || true

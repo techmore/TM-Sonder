@@ -1,0 +1,44 @@
+{
+  // Container-machine development configuration.
+  //
+  // Same shape as the production config on purpose: ~/.config/sonder/server.json
+  // on the host, the same relative library paths, the same ports. The only
+  // differences are where the media comes from and that pairing is off, because
+  // a machine is single-user and already behind the developer's own login.
+  //
+  // The media is the generated fixture tree (tools/machine/make-fixtures.sh), not
+  // the NAS. A container machine mounts $HOME and nothing else, so /Volumes/14tb
+  // is invisible inside it. That is deliberate: a machine cannot mutate the real
+  // library by accident. When you do want the real library, use the app
+  // container instead -- `make container-run` -- which can mount it read-only.
+  "port": 8096,
+  "webPort": 8096,
+  "apiPort": 8097,
+  "dataDir": "%DATA%",
+  "libraries": [
+    { "id": "fx-audiobook", "name": "Audiobooks", "path": "%MEDIA%/Audiobooks", "kind": "audiobook" },
+    { "id": "fx-ebook", "name": "Books", "path": "%MEDIA%/Books", "kind": "ebook" },
+    { "id": "fx-movie", "name": "Movies", "path": "%MEDIA%/Movies", "kind": "movie" },
+    { "id": "fx-tvShow", "name": "TV Shows", "path": "%MEDIA%/TV Shows", "kind": "tvShow" }
+  ],
+  "allowLAN": false,
+  "pairingToken": "",
+  "safeScan": true,
+  "themePreset": "earthly",
+  "libraryLayout": "rails",
+  "audiobookLayout": "rails",
+  "moviesLayout": "rails",
+  "tvLayout": "rails",
+  "hideEmptyLibraries": false,
+  "mediaCache": {
+    "enabled": true,
+    "maxBytes": 2147483648,
+    "minFreeBytes": 268435456
+  },
+  "ffmpegPath": "ffmpeg",
+  "ffprobePath": "ffprobe",
+  "probeWorkers": 2,
+  "thumbWorkers": 2,
+  "transcode": { "maxConcurrent": 2, "hwaccel": "none", "preset": "veryfast" },
+  "logDir": "%DATA%/logs"
+}

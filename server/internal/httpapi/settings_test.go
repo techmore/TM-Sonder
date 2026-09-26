@@ -282,15 +282,30 @@ func TestSettingsBrowse(t *testing.T) {
 		t.Errorf("bad path status = %d", rec2.Code)
 	}
 
-	// No path -> starting points include Home and Volumes.
+	// No path -> starting points include Home, plus the NAS mount point when
+	// the platform has one.
+	//
+	// The volumes entry is guarded by an os.Stat on /Volumes, because on Linux
+	// (including the container machine, where the NAS is deliberately not
+	// mounted) that directory does not exist and offering it would send a user
+	// to a browse error. Asserting it unconditionally made this test pass only
+	// on macOS and fail everywhere else.
 	res3 := getJSON("")
 	names := []string{}
 	for _, e := range res3["entries"].([]any) {
 		names = append(names, e.(map[string]any)["name"].(string))
 	}
 	joined := strings.Join(names, ",")
-	if !strings.Contains(joined, "Home") || !strings.Contains(joined, "Volumes") {
-		t.Errorf("starting points missing Home/Volumes: %v", names)
+	if !strings.Contains(joined, "Home") {
+		t.Errorf("starting points missing Home: %v", names)
+	}
+	_, volumesErr := os.Stat("/Volumes")
+	hasVolumesEntry := strings.Contains(joined, "Volumes")
+	if volumesErr == nil && !hasVolumesEntry {
+		t.Errorf("/Volumes exists but is not offered as a starting point: %v", names)
+	}
+	if volumesErr != nil && hasVolumesEntry {
+		t.Errorf("/Volumes does not exist but is offered anyway: %v", names)
 	}
 }
 

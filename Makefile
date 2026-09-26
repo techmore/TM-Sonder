@@ -66,6 +66,59 @@ container-run: ## run with ./media read-only + persistent sonder-data volume
 	  --volume sonder-data:/data \
 	  tm-sonder
 
+# --- container machine (full Linux environment, $HOME mounted) ------------
+#
+# The two container targets are not redundant. `container-run` is one app in one
+# container and can mount the NAS read-only, which is what you want when the
+# question is about real library data. A container *machine* is a Linux
+# environment with systemd whose $HOME is the Mac's, so the thing under test is
+# the real deployment shape -- same unit, same config paths -- and the binary
+# built inside is the same static Linux binary that ships to the host. It cannot
+# see /Volumes/14tb, which is why it serves the generated fixture tree.
+
+MACHINE ?= sonder
+MACHINE_IMAGE ?= tm-sonder-machine
+
+machine-build: ## build the container machine image (systemd + Go + ffmpeg)
+	container build -t $(MACHINE_IMAGE) -f deploy/machine/Containerfile.machine .
+
+machine-create: machine-build ## create and boot the container machine
+	container machine create $(MACHINE_IMAGE):latest --name $(MACHINE) --set-default
+	@$(MAKE) machine-fixtures
+	@$(MAKE) machine-setup
+
+machine-fixtures: ## generate the small real-media fixture tree
+	./tools/machine/make-fixtures.sh
+
+machine-setup: ## build the binary, install config + unit, start the service
+	./tools/machine/machine-setup.sh
+
+machine-shell: ## interactive shell in the machine (repo is in $HOME)
+	container machine run -n $(MACHINE)
+
+machine-run: ## run one command in the machine, e.g. make machine-run CMD=nproc
+	container machine run -n $(MACHINE) -- $(CMD)
+
+machine-test: ## the full check suite inside the machine (gofmt, vet, go, js)
+	container machine run -n $(MACHINE) -- /bin/bash $$PWD/tools/machine/inside-test.sh
+
+machine-build-ship: ## cross-compile the shipping binaries (linux/amd64, arm64, darwin)
+	container machine run -n $(MACHINE) -- /bin/bash $$PWD/tools/machine/inside-build.sh $(VERSION)
+
+machine-status: ## is it up, and what does the API say
+	container machine run -n $(MACHINE) -- /bin/bash $$PWD/tools/machine/inside-status.sh
+
+machine-logs: ## tail the server log inside the machine
+	container machine run -n $(MACHINE) -- /usr/bin/tail -f \
+	  /home/$(whoami)/.config/sonder/logs/sonder.log
+
+machine-stop: ## stop the machine (persistent storage is kept)
+	container machine stop $(MACHINE)
+
+machine-destroy: ## delete the machine and its storage
+	container machine stop $(MACHINE) || true
+	container machine delete $(MACHINE)
+
 release-check: ## run the checks required before creating a vX.Y.Z tag
 	test -n "$(VERSION)"
 	git diff --check

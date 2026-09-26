@@ -63,6 +63,9 @@ server/sonder
 /ebook_phase3.py
 /ebook_restructure.py
 /m4b_work/
+# Generated media fixtures for the container machine (tools/machine/make-fixtures.sh).
+# Regenerate with `make machine-fixtures`; synthesised, never committed.
+/media/fixtures/
 /poster_fetch.py
 /poster_pass2.py
 /quarantine-duplicates.sh
