@@ -193,14 +193,15 @@
        video keep playing while you browse, and follows you across tabs. -->
   <section id="nowPlaying" class="nowplaying np-audio-mode" hidden aria-label="Now playing">
     <div class="np-mobile-header">
-      <div class="np-mobile-heading">
-        <span class="np-mobile-overline">NOW PLAYING</span>
-        <span class="np-mobile-kind" id="npMobileKind">Audiobook</span>
-      </div>
-      <button type="button" class="np-mobile-toggle" id="npMobileToggle" aria-label="Open full player" aria-expanded="false">
-        <span id="npMobileToggleIcon" aria-hidden="true">⌃</span>
-        <span id="npMobileToggleText">Open player</span>
+      <button type="button" class="np-mobile-toggle" id="npMobileToggle" aria-label="Minimize player" aria-expanded="true">
+        <svg class="np-collapse-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m6 9 6 6 6-6"/></svg>
+        <span id="npMobileToggleText">Minimize</span>
       </button>
+      <div class="np-mobile-heading">
+        <span class="np-mobile-overline">TM SONDER</span>
+        <span class="np-mobile-kind" id="npMobileKind">Listening to an audiobook</span>
+      </div>
+      <span class="np-mobile-header-space" aria-hidden="true"></span>
     </div>
     <div class="np-video" id="npVideoWrap">
       <video id="npMedia" playsinline preload="metadata"></video>
@@ -208,13 +209,14 @@
     <div class="np-bar">
       <button type="button" class="np-art" id="npArt" aria-label="Now playing artwork"></button>
       <div class="np-meta">
+        <div class="np-part-label" id="npPartLabel" hidden></div>
         <div class="np-title" id="npTitle">—</div>
         <div class="np-sub" id="npSub"></div>
       </div>
       <div class="np-controls">
-        <button type="button" class="np-btn" id="npBack" aria-label="Back 30 seconds" title="Back 30 seconds (←)">↺30</button>
-        <button type="button" class="np-btn np-play" id="npPlayPause" aria-label="Play" title="Play or pause (space)">▶</button>
-        <button type="button" class="np-btn" id="npFwd" aria-label="Forward 30 seconds" title="Forward 30 seconds (→)">↻30</button>
+        <button type="button" class="np-btn np-skip" id="npBack" aria-label="Back 30 seconds" title="Back 30 seconds (←)"><svg viewBox="0 0 32 32" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M6 13a11 11 0 1 1-1 7"/><path d="M6 6v7h7"/></svg><span aria-hidden="true">30</span></button>
+        <button type="button" class="np-btn np-play" id="npPlayPause" aria-label="Play" aria-pressed="false" title="Play or pause (space)" data-playing="false"><svg class="np-icon-play" viewBox="0 0 32 32" fill="currentColor" aria-hidden="true"><path d="M10 6.8c0-.9 1-1.5 1.8-1l17 10.2-17 10.2c-.8.5-1.8-.1-1.8-1V6.8Z"/></svg><svg class="np-icon-pause" viewBox="0 0 32 32" fill="currentColor" aria-hidden="true"><rect x="8" y="6" width="6" height="20" rx="1.5"/><rect x="18" y="6" width="6" height="20" rx="1.5"/></svg></button>
+        <button type="button" class="np-btn np-skip" id="npFwd" aria-label="Forward 30 seconds" title="Forward 30 seconds (→)"><svg viewBox="0 0 32 32" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M26 13a11 11 0 1 0 1 7"/><path d="M26 6v7h-7"/></svg><span aria-hidden="true">30</span></button>
       </div>
       <div class="np-seek">
         <input type="range" id="npSeek" min="0" max="1000" value="0" step="1" aria-label="Seek">
@@ -225,7 +227,7 @@
       </div>
       <div class="np-tools">
         <label class="np-rate">
-          <span class="np-rate-label">Speed</span>
+          <span class="np-rate-label">SPEED</span>
           <select id="npRate" aria-label="Playback speed" title="Playback speed">
             <option value="0.75">0.75×</option>
             <option value="1" selected>1×</option>
@@ -235,9 +237,23 @@
             <option value="2">2×</option>
           </select>
         </label>
-        <button type="button" class="np-link" id="npDetails" aria-label="Open book details">Details</button>
+        <button type="button" class="np-tool-button" id="npSleep" aria-label="Set sleep timer" aria-expanded="false"><span class="np-tool-kicker">SLEEP TIMER</span><span id="npSleepLabel">Off</span></button>
+        <button type="button" class="np-tool-button" id="npDetails" aria-label="Open book details"><span class="np-tool-kicker">BOOK</span><span>Details</span></button>
         <button type="button" class="np-btn" id="npExpand" aria-label="Expand video" title="Expand video" hidden>⤢</button>
-        <button type="button" class="np-btn" id="npClose" aria-label="Stop player" title="Stop">✕</button>
+        <button type="button" class="np-tool-button np-stop" id="npClose" aria-label="Stop player" title="Stop playback"><span class="np-tool-kicker">PLAYER</span><span>Stop</span></button>
+      </div>
+    </div>
+    <div class="np-sleep-overlay" id="npSleepOverlay" hidden>
+      <div class="np-sleep-panel" role="dialog" aria-modal="true" aria-label="Sleep timer options">
+        <div class="np-sleep-heading"><div><span class="np-queue-kicker">REST EASY</span><strong>Sleep timer</strong></div><button type="button" id="npSleepDismiss" aria-label="Close sleep timer">✕</button></div>
+        <div class="np-sleep-options">
+          <button type="button" data-np-sleep="15">15 minutes</button>
+          <button type="button" data-np-sleep="30">30 minutes</button>
+          <button type="button" data-np-sleep="45">45 minutes</button>
+          <button type="button" data-np-sleep="60">1 hour</button>
+          <button type="button" data-np-sleep="part" id="npSleepPart">End of part</button>
+          <button type="button" data-np-sleep="off">Turn off timer</button>
+        </div>
       </div>
     </div>
     <div class="np-queue" id="npQueue" hidden>

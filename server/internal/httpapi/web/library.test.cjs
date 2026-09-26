@@ -8,20 +8,25 @@ function catalog(items, progress = []) {
   // A minimal DOM: visibleItems() reads the filter selects through $, and the
   // book-part tests need to drive them ("watched" / "unwatched").
   const fields = { q: '', watched: 'all', sort: 'title', coverFilter: 'all' };
+  const nodes = new Map();
   const $ = sel => {
     const key = String(sel).replace(/^[#.]/, '');
+    if (nodes.has(key)) return nodes.get(key);
     const node = { dataset: {}, hidden: false, style: {},
              classList: { toggle(){}, add(){}, remove(){}, contains(){ return false; } },
              addEventListener(){}, removeEventListener(){}, querySelector(){ return null; },
              querySelectorAll(){ return []; }, setAttribute(){}, getAttribute(){ return null; },
              appendChild(){}, remove(){}, focus(){}, closest(){ return null; },
-             textContent: '', innerHTML: '', load(){}, play(){ return Promise.resolve(); },
-             pause(){}, duration: 0, currentTime: 0, paused: true, src: '' };
+             textContent: '', innerHTML: '', load(){ this.playbackRate = 1; },
+             play(){ this.paused = false; return Promise.resolve(); },
+             pause(){ this.paused = true; }, duration: 0, currentTime: 0, paused: true, src: '' };
     // The selects are read through `.value`, and a test has to be able to set
     // them, so the property reads and writes the shared field rather than a copy.
-    return Object.defineProperty(node, 'value', {
+    Object.defineProperty(node, 'value', {
       get() { return fields[key] ?? ''; }, set(v) { fields[key] = v; }, configurable: true,
     });
+    nodes.set(key, node);
+    return node;
   };
   const context = vm.createContext({ window: { Sonder: {
     api: value => value,
@@ -30,7 +35,8 @@ function catalog(items, progress = []) {
   } }, $, document: { createElement: () => ({ canPlayType: () => 'probably' }),
                      addEventListener(){}, querySelector: $, querySelectorAll(){ return []; },
                      body: { classList: { add(){}, remove(){} } } },
-    navigator: {}, localStorage: { getItem: () => null, setItem(){}, removeItem(){} } });
+    navigator: {}, setTimeout: () => 1, clearTimeout(){},
+    localStorage: { getItem: () => null, setItem(){}, removeItem(){} } });
   context.fields = fields;
   vm.runInContext(source.slice(0, source.indexOf('    function seasonLabel')), context);
   context.input = items;
@@ -658,6 +664,24 @@ test('resume skips parts that are already finished', () => {
   assert.equal(get('resumePartIndex(partsOf(items.find(i => i.id === "p1")))'), 1);
 });
 
+test('resume follows the most recently played part after a manual jump', () => {
+  const get = catalog(
+    [part('p1', 'bk', 1, 100), part('p2', 'bk', 2, 100), part('p3', 'bk', 3, 100)],
+    [{ id: 'p1', seconds: 40, duration: 100, updatedAt: '2026-09-25T10:00:00Z' },
+     { id: 'p3', seconds: 20, duration: 100, updatedAt: '2026-09-26T10:00:00Z' }],
+  );
+  assert.equal(get('resumePartIndex(partsOf(items[0]))'), 2);
+});
+
+test('resume advances after the most recently played part finished', () => {
+  const get = catalog(
+    [part('p1', 'bk', 1, 100), part('p2', 'bk', 2, 100), part('p3', 'bk', 3, 100)],
+    [{ id: 'p1', seconds: 40, duration: 100, updatedAt: '2026-09-25T10:00:00Z' },
+     { id: 'p2', seconds: 100, duration: 100, updatedAt: '2026-09-26T10:00:00Z' }],
+  );
+  assert.equal(get('resumePartIndex(partsOf(items[0]))'), 2);
+});
+
 test('a book nobody started opens at part one', () => {
   const get = catalog([part('p1', 'bk', 1, 100), part('p2', 'bk', 2, 100)]);
   assert.equal(get('resumePartIndex(partsOf(items[0]))'), 0);
@@ -735,6 +759,25 @@ test('the player shows time left in the whole book, not the current file', () =>
   assert.equal(get('(nowPlayingPartIndex = 2, bookTimeline().offset)'), 600);
 });
 
+test('switching parts immediately shows the new book position before metadata loads', () => {
+  const get = catalog(
+    [part('p1', 'bk', 1, 300), part('p2', 'bk', 2, 300), part('p3', 'bk', 3, 300)],
+    [{ id: 'p2', seconds: 50, duration: 300 }],
+  );
+  assert.deepEqual(
+    get('(nowPlayingItem=items[0], nowPlayingParts=partsOf(items[0]), nowPlayingPartIndex=1, nowPlayingMode="audio", loadBookPart(false), [$("#npCur").textContent, $("#npDur").textContent, $("#npEta").textContent, $("#npSeek").value])'),
+    ['350', '900', '550 left', '389'],
+  );
+});
+
+test('switching parts preserves the selected playback speed after media load', () => {
+  const get = catalog([part('p1', 'bk', 1, 300), part('p2', 'bk', 2, 300)]);
+  assert.equal(
+    get('($("#npRate").value="1.25", nowPlayingItem=items[0], nowPlayingParts=partsOf(items[0]), nowPlayingPartIndex=1, loadBookPart(false), $("#npMedia").playbackRate)'),
+    1.25,
+  );
+});
+
 test('a single-file item reports its own duration and position', () => {
   const get = catalog([{ id: 'dune', title: 'Dune', kind: 'audiobook', year: 1965, format: 'm4b', durationSeconds: 3600 }]);
   assert.equal(get('(nowPlayingParts = null, bookTimeline().total)'), 0);
@@ -766,21 +809,22 @@ test('the lock screen gets the author, the narrator and the series', () => {
   assert.match(src, /album: item\.showTitle \|\| item\.series/);
 });
 
-test('the mobile player has a full listening surface and part queue', () => {
+test('the mobile player has readable contrast and listening controls', () => {
   assert.match(libraryHTML, /id="npEta"/);
   assert.match(libraryHTML, /id="npMobileToggle"/);
   assert.match(libraryHTML, /id="npMobileKind"/);
   assert.match(libraryHTML, /id="npDetails"/);
   assert.match(libraryHTML, /id="npQueue"/);
   assert.match(libraryHTML, /id="npQueueList"/);
+  assert.match(libraryHTML, /id="npSleepOverlay"/);
   const css = fs.readFileSync(`${__dirname}/library.css`, 'utf8');
   const phone = css.slice(css.indexOf('@media (max-width: 700px)'));
-  assert.match(phone, /body:not\(\.np-expanded\) \.np-controls \.np-play \{[^}]*width:44px/);
-  assert.match(phone, /body\.np-expanded \.nowplaying \{/);
-  assert.match(phone, /body\.np-expanded \.np-art \{[^}]*width:min\(72vw, 320px\)/);
-  assert.match(phone, /body\.np-expanded \.np-controls \.np-play \{[^}]*width:72px/);
+  assert.match(phone, /body\.np-expanded \.nowplaying\.np-audio-mode \{[^}]*background:/);
+  assert.match(phone, /body\.np-expanded \.np-title \{[^}]*color:var\(--np-fg\)/);
+  assert.match(phone, /body\.np-expanded \.np-controls \.np-play \{[^}]*width:84px/);
   assert.match(phone, /body:not\(\.np-expanded\) \.np-bar \{/);
   assert.match(phone, /body:not\(\.np-expanded\) \.np-controls #npBack/);
+  assert.match(phone, /body:not\(\.np-expanded\) \.np-queue \{ display:none; \}/);
   // The list is rendered only for a multi-part audiobook and is controlled by
   // the same expanded player state as the rest of the listening surface.
   const src = fs.readFileSync(`${__dirname}/library.js`, 'utf8');
@@ -792,6 +836,22 @@ test('the mobile player has a full listening surface and part queue', () => {
   assert.match(src, /on\("#npMobileToggle"/);
   assert.match(src, /on\("#npQueueList"/);
   assert.match(src, /if \(\!\(tl\.total > 0\) \|\| \(!tl\.multi && nowPlayingMode !== "audio"\)\)/);
+});
+
+test('sleep timer choices replace one another and can be turned off', () => {
+  const get = catalog([{ id:'book', title:'Book', kind:'audiobook', format:'m4b' }]);
+  assert.equal(get('(setSleepTimer("part"), npSleepAtPartEnd)'), true);
+  assert.equal(get('(setSleepTimer("15"), npSleepAtPartEnd)'), false);
+  assert.equal(get('npSleepDeadline > Date.now()'), true);
+  assert.equal(get('(setSleepTimer("off"), npSleepDeadline)'), 0);
+});
+
+test('an elapsed sleep timer pauses playback and tells the listener', () => {
+  const get = catalog([{ id:'book', title:'Book', kind:'audiobook', format:'m4b' }]);
+  assert.deepEqual(
+    get('(nowPlayingItem=items[0], $("#npMedia").paused=false, setSleepTimer("15"), npSleepDeadline=Date.now()-1, checkSleepTimer(), [$("#npMedia").paused, npSleepDeadline, $("#npStatus").textContent])'),
+    [true, 0, 'Sleep timer ended. Playback paused.'],
+  );
 });
 
 test('a book is filtered by the watched filter using its whole progress', () => {

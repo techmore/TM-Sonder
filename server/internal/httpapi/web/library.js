@@ -400,13 +400,28 @@
     let nowPlayingParts = null;
     let nowPlayingPartIndex = 0;
     let npQueueOpen = false;
+    let npSleepDeadline = 0;
+    let npSleepAtPartEnd = false;
+    let npSleepTimeout = null;
 
     function npMedia() { return $("#npMedia"); }
+
+    function syncPlaybackRate(media) {
+      if (!media) return;
+      const rate = Number($("#npRate")?.value) || 1;
+      media.defaultPlaybackRate = rate;
+      media.playbackRate = rate;
+    }
 
     function startPlaybackById(id) {
       const item = items.find(candidate => candidate.id === id);
       if (!item) return;
-      if (nowPlayingItem && nowPlayingItem.id === id) { togglePlay(); return; }
+      if (nowPlayingItem && nowPlayingItem.id === id) {
+        togglePlay();
+        if (isMobileViewport() && nowPlayingMode === "audio") setPlayerExpanded(true);
+        closeDetailOnMobile();
+        return;
+      }
       const parts = partsOf(item);
       if (parts) {
         // Resume where the listener actually stopped, which is rarely part 1 of
@@ -430,36 +445,44 @@
       npLastSaved = 0;
       npSeeking = false;
       prepareNowPlayingShell(item, "audio");
-      loadBookPart(false);
+      loadBookPart(true);
       closeDetailOnMobile();
     }
 
-    // Move to a part of the current book. `autoplay` is false when the user
-    // jumped there deliberately from the part list, so the browser's own
-    // gesture requirement is satisfied by that click.
+    // Move to a part of the current book. A deliberate part jump preserves the
+    // current play/pause state; automatic advancement always resumes playback.
     function loadBookPart(autoplay) {
       const media = npMedia();
       const part = nowPlayingParts && nowPlayingParts[nowPlayingPartIndex];
       if (!media || !part) return;
       media.src = api("/stream/" + part.id);
+      const expectedSrc = media.src;
       media.load();
+      syncPlaybackRate(media);
       npLastSaved = 0;
+      npSeeking = false;
       renderNowPlaying();
+      const initial = bookTimeline();
+      const rec = progressByID.get(part.id);
+      const resume = (rec && rec.seconds) || 0;
+      const start = resume > 5 && resume < Math.max((part.durationSeconds || 0) - 8, 0) ? resume : 0;
+      renderPlaybackProgress({ ...initial, position: initial.offset + start });
       updateMediaSession(nowPlayingItem);
       media.addEventListener("loadedmetadata", () => {
-        const rec = progressByID.get(part.id);
-        const resume = (rec && rec.seconds) || 0;
+        if (media.src !== expectedSrc) return;
+        syncPlaybackRate(media);
         if (resume > 5 && resume < Math.max((media.duration || 0) - 8, 0)) {
           media.currentTime = resume;
         }
-        if (autoplay) media.play().catch(() => {});
         onTimeUpdate();
       }, { once: true });
+      if (autoplay) requestPlayback(media);
     }
 
     function advanceBookPart() {
       if (!nowPlayingParts) return false;
       if (nowPlayingPartIndex + 1 >= nowPlayingParts.length) return false;
+      saveProgress(true);
       nowPlayingPartIndex += 1;
       loadBookPart(true);
       return true;
@@ -494,16 +517,15 @@
       setClassEnabled(host, "np-mobile-expanded", expanded);
       setClassEnabled(body, "np-expanded", expanded);
       const button = $("#npMobileToggle");
-      const icon = $("#npMobileToggleIcon");
       const label = $("#npMobileToggleText");
       if (button) {
         button.setAttribute("aria-expanded", expanded ? "true" : "false");
         button.setAttribute("aria-label", expanded ? "Minimize player" : "Open full player");
       }
-      if (icon) icon.textContent = expanded ? "⌄" : "⌃";
       if (label) label.textContent = expanded ? "Minimize" : "Open player";
       const list = $("#npQueueList");
       if (list) list.hidden = !(expanded && npQueueOpen);
+      if (!expanded) closeSleepMenu();
     }
 
     function isMobileViewport() {
@@ -518,6 +540,92 @@
       if (!isMobileViewport()) return;
       const detail = $("#detail");
       if (detail?.open && typeof detail.close === "function") detail.close();
+    }
+
+    function closeSleepMenu(restoreFocus = false) {
+      const overlay = $("#npSleepOverlay");
+      const button = $("#npSleep");
+      if (overlay) overlay.hidden = true;
+      if (button) button.setAttribute("aria-expanded", "false");
+      if (restoreFocus && button?.focus) button.focus({ preventScroll: true });
+    }
+
+    function renderSleepTimer() {
+      const label = $("#npSleepLabel");
+      if (!label) return;
+      if (npSleepAtPartEnd) label.textContent = nowPlayingParts ? "End of part" : "End of book";
+      else if (npSleepDeadline) label.textContent = `${Math.max(1, Math.ceil((npSleepDeadline - Date.now()) / 60000))}m left`;
+      else label.textContent = "Off";
+      const part = $("#npSleepPart");
+      if (part) part.textContent = nowPlayingParts ? "End of part" : "End of book";
+    }
+
+    function clearSleepClock() {
+      if (npSleepTimeout !== null) clearTimeout(npSleepTimeout);
+      npSleepTimeout = null;
+    }
+
+    function finishSleepTimer() {
+      clearSleepClock();
+      npSleepDeadline = 0;
+      npSleepAtPartEnd = false;
+      const media = npMedia();
+      if (media && !media.paused) media.pause();
+      saveProgress(true);
+      const status = $("#npStatus");
+      if (status) status.textContent = "Sleep timer ended. Playback paused.";
+      renderSleepTimer();
+      closeSleepMenu();
+    }
+
+    function checkSleepTimer() {
+      if (npSleepDeadline && Date.now() >= npSleepDeadline) {
+        finishSleepTimer();
+        return;
+      }
+      renderSleepTimer();
+    }
+
+    function scheduleSleepClock() {
+      clearSleepClock();
+      if (!npSleepDeadline) return;
+      npSleepTimeout = setTimeout(() => {
+        checkSleepTimer();
+        if (npSleepDeadline) scheduleSleepClock();
+      }, Math.min(30000, Math.max(1000, npSleepDeadline - Date.now())));
+    }
+
+    function setSleepTimer(option, restoreFocus = true) {
+      clearSleepClock();
+      npSleepDeadline = 0;
+      npSleepAtPartEnd = option === "part";
+      const minutes = Number(option);
+      if (Number.isFinite(minutes) && minutes > 0) npSleepDeadline = Date.now() + minutes * 60000;
+      const status = $("#npStatus");
+      if (status) status.textContent = "";
+      renderSleepTimer();
+      closeSleepMenu(restoreFocus);
+      scheduleSleepClock();
+    }
+
+    function playbackPrompt() {
+      return nowPlayingMode === "audio" ? "Tap Play to start this audiobook." : "Tap Play to start this video.";
+    }
+
+    function requestPlayback(media) {
+      const source = media.src;
+      try {
+        const result = media.play();
+        if (result && typeof result.catch === "function") result.catch(() => {
+          if (nowPlayingItem && media.src === source) {
+            const status = $("#npStatus");
+            if (status) status.textContent = playbackPrompt();
+          }
+        });
+      } catch {
+        const status = $("#npStatus");
+        if (status) status.textContent = playbackPrompt();
+      }
     }
 
     function renderPartQueue() {
@@ -537,6 +645,8 @@
         toggle.textContent = npQueueOpen ? "Hide list" : "Show list";
         toggle.setAttribute("aria-expanded", npQueueOpen ? "true" : "false");
       }
+      const wasVisible = !list.hidden;
+      const previousScroll = list.scrollTop || 0;
       list.innerHTML = nowPlayingParts.map((part, index) => {
         const rec = progressByID.get(part.id);
         const duration = part.durationSeconds || rec?.duration || 0;
@@ -557,6 +667,13 @@
       }).join("");
       const expanded = typeof document !== "undefined" && document.body?.classList?.contains?.("np-expanded");
       list.hidden = !(npQueueOpen && expanded);
+      if (!list.hidden) {
+        if (wasVisible) list.scrollTop = previousScroll;
+        else {
+          const current = list.querySelector?.("li.current");
+          if (current) list.scrollTop = Math.max(0, current.offsetTop - list.offsetTop - list.clientHeight / 2);
+        }
+      }
     }
 
     function selectBookPart(index) {
@@ -586,11 +703,7 @@
         expand.setAttribute("aria-pressed", "true");
       }
       const status = $("#npStatus");
-      if (status) {
-        status.textContent = mode === "audio"
-          ? "Plays in the background — these controls stay while you browse."
-          : "";
-      }
+      if (status) status.textContent = "";
       // Audiobooks should feel like a listening app on a phone. Open the
       // dedicated surface immediately; the compact dock remains available
       // after the listener taps Minimize.
@@ -614,7 +727,7 @@
       npSeeking = false;
 
       media.src = api(plan.url);
-      media.playbackRate = Number($("#npRate")?.value) || 1;
+      syncPlaybackRate(media);
       media.onerror = () => {
         const codecs = Array.isArray(item.probedAudioCodecs) ? item.probedAudioCodecs : [];
         const hasOpus = codecs.some(codec => String(codec).toLowerCase() === "opus");
@@ -628,20 +741,28 @@
 
       prepareNowPlayingShell(item, plan.mode);
       renderNowPlaying();
+      renderPlaybackProgress({ position: Math.max(0, resumeAt), total: item.durationSeconds || 0, multi: false });
       closeDetailOnMobile();
 
+      const expectedSrc = media.src;
       media.addEventListener("loadedmetadata", () => {
+        if (media.src !== expectedSrc) return;
+        syncPlaybackRate(media);
         const duration = media.duration || 0;
         if (resumeAt > 5 && resumeAt < Math.max(duration - 8, 0)) media.currentTime = resumeAt;
-        media.play().catch(() => {});
         onTimeUpdate();
       }, { once: true });
+      requestPlayback(media);
     }
 
     function togglePlay() {
       const media = npMedia();
       if (!nowPlayingItem || !media) return;
-      if (media.paused) media.play().catch(() => {}); else media.pause();
+      if (media.paused) {
+        const status = $("#npStatus");
+        if (status) status.textContent = "";
+        requestPlayback(media);
+      } else media.pause();
     }
 
     function skipBy(delta) {
@@ -663,6 +784,7 @@
       nowPlayingParts = null;
       nowPlayingPartIndex = 0;
       npQueueOpen = false;
+      setSleepTimer("off", false);
       setPlayerExpanded(false);
       const host = $("#nowPlaying");
       if (host) host.hidden = true;
@@ -715,15 +837,17 @@
       }
       const sub = $("#npSub");
       if (sub) {
-        // "Part 140 of 147" is the only way to tell where you are in a book
-        // whose files are all titled the same thing.
-        sub.textContent = [kindLabel(item.kind), item.author || item.studio || "",
+        sub.textContent = [item.author || item.studio || kindLabel(item.kind),
                            item.narrator ? `Narrated by ${item.narrator}` : "",
-                           item.series || "", item.year || "", bookPartLabel()]
-          .filter(Boolean).join(" • ");
+                           item.series || ""].filter(Boolean).join(" · ");
+      }
+      const partLabel = $("#npPartLabel");
+      if (partLabel) {
+        partLabel.textContent = [bookPartLabel() || kindLabel(item.kind), item.year || ""].filter(Boolean).join(" · ");
+        partLabel.hidden = false;
       }
       const mobileKind = $("#npMobileKind");
-      if (mobileKind) mobileKind.textContent = item.kind === "audiobook" ? "Audiobook" : mediaLabel(nowPlayingMode);
+      if (mobileKind) mobileKind.textContent = item.kind === "audiobook" ? "NOW PLAYING · AUDIOBOOK" : `NOW PLAYING · ${mediaLabel(nowPlayingMode).toUpperCase()}`;
       const art = $("#npArt");
       if (art) {
         const src = item.posterURL ? api(item.posterURL) : "";
@@ -731,6 +855,7 @@
         art.setAttribute("aria-label", `Now playing: ${item.title}`);
       }
       renderPartQueue();
+      renderSleepTimer();
       onPlayStateChange();
     }
 
@@ -740,7 +865,7 @@
       const playing = !media.paused && !media.ended;
       const button = $("#npPlayPause");
       if (button) {
-        button.textContent = playing ? "❚❚" : "▶";
+        button.dataset.playing = playing ? "true" : "false";
         button.setAttribute("aria-label", playing ? "Pause" : "Play");
         button.setAttribute("aria-pressed", playing ? "true" : "false");
       }
@@ -783,32 +908,36 @@
     // Human "time left". For a book this is the remainder of the whole book,
     // which is the only number a listener can act on; the per-file remainder
     // resets every few minutes and reads as though the book were nearly over.
-    function renderEta() {
+    function renderEta(tl = bookTimeline()) {
       const eta = $("#npEta");
       if (!eta) return;
-      const tl = bookTimeline();
       if (!(tl.total > 0) || (!tl.multi && nowPlayingMode !== "audio")) { eta.hidden = true; return; }
       const remaining = Math.max(0, tl.total - tl.position);
       eta.hidden = false;
       eta.textContent = remaining <= 0 ? "Finished" : `${formatTime(remaining)} left`;
     }
 
-    function onTimeUpdate() {
-      const media = npMedia();
-      if (!media) return;
-      const duration = media.duration || 0;
-      const tl = bookTimeline();
+    function renderPlaybackProgress(tl) {
       const seek = $("#npSeek");
       // The bar spans the book, so the thumb means the same thing on every
       // part instead of jumping back to the left on each file boundary.
-      if (seek && !npSeeking && tl.total > 0) {
-        seek.value = String(Math.round(Math.min(Math.max(tl.position / tl.total, 0), 1) * 1000));
+      if (seek && !npSeeking) {
+        const ratio = tl.total > 0 ? Math.min(Math.max(tl.position / tl.total, 0), 1) : 0;
+        seek.value = String(Math.round(ratio * 1000));
+        if (seek.style?.setProperty) seek.style.setProperty("--np-progress", `${(ratio * 100).toFixed(2)}%`);
       }
       const cur = $("#npCur"); if (cur) cur.textContent = formatTime(tl.position);
       const dur = $("#npDur"); if (dur) dur.textContent = formatTime(tl.total);
-      renderEta();
+      renderEta(tl);
+    }
+
+    function onTimeUpdate() {
+      const media = npMedia();
+      if (!media) return;
+      renderPlaybackProgress(bookTimeline());
       updatePositionState();
       saveProgress(false);
+      checkSleepTimer();
     }
 
     // Move to an absolute position in the book, crossing into another file when
@@ -826,15 +955,23 @@
         const d = nowPlayingParts[i].durationSeconds || 0;
         if (seconds < offset + d || i === nowPlayingParts.length - 1) {
           if (i !== nowPlayingPartIndex) {
+            const shouldPlay = !media.paused && !media.ended;
+            saveProgress(true);
             nowPlayingPartIndex = i;
             media.src = api("/stream/" + nowPlayingParts[i].id);
+            const expectedSrc = media.src;
             media.load();
+            syncPlaybackRate(media);
             renderNowPlaying();
+            renderPlaybackProgress({ ...bookTimeline(), position: seconds });
             updateMediaSession(nowPlayingItem);
             media.addEventListener("loadedmetadata", () => {
+              if (media.src !== expectedSrc) return;
+              syncPlaybackRate(media);
               media.currentTime = Math.max(0, seconds - offset);
               onTimeUpdate();
             }, { once: true });
+            if (shouldPlay) requestPlayback(media);
           } else {
             media.currentTime = Math.max(0, seconds - offset);
             onTimeUpdate();
@@ -922,6 +1059,21 @@
       const expanded = !!(host && host.classList && host.classList.contains && host.classList.contains("np-mobile-expanded"));
       setPlayerExpanded(!expanded);
     });
+    on("#npSleep", "click", () => {
+      const overlay = $("#npSleepOverlay");
+      const button = $("#npSleep");
+      if (!overlay || !button) return;
+      overlay.hidden = !overlay.hidden;
+      button.setAttribute("aria-expanded", overlay.hidden ? "false" : "true");
+      renderSleepTimer();
+      if (!overlay.hidden) $("#npSleepDismiss")?.focus?.({ preventScroll: true });
+    });
+    on("#npSleepDismiss", "click", () => closeSleepMenu(true));
+    on("#npSleepOverlay", "click", event => {
+      if (event.target === $("#npSleepOverlay")) { closeSleepMenu(true); return; }
+      const option = event.target.closest?.("[data-np-sleep]");
+      if (option) setSleepTimer(option.dataset.npSleep);
+    });
     on("#npDetails", "click", () => { if (nowPlayingItem) openDetail(nowPlayingItem.id, true); });
     on("#npQueueToggle", "click", () => {
       npQueueOpen = !npQueueOpen;
@@ -932,7 +1084,11 @@
       if (!button) return;
       selectBookPart(Number(button.dataset.npPartIndex));
     });
-    on("#npArt", "click", () => { if (nowPlayingItem) openDetail(nowPlayingItem.id, true); });
+    on("#npArt", "click", () => {
+      if (!nowPlayingItem) return;
+      if (isMobileViewport() && !document.body.classList.contains("np-expanded")) setPlayerExpanded(true);
+      else openDetail(nowPlayingItem.id, true);
+    });
     on("#npExpand", "click", () => {
       const host = $("#nowPlaying");
       const button = $("#npExpand");
@@ -944,9 +1100,9 @@
         button.setAttribute("aria-pressed", collapsed ? "false" : "true");
       }
     });
-    on("#npRate", "change", event => {
+    on("#npRate", "change", () => {
       const media = npMedia();
-      if (media) media.playbackRate = Number(event.target.value) || 1;
+      syncPlaybackRate(media);
       updatePositionState();
     });
     on("#npSeek", "input", event => {
@@ -963,9 +1119,15 @@
     });
     on("#npSeek", "change", () => { npSeeking = false; });
     on("#npMedia", "timeupdate", () => onTimeUpdate());
-    on("#npMedia", "play", () => onPlayStateChange());
+    on("#npMedia", "play", () => {
+      onPlayStateChange();
+      const status = $("#npStatus");
+      if (status?.textContent === playbackPrompt()) status.textContent = "";
+      checkSleepTimer();
+    });
     on("#npMedia", "pause", () => { onPlayStateChange(); saveProgress(true); });
     on("#npMedia", "ended", () => {
+      if (npSleepAtPartEnd) { finishSleepTimer(); return; }
       // A multi-part book continues into the next file; a single-file item, and
       // the last part of a book, just stop as before.
       if (advanceBookPart()) return;
@@ -979,6 +1141,11 @@
     });
     onDocument("keydown", event => {
       if (!nowPlayingItem) return;
+      if (event.key === "Escape" && !$("#npSleepOverlay")?.hidden) {
+        event.preventDefault();
+        closeSleepMenu(true);
+        return;
+      }
       const target = event.target;
       const typing = target && (target.tagName === "INPUT" || target.tagName === "SELECT" ||
         target.tagName === "TEXTAREA" || target.isContentEditable);
@@ -997,6 +1164,7 @@
     });
     onDocument("visibilitychange", () => {
       if (typeof document !== "undefined" && document.visibilityState === "hidden") saveProgress(true);
+      checkSleepTimer();
     });
     onDocument("pagehide", () => saveProgress(true));
 
@@ -1797,18 +1965,37 @@
       return { seconds, duration, updatedAt };
     }
 
-    // resumePartIndex is where playback should start: the first part that was
-    // started and not finished, else the first part. Resuming a 147-part book at
-    // part 1 because the aggregate looked unstarted is the failure mode here.
+    // A listener can jump around a book. Resume the most recently played part,
+    // not the first earlier part they left unfinished; if that part completed,
+    // continue with the next unfinished one. Older records without timestamps
+    // retain the original first-incomplete fallback.
     function resumePartIndex(parts) {
+      const unfinished = i => {
+        const rec = progressByID.get(parts[i].id);
+        if (!rec) return true;
+        const dur = rec.duration || parts[i].durationSeconds || 0;
+        return !(dur > 0 && rec.seconds / dur >= 0.96);
+      };
+      let latestIndex = -1;
+      let latestUpdated = "";
+      for (let i = 0; i < parts.length; i++) {
+        const rec = progressByID.get(parts[i].id);
+        if (rec?.seconds > 5 && rec.updatedAt && rec.updatedAt > latestUpdated) {
+          latestIndex = i;
+          latestUpdated = rec.updatedAt;
+        }
+      }
+      if (latestIndex >= 0) {
+        if (unfinished(latestIndex)) return latestIndex;
+        for (let i = latestIndex + 1; i < parts.length; i++) if (unfinished(i)) return i;
+      }
       for (let i = 0; i < parts.length; i++) {
         const rec = progressByID.get(parts[i].id);
         if (!rec || rec.seconds <= 5) continue;
-        const dur = rec.duration || parts[i].durationSeconds || 0;
-        if (dur > 0 && rec.seconds / dur >= 0.96) continue;  // finished; keep going
-        return i;
+        if (unfinished(i)) return i;
       }
-      return 0;
+      const firstUnfinished = parts.findIndex((_, i) => unfinished(i));
+      return firstUnfinished >= 0 ? firstUnfinished : 0;
     }
 
     function rebuildCopyGroups() {
