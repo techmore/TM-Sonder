@@ -26,7 +26,23 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - name: Select Xcode
-        run: sudo xcode-select -s /Applications/Xcode.app || sudo xcode-select -s /Applications/Xcode-beta.app
+        # Pinned, not "whatever is newest". `xcode-select -s
+        # /Applications/Xcode.app` with a beta fallback meant the toolchain
+        # changed under the project: a commit could build on a developer Mac
+        # and fail here purely because the image shipped a newer SDK. Every
+        # remaining error in this job was an AppKit main-actor annotation
+        # (NSApp, NSImage, NSWindow) that the local SDK does not have, so the
+        # build has to happen on a known toolchain to mean anything.
+        uses: maxim-lobanov/setup-xcode@v1
+        with:
+          xcode-version: "27.0"
+      - name: Report the toolchain
+        # A concurrency failure is close to unreadable without knowing which
+        # compiler produced it, so the version is part of the log rather than
+        # something to infer later.
+        run: |
+          xcodebuild -version
+          swift --version
       - name: Build Mac host
         run: |
           # SWIFT_VERSION=6 is pinned deliberately. Without it this job passed
