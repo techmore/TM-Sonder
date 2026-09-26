@@ -693,6 +693,89 @@ test('a single-file book is not part-labelled', () => {
   assert.equal(get('bookPartLabel()'), '');
 });
 
+// --- the phone player ------------------------------------------------------
+
+test('the tab bar is icon-only on a phone but keeps its accessible names', () => {
+  // Hiding the labels must not take the accessible name with them, so the text
+  // lives in a .tab-label span and each button carries an aria-label.
+  for (const tab of ['all', 'movies', 'tvshows', 'documentaries', 'audiobooks',
+                     'books', 'storage', 'optimize']) {
+    const re = new RegExp(`<button data-tab="${tab}"[^>]*aria-label="[^"]+"[^>]*>` +
+                          `<span class="tab-ico" aria-hidden="true">`);
+    assert.match(libraryHTML, re, `tab ${tab} needs an aria-label and an icon span`);
+  }
+  assert.match(libraryHTML, /<span class="tab-label">Audiobooks<\/span>/);
+
+  const css = fs.readFileSync(`${__dirname}/library.css`, 'utf8');
+  const phone = css.slice(css.indexOf('@media (max-width: 700px)'));
+  assert.match(phone, /nav\.tabs \.tab-label \{ display: none; \}/);
+  // Equal shares, so all eight fit without the bar scrolling sideways. Two
+  // sections being off-screen with no affordance was the original complaint.
+  assert.match(phone, /nav\.tabs button \{\s*flex: 1 1 0;/);
+});
+
+test('the phone grid is denser than the desktop one', () => {
+  const css = fs.readFileSync(`${__dirname}/library.css`, 'utf8');
+  const phone = css.slice(css.indexOf('@media (max-width: 700px)'));
+  const m = phone.match(/main\.grid \{ grid-template-columns: repeat\(auto-fill, minmax\((\d+)px/);
+  assert.ok(m, 'the phone grid overrides its column width');
+  assert.ok(Number(m[1]) < 132, `phone cards got bigger (${m[1]}px), not denser`);
+});
+
+test('the player shows time left in the whole book, not the current file', () => {
+  // A 7-hour book on a 5-minute file would otherwise always read "4:55 left",
+  // which reads as though the book were nearly over.
+  const get = catalog([part('p1', 'bk', 1, 300), part('p2', 'bk', 2, 300), part('p3', 'bk', 3, 300)]);
+  assert.equal(get('(nowPlayingParts = partsOf(items[0]), nowPlayingPartIndex = 0, bookTimeline().total)'), 900);
+  assert.equal(get('bookTimeline().offset'), 0);
+  assert.equal(get('bookTimeline().multi'), true);
+  // Part 2 starts 300s into the book, not at zero.
+  assert.equal(get('(nowPlayingPartIndex = 1, bookTimeline().offset)'), 300);
+  // ...and part 3 at 600.
+  assert.equal(get('(nowPlayingPartIndex = 2, bookTimeline().offset)'), 600);
+});
+
+test('a single-file item reports its own duration and position', () => {
+  const get = catalog([{ id: 'dune', title: 'Dune', kind: 'audiobook', year: 1965, format: 'm4b', durationSeconds: 3600 }]);
+  assert.equal(get('(nowPlayingParts = null, bookTimeline().total)'), 0);
+  assert.equal(get('bookTimeline().multi'), false);
+});
+
+test('the seek bar addresses the whole book', () => {
+  // iOS reports seekto in whatever coordinates setPositionState published. If
+  // the bar were per-file, the lock screen would drive a 7-hour book from a
+  // 5-minute file's range.
+  const get = catalog([part('p1', 'bk', 1, 600), part('p2', 'bk', 2, 600), part('p3', 'bk', 3, 600)]);
+  const src = fs.readFileSync(`${__dirname}/library.js`, 'utf8');
+  // The slider maps through bookTimeline, not media.duration.
+  assert.match(src, /const target = \(Number\(event\.target\.value\) \/ 1000\) \* tl\.total;/);
+  assert.doesNotMatch(src, /Number\(event\.target\.value\) \/ 1000\) \* media\.duration/);
+  // And the lock screen routes through the same function rather than assigning
+  // media.currentTime, which would be per-file.
+  const seekto = src.slice(src.indexOf('handler("seekto"'), src.indexOf('handler("stop"'));
+  assert.match(seekto, /seekBookTo\(details\.seekTime\)/);
+  assert.doesNotMatch(seekto, /media\.currentTime = details\.seekTime/);
+  assert.equal(get('(nowPlayingParts = partsOf(items[0]), nowPlayingPartIndex = 2, bookTimeline().offset)'), 1200);
+});
+
+test('the lock screen gets the author, the narrator and the series', () => {
+  // An audiobook's useful credits are author/narrator/series; "album" was only
+  // ever a TV show's title, so the island showed a blank line.
+  const src = fs.readFileSync(`${__dirname}/library.js`, 'utf8');
+  assert.match(src, /narr\. \$\{item\.narrator\}/);
+  assert.match(src, /album: item\.showTitle \|\| item\.series/);
+});
+
+test('the player panel has an ETA element and a thumb-sized pause', () => {
+  assert.match(libraryHTML, /id="npEta"/);
+  const css = fs.readFileSync(`${__dirname}/library.css`, 'utf8');
+  const phone = css.slice(css.indexOf('@media (max-width: 700px)'));
+  assert.match(phone, /\.np-play \{[^}]*min-height: 48px/);
+  // And it is only shown when there is a book to have an ETA for.
+  const src = fs.readFileSync(`${__dirname}/library.js`, 'utf8');
+  assert.match(src, /if \(!tl\.multi \|\| !\(tl\.total > 0\)\) \{ eta\.hidden = true; return; \}/);
+});
+
 test('a book is filtered by the watched filter using its whole progress', () => {
   const get = catalog(
     [part('p1', 'bk', 1, 1000), part('p2', 'bk', 2, 1000)],

@@ -696,6 +696,13 @@ body.np-visible { padding-bottom:116px; }
 .np-seek { display:flex; align-items:center; gap:10px; flex:2 1 260px; min-width:0; }
 .np-seek input[type="range"] { flex:1; min-width:0; accent-color:var(--accent); }
 .np-time { color:var(--muted); font-size:12px; font-variant-numeric:tabular-nums; white-space:nowrap; }
+/* Time left in the whole book. Kept separate from the elapsed/total pair
+   because it answers a different question and competes for the same row. */
+.np-eta {
+  color:var(--muted); font-size:11.5px; font-variant-numeric:tabular-nums;
+  white-space:nowrap; padding:1px 6px; border-radius:999px;
+  background:var(--panel2); border:1px solid var(--line);
+}
 .np-tools { display:flex; align-items:center; gap:8px; flex:0 0 auto; }
 .np-rate { display:flex; align-items:center; gap:6px; color:var(--muted); font-size:11px; }
 .np-rate select {
@@ -924,10 +931,19 @@ body[data-theme="bunny"] .actions button.primary:disabled { opacity:.55; }
     scrollbar-width: none; -webkit-overflow-scrolling: touch;
   }
   nav.tabs::-webkit-scrollbar { display: none; }
+  /* Icons only, evenly divided across the full width.
+     With eight labelled tabs the bar was 567px wide inside a 393px viewport, so
+     it scrolled sideways and two sections were simply off-screen with no
+     affordance saying so. Equal flex shares fit all eight without scrolling,
+     which is also why the labels can go: the icon alone carries the meaning and
+     the accessible name stays on the button's aria-label. */
+  nav.tabs { gap: 0; padding-left: 4px; padding-right: 4px; }
   nav.tabs button {
-    flex: 0 0 auto; min-height: 44px; padding: 8px 13px; font-size: 12.5px;
-    white-space: nowrap; gap: 6px;
+    flex: 1 1 0; min-width: 0; min-height: 48px; padding: 6px 2px;
+    justify-content: center; gap: 0;
   }
+  nav.tabs .tab-label { display: none; }
+  nav.tabs .tab-ico { font-size: 19px; line-height: 1; }
   nav.tabs button.active { box-shadow: none; }
 
   /* Everything that used to sit under the header now clears the bar. */
@@ -970,12 +986,17 @@ body[data-theme="bunny"] .actions button.primary:disabled { opacity:.55; }
     -webkit-mask-image: linear-gradient(90deg, #000 0, #000 calc(100% - 34px), transparent 100%);
   }
   .grid.rail-mode .card, .catalog-strip .card { scroll-snap-align: start; }
-  .grid.rail-mode .card { flex-basis: 132px; }
-  .catalog-strip .card { flex-basis: 132px; }
-  .catalog-shelf { grid-template-columns: repeat(auto-fill, minmax(124px, 1fr)); gap: 12px; }
-  main.grid { grid-template-columns: repeat(auto-fill, minmax(132px, 1fr)); gap: 12px; padding: 12px 12px 28px; }
-  section.row { padding-left: 12px; padding-right: 12px; }
-  .catalog-rails { padding: 14px 12px 40px; }
+  /* Denser: 132px cards on a 393px screen gave three across and a lot of
+     scrolling to reach anything. 104px gives four, and the rails show more of
+     the shelf at once. */
+  .grid.rail-mode .card { flex-basis: 104px; }
+  .catalog-strip .card { flex-basis: 104px; }
+  .catalog-shelf { grid-template-columns: repeat(auto-fill, minmax(104px, 1fr)); gap: 9px; }
+  main.grid { grid-template-columns: repeat(auto-fill, minmax(104px, 1fr)); gap: 9px; padding: 10px 10px 24px; }
+  main.grid .card h3 { font-size: 11.5px; }
+  main.grid .card .meta { font-size: 10.5px; }
+  section.row { padding-left: 10px; padding-right: 10px; }
+  .catalog-rails { padding: 12px 10px 36px; }
 
   /* The movie detail becomes a bottom sheet. It used to render as a full-height
      column below the rails, so tapping a poster appeared to do nothing.
@@ -1048,6 +1069,13 @@ body[data-theme="bunny"] .actions button.primary:disabled { opacity:.55; }
      row does not collide with the docked bar. */
   .np-bar { gap: 10px; padding: 8px 12px; }
   .np-art { width: 44px; height: 44px; }
+  /* Pause is the control that gets pressed mid-listen, one-handed, without
+     looking. It gets the thumb-sized target; the 30s nudges keep the smaller
+     one so the row still fits four controls on a narrow screen. */
+  .np-play { min-width: 48px; min-height: 48px; font-size: 17px; }
+  .np-controls .np-btn { min-width: 40px; }
+  .np-seek { gap: 8px; }
+  .np-eta { font-size: 11px; }
 }
 
 /* Landscape phones: vertical space is the scarce axis, so keep the docked bar

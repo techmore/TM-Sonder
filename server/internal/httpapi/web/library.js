@@ -646,31 +646,123 @@
       }
     }
 
+    // Position within the whole book, in seconds, and the book's total runtime.
+    //
+    // For a single-file item these are just the media element's own numbers, so
+    // every caller works unchanged. For a book they are the sum over the parts
+    // plus the offset of the part being played, which is what makes a seek bar
+    // mean "where am I in the book" rather than "where am I in this file".
+    function bookTimeline() {
+      const media = npMedia();
+      const part = nowPlayingParts && nowPlayingParts[nowPlayingPartIndex];
+      if (!part) {
+        return {
+          offset: 0,
+          total: (media && media.duration) || 0,
+          position: (media && media.currentTime) || 0,
+          multi: false,
+        };
+      }
+      let offset = 0, total = 0;
+      for (let i = 0; i < nowPlayingParts.length; i++) {
+        const d = nowPlayingParts[i].durationSeconds || 0;
+        if (i < nowPlayingPartIndex) offset += d;
+        total += d;
+      }
+      return {
+        offset,
+        total: total > 0 ? total : offset + ((media && media.duration) || 0),
+        position: offset + ((media && media.currentTime) || 0),
+        multi: true,
+      };
+    }
+
+    // Human "time left". For a book this is the remainder of the whole book,
+    // which is the only number a listener can act on; the per-file remainder
+    // resets every few minutes and reads as though the book were nearly over.
+    function renderEta() {
+      const eta = $("#npEta");
+      if (!eta) return;
+      const tl = bookTimeline();
+      if (!tl.multi || !(tl.total > 0)) { eta.hidden = true; return; }
+      const remaining = Math.max(0, tl.total - tl.position);
+      eta.hidden = false;
+      eta.textContent = remaining <= 0 ? "Finished" : `${formatTime(remaining)} left`;
+    }
+
     function onTimeUpdate() {
       const media = npMedia();
       if (!media) return;
       const duration = media.duration || 0;
-      const current = media.currentTime || 0;
+      const tl = bookTimeline();
       const seek = $("#npSeek");
-      if (seek && !npSeeking && duration > 0) seek.value = String(Math.round((current / duration) * 1000));
-      const cur = $("#npCur"); if (cur) cur.textContent = formatTime(current);
-      const dur = $("#npDur"); if (dur) dur.textContent = formatTime(duration);
+      // The bar spans the book, so the thumb means the same thing on every
+      // part instead of jumping back to the left on each file boundary.
+      if (seek && !npSeeking && tl.total > 0) {
+        seek.value = String(Math.round(Math.min(Math.max(tl.position / tl.total, 0), 1) * 1000));
+      }
+      const cur = $("#npCur"); if (cur) cur.textContent = formatTime(tl.position);
+      const dur = $("#npDur"); if (dur) dur.textContent = formatTime(tl.total);
+      renderEta();
       updatePositionState();
       saveProgress(false);
     }
 
-    // Media Session gives OS/lock-screen controls and keeps playback alive in
-    // the background where the platform supports it.
+    // Move to an absolute position in the book, crossing into another file when
+    // the target is past the end of the current one. This is what makes the
+    // scrubber and the lock screen agree with each other: iOS reports
+    // seekto in book coordinates, and a book-level bar that only ever addressed
+    // the current file could not honour that.
+    function seekBookTo(seconds) {
+      const part = nowPlayingParts && nowPlayingParts[nowPlayingPartIndex];
+      const media = npMedia();
+      if (!media) return;
+      if (!part) { media.currentTime = Math.max(0, seconds); onTimeUpdate(); return; }
+      let offset = 0;
+      for (let i = 0; i < nowPlayingParts.length; i++) {
+        const d = nowPlayingParts[i].durationSeconds || 0;
+        if (seconds < offset + d || i === nowPlayingParts.length - 1) {
+          if (i !== nowPlayingPartIndex) {
+            nowPlayingPartIndex = i;
+            media.src = api("/stream/" + nowPlayingParts[i].id);
+            media.load();
+            renderNowPlaying();
+            updateMediaSession(nowPlayingItem);
+            media.addEventListener("loadedmetadata", () => {
+              media.currentTime = Math.max(0, seconds - offset);
+              onTimeUpdate();
+            }, { once: true });
+          } else {
+            media.currentTime = Math.max(0, seconds - offset);
+            onTimeUpdate();
+          }
+          return;
+        }
+        offset += d;
+      }
+    }
+
+    // Media Session is what puts the player in the iOS Dynamic Island and the
+    // lock screen. Three details decide whether that actually looks right:
+    //
+    //   * artwork, or the island shows a blank square;
+    //   * artist/album filled in from the book's own credits, because an
+    //     audiobook's useful metadata is the author, the narrator and the
+    //     series, and "album" was previously only ever a TV show's title;
+    //   * position state in *book* coordinates, so the island's scrubber
+    //     addresses the whole book rather than the current file.
     function updateMediaSession(item) {
       if (typeof navigator === "undefined" || !("mediaSession" in navigator)) return;
       const artwork = item.posterURL
         ? [{ src: api(item.posterURL), sizes: "512x512", type: "image/jpeg" }]
         : [];
+      const credit = [item.author, item.narrator ? `narr. ${item.narrator}` : ""]
+        .filter(Boolean).join(" · ");
       try {
         navigator.mediaSession.metadata = new MediaMetadata({
           title: item.title || "",
-          artist: item.author || item.studio || "",
-          album: item.showTitle || "",
+          artist: credit || item.studio || "",
+          album: item.showTitle || item.series || (bookPartLabel() || ""),
           artwork,
         });
       } catch { /* MediaMetadata unsupported */ }
@@ -683,7 +775,9 @@
       handler("seekbackward", details => skipBy(-((details && details.seekOffset) || 30)));
       handler("seekforward", details => skipBy((details && details.seekOffset) || 30));
       handler("seekto", details => {
-        if (media && details && details.seekTime != null) media.currentTime = details.seekTime;
+        // iOS addresses this in the coordinates setPositionState published, so
+        // for a book that is a book position, not a file position.
+        if (details && details.seekTime != null) seekBookTo(details.seekTime);
       });
       handler("stop", () => stopPlayback());
     }
@@ -693,24 +787,17 @@
       const session = navigator.mediaSession;
       if (!session.setPositionState) return;
       const media = npMedia();
-      if (!media || !media.duration || !Number.isFinite(media.duration) || media.duration <= 0) return;
+      if (!media) return;
       // A multi-part book is one title to the lock screen, so the scrubber must
       // span the whole book. Without the offset, a 7-hour book at part 140 of
       // 147 reported a 2-minute duration on the lock screen.
-      const part = nowPlayingParts && nowPlayingParts[nowPlayingPartIndex];
-      let offset = 0;
-      if (part) {
-        for (const p of nowPlayingParts) {
-          if (p.id === part.id) break;
-          offset += p.durationSeconds || 0;
-        }
-      }
-      const total = part ? offset + (media.duration || 0) : media.duration;
+      const tl = bookTimeline();
+      if (!(tl.total > 0) || !Number.isFinite(tl.total)) return;
       try {
         session.setPositionState({
-          duration: total,
+          duration: tl.total,
           playbackRate: media.playbackRate || 1,
-          position: Math.min(Math.max(offset + (media.currentTime || 0), 0), total),
+          position: Math.min(Math.max(tl.position, 0), tl.total),
         });
       } catch { /* transient state, safe to skip */ }
     }
@@ -746,11 +833,14 @@
     });
     on("#npSeek", "input", event => {
       npSeeking = true;
-      const media = npMedia();
-      if (media && media.duration) {
-        media.currentTime = (Number(event.target.value) / 1000) * media.duration;
+      // The bar is in book coordinates, so the target is a book position. This
+      // is also what makes the on-page bar and the lock-screen scrubber agree.
+      const tl = bookTimeline();
+      if (tl.total > 0) {
+        const target = (Number(event.target.value) / 1000) * tl.total;
         const cur = $("#npCur");
-        if (cur) cur.textContent = formatTime(media.currentTime);
+        if (cur) cur.textContent = formatTime(target);
+        seekBookTo(target);
       }
     });
     on("#npSeek", "change", () => { npSeeking = false; });

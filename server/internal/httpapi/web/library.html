@@ -21,14 +21,20 @@
       </svg>
     </a>
     <nav class="tabs" id="tabs" aria-label="Library sections">
-      <button data-tab="all" class="active">All</button>
-      <button data-tab="movies">🎬 Movies</button>
-      <button data-tab="tvshows">📺 TV Shows</button>
-      <button data-tab="documentaries">🎥 Documentaries</button>
-      <button data-tab="audiobooks">🎧 Audiobooks</button>
-      <button data-tab="books">📚 Books</button>
-      <button data-tab="storage">💾 Storage</button>
-      <button data-tab="optimize">⚡ Optimize</button>
+      <!--
+        The label is a separate element so the phone layout can drop to icons
+        only without taking the accessible name with it: each button keeps an
+        aria-label, and .tab-label is hidden on small screens rather than the
+        text being removed from the markup.
+      -->
+      <button data-tab="all" class="active" aria-label="All"><span class="tab-ico" aria-hidden="true">✦</span><span class="tab-label">All</span></button>
+      <button data-tab="movies" aria-label="Movies"><span class="tab-ico" aria-hidden="true">🎬</span><span class="tab-label">Movies</span></button>
+      <button data-tab="tvshows" aria-label="TV Shows"><span class="tab-ico" aria-hidden="true">📺</span><span class="tab-label">TV Shows</span></button>
+      <button data-tab="documentaries" aria-label="Documentaries"><span class="tab-ico" aria-hidden="true">🎥</span><span class="tab-label">Documentaries</span></button>
+      <button data-tab="audiobooks" aria-label="Audiobooks"><span class="tab-ico" aria-hidden="true">🎧</span><span class="tab-label">Audiobooks</span></button>
+      <button data-tab="books" aria-label="Books"><span class="tab-ico" aria-hidden="true">📚</span><span class="tab-label">Books</span></button>
+      <button data-tab="storage" aria-label="Storage"><span class="tab-ico" aria-hidden="true">💾</span><span class="tab-label">Storage</span></button>
+      <button data-tab="optimize" aria-label="Optimize"><span class="tab-ico" aria-hidden="true">⚡</span><span class="tab-label">Optimize</span></button>
     </nav>
     <input type="search" id="q" placeholder="Search titles and summaries…" aria-label="Search library">
     <div class="header-tools">
@@ -203,6 +209,9 @@
       <div class="np-seek">
         <input type="range" id="npSeek" min="0" max="1000" value="0" step="1" aria-label="Seek">
         <span class="np-time"><span id="npCur">0:00</span> / <span id="npDur">0:00</span></span>
+        <!-- Time left in the whole book, not the current file. A 7-hour book on
+             a 5-minute part would otherwise always read "4:55 left". -->
+        <span class="np-eta" id="npEta" hidden></span>
       </div>
       <div class="np-tools">
         <label class="np-rate">
