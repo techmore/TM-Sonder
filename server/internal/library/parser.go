@@ -74,7 +74,11 @@ func uuidV5(ns [16]byte, name string) string {
 // (IDs are path-derived, so progress and item identity survive the rebuild),
 // which propagates parsing fixes to already-cataloged libraries without a
 // full wipe.
-const ParserVersion = 12
+// 13: narrator credits are no longer truncated at an initial's period, so
+// "Narrated by R.C. Bray" yields "R.C. Bray" instead of "R". Entries that were
+// already probed keep the old value until they are re-probed, so this must be
+// bumped for the fix to reach the catalog.
+const ParserVersion = 13
 
 // Parsed is the ported result of SonderMediaParser.parseTitle. Kind is chosen
 // by the scanner from library config + extension, not by the parser.
