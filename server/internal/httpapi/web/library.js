@@ -1437,6 +1437,14 @@
         const parsedShow = foldDiacritics(i.showTitle).toLowerCase().replace(/\(\d{4}\)/g, "").replace(/[^a-z0-9]/g, "");
         return [i.kind, i.showGroupID || "", parsedShow, i.seasonNumber, i.episodeNumber, i.splitPart || ""].join("\u0000");
       }
+      // An audiobook is identified by its book, not by its title text. Two
+      // different recordings that share a title and a year (two editions, a book
+      // and its abridgement) are two books, and folding them together drops one
+      // off the shelf entirely. Parts of one book are already collapsed to its
+      // head before this runs, so keying on the group costs nothing.
+      if (i.kind === "audiobook" && i.bookGroupID) {
+        return [i.kind, i.bookGroupID, i.year || 0].join("\u0000");
+      }
       let t = foldDiacritics(i.title || "").toLowerCase();
       t = t.replace(/\b\d{3,4}\s*p\b/gi, "")           // resolution hints
            .replace(/[\[\(\{][^\]\)\}]*[\]\)\}]/g, "")  // any (...) [...] {...} tag group
