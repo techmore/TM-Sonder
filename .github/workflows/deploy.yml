@@ -71,18 +71,22 @@ jobs:
           ldflags="-s -w -X main.version=${version}"
           ldflags="$ldflags -X tm-sonder/server/internal/httpapi.Version=${version}"
           ldflags="$ldflags -X tm-sonder/server/internal/httpapi.Build=${GITHUB_SHA}"
-          mkdir -p ../bin
+          mkdir -p "${GITHUB_WORKSPACE}/bin"
           CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpath -ldflags "$ldflags" \
-            -o ../bin/sonder-linux-amd64 ./cmd/sonder
-          # Recorded in the job summary so the deploy can assert the running
-          # server reports this version, not merely that a process exists.
+            -o "${GITHUB_WORKSPACE}/bin/sonder-linux-amd64" ./cmd/sonder
+          # Recorded so the deploy job can assert the running server reports
+          # this version, not merely that a process exists.
           echo "version=${version}" >> "$GITHUB_OUTPUT"
 
       - name: Upload the deployable binary
         uses: actions/upload-artifact@v4
         with:
           name: sonder-linux-amd64
-          path: server/../bin/sonder-linux-amd64
+          # A workspace-relative path with no "." or ".." segments:
+          # upload-artifact rejects relative pathing outright, and
+          # "server/../bin/..." fails the job rather than being normalised.
+          path: bin/sonder-linux-amd64
+          if-no-files-found: error
 
   deploy:
     name: Deploy to the server
