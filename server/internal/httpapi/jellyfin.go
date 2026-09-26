@@ -156,12 +156,13 @@ func jellyfinAuthor(item *library.Item) string {
 	if author := strings.TrimSpace(derefStr(item.Author)); author != "" {
 		return author
 	}
-	// The current catalog often has the author encoded by the conventional
-	// Audiobooks/<Author>/<Book>/<file> folder layout even when metadata
-	// enrichment has not populated MediaItem.Author yet.
-	bookDir := filepath.Dir(item.FilePath)
-	author := strings.TrimSpace(filepath.Base(filepath.Dir(bookDir)))
-	if author == "" || author == "." || author == string(filepath.Separator) {
+	// The catalog often has the author encoded by the folder layout even when
+	// nothing has populated MediaItem.Author yet. audiobookAuthorDir is shared
+	// with the parser so the two cannot disagree, and it handles a collection
+	// between the author and the book -- a plain grandparent lookup reported
+	// "Foundation - The Complete Series" as an author for 20 books.
+	author, _, ok := library.AudiobookAuthorDir(item.FilePath)
+	if !ok {
 		return ""
 	}
 	return author

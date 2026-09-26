@@ -74,6 +74,11 @@ func uuidV5(ns [16]byte, name string) string {
 // (IDs are path-derived, so progress and item identity survive the rebuild),
 // which propagates parsing fixes to already-cataloged libraries without a
 // full wipe.
+// 18: audiobook author resolution handles a collection between the author and
+// the book (Author/Collection/Book/file). A grandparent lookup reported the
+// series as the author, so "Foundation - The Complete Series" appeared in
+// BookPlayer's author index with 20 books on it. The same helper is now used by
+// the parser and the Jellyfin adapter so they cannot disagree again.
 // 17: the parser now carries the series name and position onto the item.
 // Version 16 stripped the marker from the title but did not persist it, and the
 // marker cannot be recovered from a cleaned title, so the fields stayed empty.
@@ -82,7 +87,7 @@ func uuidV5(ns [16]byte, name string) string {
 // initial-period narrator fix, 14 tag reads able to correct themselves, 15 the
 // upstream reconciliation, 16 the series parenthetical, 17 persisting it. The
 // number only has to keep increasing.
-const ParserVersion = 17
+const ParserVersion = 18
 
 // Parsed is the ported result of SonderMediaParser.parseTitle. Kind is chosen
 // by the scanner from library config + extension, not by the parser.
@@ -522,17 +527,22 @@ func ParseFilename(path, libraryKind string) Parsed {
 			title = removePlexTags(raw)
 		}
 		// The maintained audiobook layout is Author/Book/Book.m4b, and the
-		// block above already takes the book folder as the title. What it does
-		// not do is read the *grandparent*, which is the author. The same
-		// relative shape holds inside the legacy compact wrapper, so wrapped
-		// books stay attributed while they are being unwrapped.
-		// grandparent has already been through cleanMediaTitle, which is right
-		// for a title but mangles a person ("K. Le Guin" -> "K  Le Guin"), so
-		// the author is read from the raw directory name instead.
-		authorFolder := cleanAuthorFolder(filepath.Base(filepath.Dir(filepath.Dir(path))))
+		// block above already takes the book folder as the title. The author is
+		// resolved by audiobookAuthorDir, which also handles a collection
+		// between the author and the book -- the grandparent is a *series* in
+		// that shape, and a grandparent lookup published "Foundation - The
+		// Complete Series" as an author for 20 books.
+		authorFolder, bookFolderFromPath, resolved := audiobookAuthorDir(path)
 		author := ""
-		if authorFolder != "" && !looksLikeJunkDir(authorFolder) {
-			author = authorFolder
+		if resolved {
+			if clean := cleanAuthorFolder(authorFolder); clean != "" && !looksLikeJunkDir(clean) {
+				author = clean
+			}
+			// Prefer the title derived above; fall back to the resolved book
+			// folder if the title logic produced nothing usable.
+			if title == "" && bookFolderFromPath != "" {
+				title = bookFolderFromPath
+			}
 		}
 		sub := "Audiobook"
 		if year > 0 {
