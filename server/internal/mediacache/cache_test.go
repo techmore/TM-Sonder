@@ -163,14 +163,27 @@ func writeMedia(t *testing.T, root, id string, kind api.MediaKind, year int, dat
 	return Media{ID: id, SourcePath: path, Kind: kind, Year: year, Size: st.Size(), ModTime: st.ModTime()}
 }
 
+// waitFor polls an asynchronous condition.
+//
+// The deadline is generous on purpose. The cache does its work on a background
+// worker, so how long a condition takes depends on I/O and on whatever else the
+// machine is doing -- a full test run in the container machine while the server
+// is scanning a library is not the same load as running this package alone. A
+// 2 second budget was tight enough that this failed intermittently under load
+// while passing every time in isolation, which is the worst kind of test: it
+// teaches you to re-run rather than to look.
+//
+// It is still bounded, so a genuine deadlock fails instead of hanging.
+const waitForTimeout = 15 * time.Second
+
 func waitFor(t *testing.T, condition func() bool) {
 	t.Helper()
-	deadline := time.Now().Add(2 * time.Second)
+	deadline := time.Now().Add(waitForTimeout)
 	for time.Now().Before(deadline) {
 		if condition() {
 			return
 		}
 		time.Sleep(5 * time.Millisecond)
 	}
-	t.Fatal("timed out waiting for media cache worker")
+	t.Fatalf("timed out after %s waiting for media cache worker", waitForTimeout)
 }
