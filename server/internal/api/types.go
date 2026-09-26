@@ -134,6 +134,7 @@ type MediaItem struct {
 	// SeriesPosition and PublicationYear carry the leading number and the year
 	// that SortTitle removed, so ordering on the cleaner key loses nothing.
 	SeriesPosition         string          `json:"seriesPosition,omitempty"`
+	SeriesName             string          `json:"seriesName,omitempty"`
 	PublicationYear        int             `json:"publicationYear,omitempty"`
 	CoverAvailable         bool            `json:"coverAvailable"`
 	CoverEmbedded          bool            `json:"coverEmbedded"`

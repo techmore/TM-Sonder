@@ -718,11 +718,21 @@ type catalogDetail struct {
 func (s *Server) toCatalogItem(it *library.Item) catalogItem {
 	// The catalog is assembled straight from the store, which does not carry the
 	// derived ordering metadata, so recompute it here rather than reaching into
-	// the scan pipeline.
+	// the scan pipeline. The stored values win where they exist: once the series
+	// marker has been stripped from the title it can no longer be recovered from
+	// it, so re-deriving would silently lose it.
 	parts := library.SplitTitle(it.Title)
 	sortTitle := parts.Sort
 	if sortTitle == "" {
 		sortTitle = it.Title
+	}
+	seriesPosition := it.SeriesPosition
+	if seriesPosition == "" {
+		seriesPosition = parts.SeriesPosition
+	}
+	seriesName := it.Series
+	if seriesName == "" {
+		seriesName = parts.Series
 	}
 	// Author/Narrator come from real item fields when known (enrichment or
 	// filename parsing); Studio/Tags are the legacy fallbacks for items
@@ -760,8 +770,8 @@ func (s *Server) toCatalogItem(it *library.Item) catalogItem {
 		BackdropURL:     it.BackdropURL,
 		Tags:            it.Tags,
 		SortTitle:       sortTitle,
-		SeriesPosition:  parts.SeriesPosition,
-		SeriesName:      parts.Series,
+		SeriesPosition:  seriesPosition,
+		SeriesName:      seriesName,
 		PublicationYear: parts.Year,
 		ProgressSeconds: it.ProgressSeconds,
 	}

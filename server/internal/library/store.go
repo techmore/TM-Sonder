@@ -48,10 +48,13 @@ type Item struct {
 	// displacing a layout-derived or provider-supplied value. Without them, a
 	// value the tag reader itself got wrong ("Narrated by R.C. Bray" parsed to
 	// "R") could never be repaired by re-reading the same tag.
-	AuthorFromTags   bool      `json:"authorFromTags,omitempty"`
-	NarratorFromTags bool      `json:"narratorFromTags,omitempty"`
-	ModTime          time.Time `json:"modTime"`
-	ParseVersion     int       `json:"parseVersion,omitempty"` // parser semantics stamp; older versions rebuild on rescan
+	AuthorFromTags   bool `json:"authorFromTags,omitempty"`
+	NarratorFromTags bool `json:"narratorFromTags,omitempty"`
+	// SeriesPosition is the within-series position as written ("14b"), kept
+	// because the display title no longer contains the marker it came from.
+	SeriesPosition string    `json:"seriesPosition,omitempty"`
+	ModTime        time.Time `json:"modTime"`
+	ParseVersion   int       `json:"parseVersion,omitempty"` // parser semantics stamp; older versions rebuild on rescan
 }
 
 func (i *Item) clone() *Item {

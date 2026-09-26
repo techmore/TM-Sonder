@@ -269,6 +269,38 @@ func TestSplitTitleSeriesBooksSortByTheirOwnTitle(t *testing.T) {
 	}
 }
 
+// The marker is stripped from the title, so the series has to be carried
+// forward explicitly or it is lost for good. A second pass over the cleaned
+// title cannot recover it.
+func TestSeriesSurvivesTheStrippedTitle(t *testing.T) {
+	p := SplitTitle("(Culture 1) Race and Culture")
+	if p.Display != "Race and Culture" {
+		t.Fatalf("display = %q", p.Display)
+	}
+	// Re-deriving from the cleaned title finds nothing, which is exactly why
+	// the parser carries the values instead of re-deriving them.
+	again := SplitTitle(p.Display)
+	if again.Series != "" || again.SeriesNumber != 0 || again.SeriesPosition != "" {
+		t.Errorf("re-deriving from the cleaned title recovered something "+
+			"(%q/%d/%q), so the parser would be relying on luck",
+			again.Series, again.SeriesNumber, again.SeriesPosition)
+	}
+	// And the parse must therefore hand all three forward.
+	parsed := ParseFilename("/audiobooks/Iain M. Banks/(Culture 1) Race and Culture/x.m4b", "audiobook")
+	if parsed.Title != "Race and Culture" {
+		t.Errorf("parsed title = %q", parsed.Title)
+	}
+	if parsed.Series != "Culture" {
+		t.Errorf("parsed series = %q, want %q", parsed.Series, "Culture")
+	}
+	if parsed.SeriesNumber != 1 {
+		t.Errorf("parsed series number = %v, want 1", parsed.SeriesNumber)
+	}
+	if parsed.SeriesPosition != "1" {
+		t.Errorf("parsed series position = %q, want %q", parsed.SeriesPosition, "1")
+	}
+}
+
 func TestSplitTitleIsIdempotent(t *testing.T) {
 	// Applying it to an already-clean title must not change it, so a caller can
 	// run it on stored or derived names without checking first.

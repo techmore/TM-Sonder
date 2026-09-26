@@ -1028,6 +1028,7 @@ func (sc *Scanner) buildItem(path, id string, st os.FileInfo, format api.MediaFo
 	if parsed.Series != "" {
 		item.Series = parsed.Series
 	}
+	item.SeriesPosition = parsed.SeriesPosition
 	// A book whose parser only found the author in the legacy Series slot
 	// still needs it on the dedicated field.
 	if item.Author == nil && parsed.Series != "" {
@@ -1072,6 +1073,9 @@ func (sc *Scanner) buildItem(path, id string, st os.FileInfo, format api.MediaFo
 	if prev, ok := sc.store.Get(id); ok {
 		item.Summary = prev.Summary
 		item.Tags = prev.Tags
+		if item.SeriesPosition == "" {
+			item.SeriesPosition = prev.SeriesPosition
+		}
 		// Only let a prior catalog entry win when it actually carries a
 		// value. Overwriting unconditionally with a nil pointer erased the
 		// parser-derived author on every rebuild, so no book ever surfaced

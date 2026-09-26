@@ -99,6 +99,10 @@ type Parsed struct {
 	Author           string // canonical author/creator from the library layout
 	Series           string // actual series name, when known
 	SeriesNumber     float64
+	// SeriesPosition is the within-series position as written, including any
+	// letter suffix ("14b"). It is kept as text because once the marker is
+	// stripped from the title it cannot be recovered from it.
+	SeriesPosition string
 }
 
 var (
@@ -496,12 +500,21 @@ func ParseFilename(path, libraryKind string) Parsed {
 		// punctuation alone, where movieNameAndYear and cleanBookFolder both
 		// mangle it and leave a leading dash behind.
 		bookFolder := filepath.Base(filepath.Dir(path))
+		// The series name and position are carried out of the folder name here,
+		// because once the marker is stripped from the title it can no longer
+		// be recovered from it. A sort key derived on read may drop the marker;
+		// a stored display title cannot un-parse it.
+		seriesName := ""
+		seriesPosition := ""
+		seriesNumber := 0
 		if !looksLikeJunkDir(cleanAuthorFolder(bookFolder)) {
 			if parts := SplitTitle(bookFolder); parts.Display != "" {
 				title = parts.Display
 				if parts.Year > 0 {
 					year = parts.Year
 				}
+				seriesName, seriesPosition, seriesNumber =
+					parts.Series, parts.SeriesPosition, parts.SeriesNumber
 			}
 		}
 		if title == "" {
@@ -529,7 +542,17 @@ func ParseFilename(path, libraryKind string) Parsed {
 		// series, so the audiobook metadata pass can write one without
 		// overwriting the author the folder gave us.
 		p.Author = author
+		if seriesName != "" {
+			p.Series = seriesName
+		}
+		p.SeriesPosition = seriesPosition
+		if seriesNumber > 0 {
+			p.SeriesNumber = float64(seriesNumber)
+		}
 		for _, candidate := range []string{parent, raw} {
+			if p.SeriesNumber != 0 {
+				break
+			}
 			if m := reSeriesNumber.FindStringSubmatch(candidate); m != nil {
 				p.SeriesNumber, _ = strconv.ParseFloat(m[1], 64)
 				break

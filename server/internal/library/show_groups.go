@@ -76,7 +76,18 @@ func (s *Store) GroupedItems(libraries []config.Library) []api.MediaItem {
 		// folder-derived names appear in the movie and TV listings.
 		if parts := SplitTitle(item.Title); parts.Sort != "" {
 			wire.SortTitle = parts.Sort
-			wire.SeriesPosition = parts.Series
+			// Stored values win: once the series marker is stripped from the
+			// title, re-deriving it from that title would lose it.
+			if item.SeriesPosition != "" {
+				wire.SeriesPosition = item.SeriesPosition
+			} else {
+				wire.SeriesPosition = parts.SeriesPosition
+			}
+			if item.Series != "" {
+				wire.SeriesName = item.Series
+			} else {
+				wire.SeriesName = parts.Series
+			}
 			wire.PublicationYear = parts.Year
 		}
 		result = append(result, wire)
