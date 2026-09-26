@@ -1,6 +1,9 @@
 package library
 
-import "testing"
+import (
+	"strings"
+	"testing"
+)
 
 func TestSplitTitleStripsLeadingYear(t *testing.T) {
 	cases := []struct {
@@ -167,6 +170,29 @@ func TestSplitTitleDropsNarratorFromSortNotDisplay(t *testing.T) {
 	}
 	if p := SplitTitle("Ubik (Daniels)"); p.NarratorHint != "Daniels" {
 		t.Errorf("narrator hint = %q, want %q", p.NarratorHint, "Daniels")
+	}
+}
+
+// A book folder is a title, so its cleanup must not run cleanMediaTitle over
+// it: that mangles initials and leaves a leading dash when a year prefix goes.
+func TestSplitTitlePreservesInitialsAndDropsTheDash(t *testing.T) {
+	cases := []struct{ in, want string }{
+		{"2011 - The Martian (Read by R.C. Bray)", "The Martian (Read by R.C. Bray)"},
+		{"The Collected Stories of Arthur C. Clarke", "The Collected Stories of Arthur C. Clarke"},
+		{"The Fantasies of Robert A. Heinlein", "The Fantasies of Robert A. Heinlein"},
+		{"2017 - Artemis", "Artemis"},
+		{"Project Hail Mary (2021)", "Project Hail Mary"},
+	}
+	for _, c := range cases {
+		if got := SplitTitle(c.in).Display; got != c.want {
+			t.Errorf("SplitTitle(%q).Display = %q, want %q", c.in, got, c.want)
+		}
+	}
+	// A display title must never begin with a separator.
+	for _, in := range []string{"2011 - X", "04 Y", "2017 - Artemis"} {
+		if d := SplitTitle(in).Display; strings.HasPrefix(d, "-") || strings.HasPrefix(d, ",") {
+			t.Errorf("%q produced a display title starting with a separator", in)
+		}
 	}
 }
 

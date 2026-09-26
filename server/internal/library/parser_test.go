@@ -2,6 +2,7 @@ package library
 
 import (
 	"fmt"
+	"strings"
 	"testing"
 
 	"tm-sonder/server/internal/api"
@@ -137,6 +138,44 @@ func TestParseFilenameBooks(t *testing.T) {
 	}
 	if !contains(p.Subtitle, "Audiobook") && p.Subtitle != "" {
 		t.Logf("subtitle=%q", p.Subtitle)
+	}
+}
+
+// The book folder is a title. Using the movie title helper on it mangled
+// initials and left a leading dash: "2011 - The Martian (Read by R.C. Bray)"
+// became "- The Martian (Read by R C  Bray)".
+func TestParseFilenameAudiobookKeepsInitialsAndNoLeadingDash(t *testing.T) {
+	cases := []struct {
+		path, wantTitle string
+		wantYear        int
+	}{
+		{
+			"/audiobooks/Andy Weir/2011 - The Martian (Read by R.C. Bray)/x.m4b",
+			"The Martian (Read by R.C. Bray)", 2011,
+		},
+		{
+			"/audiobooks/Arthur C. Clarke/The Collected Stories of Arthur C. Clarke/x.m4b",
+			"The Collected Stories of Arthur C. Clarke", 0,
+		},
+		{
+			"/audiobooks/Andy Weir/2017 - Artemis/2017 - Artemis.m4b",
+			"Artemis", 2017,
+		},
+	}
+	for _, c := range cases {
+		p := ParseFilename(c.path, "audiobook")
+		if p.Title != c.wantTitle {
+			t.Errorf("%s: title = %q, want %q", c.path, p.Title, c.wantTitle)
+		}
+		if p.Year != c.wantYear {
+			t.Errorf("%s: year = %d, want %d", c.path, p.Year, c.wantYear)
+		}
+		if strings.HasPrefix(p.Title, "-") || strings.HasPrefix(p.Title, ",") {
+			t.Errorf("%s: title starts with a separator: %q", c.path, p.Title)
+		}
+		if strings.Contains(p.Title, "  ") {
+			t.Errorf("%s: title has a double space: %q", c.path, p.Title)
+		}
 	}
 }
 

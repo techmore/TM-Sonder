@@ -487,11 +487,19 @@ func ParseFilename(path, libraryKind string) Parsed {
 		// The standard layout is Author/Book/file. Prefer the book folder for
 		// its canonical title/year so numbered tracks and year-prefixed files do
 		// not become separate books in the catalog.
-		if !looksLikeJunkDir(parent) {
-			if folderTitle, folderYear, ok := movieNameAndYear(parent); ok {
-				title, year = folderTitle, folderYear
-			} else if folderTitle := cleanBookFolder(parent); folderTitle != "" {
-				title = folderTitle
+		// The book folder is a title, so it is read from the raw path: `parent`
+		// has already been through cleanMediaTitle, which turns "Arthur C.
+		// Clarke" into "Arthur C Clarke". SplitTitle then handles a leading
+		// year, an ordinal and a trailing year while leaving the name's own
+		// punctuation alone, where movieNameAndYear and cleanBookFolder both
+		// mangle it and leave a leading dash behind.
+		bookFolder := filepath.Base(filepath.Dir(path))
+		if !looksLikeJunkDir(cleanAuthorFolder(bookFolder)) {
+			if parts := SplitTitle(bookFolder); parts.Display != "" {
+				title = parts.Display
+				if parts.Year > 0 {
+					year = parts.Year
+				}
 			}
 		}
 		if title == "" {
