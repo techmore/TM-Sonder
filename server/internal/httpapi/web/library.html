@@ -31,25 +31,27 @@
       <button data-tab="optimize">⚡ Optimize</button>
     </nav>
     <input type="search" id="q" placeholder="Search titles and summaries…" aria-label="Search library">
-    <select id="watched" aria-label="Watched filter">
-      <option value="all">All</option>
-      <option value="unwatched">Unwatched</option>
-      <option value="watched">Watched</option>
-    </select>
-    <select id="coverFilter" aria-label="Audiobook cover audit filter">
-      <option value="all">Covers: All</option>
-      <option value="has-cover">Covers: Available</option>
-      <option value="missing-cover">Covers: Missing</option>
-      <option value="needs-embed">Covers: Needs M4B embed</option>
-    </select>
-    <select id="sort" aria-label="Sort order">
-      <option value="title">Title A–Z</option>
-      <option value="year">Year</option>
-      <option value="duration">Longest first</option>
-      <option value="series">Series order</option>
-      <option value="recent">Recently watched</option>
-    </select>
-    <button id="settingsBtn" aria-label="Settings" title="Settings" style="background:var(--panel);border:1px solid var(--line);color:var(--text);border-radius:8px;padding:9px 11px;cursor:pointer">⚙︎</button>
+    <div class="header-tools">
+      <select id="watched" aria-label="Watched filter">
+        <option value="all">All</option>
+        <option value="unwatched">Unwatched</option>
+        <option value="watched">Watched</option>
+      </select>
+      <select id="coverFilter" aria-label="Audiobook cover audit filter">
+        <option value="all">Covers: All</option>
+        <option value="has-cover">Covers: Available</option>
+        <option value="missing-cover">Covers: Missing</option>
+        <option value="needs-embed">Covers: Needs M4B embed</option>
+      </select>
+      <select id="sort" aria-label="Sort order">
+        <option value="title">Title A–Z</option>
+        <option value="year">Year</option>
+        <option value="duration">Longest first</option>
+        <option value="series">Series order</option>
+        <option value="recent">Recently watched</option>
+      </select>
+      <button id="settingsBtn" aria-label="Settings" title="Settings">⚙︎</button>
+    </div>
   </header>
 
   <section class="row filter-row" id="filterRow" aria-label="Metadata filters" hidden>

@@ -261,6 +261,14 @@
     }
 
 [hidden] { display:none !important; }
+/* Header control cluster. `display: contents` keeps the desktop header one
+   flex row exactly as before; the phone layout promotes it to a single
+   swipeable row of its own. */
+.header-tools { display: contents; }
+#settingsBtn {
+  background: var(--panel); border: 1px solid var(--line); color: var(--text);
+  border-radius: 8px; padding: 9px 11px; cursor: pointer;
+}
 body[data-theme="techmore"] {
   color-scheme: light;
   background:var(--bg); color:var(--text);
@@ -863,3 +871,188 @@ body[data-theme="bunny"] .actions button.primary:disabled { opacity:.55; }
    per narration instead of as several unrelated-looking titles. */
 .card .cap .version,
 .book .version { display:block; margin-top:2px; font-size:11.5px; color:var(--muted); font-weight:400; }
+
+/* ── Phone layout ────────────────────────────────────────────────────────
+   The desktop header is five control rows and the facet row is a fourteen-row
+   chip wall. Measured on an iPhone 14 Pro they came to 216px + 484px of an
+   852px screen before a single poster appeared, and the tab bar overflowed
+   off-screen so Storage and Optimize were unreachable. A phone gets:
+
+     - a docked bottom tab bar, in the thumb's reach instead of scrolled past
+     - a two-row header
+     - one swipeable row for filters instead of a chip wall
+     - shelves that snap card to card
+     - a bottom sheet for the movie detail, because tapping a card used to
+       update a panel that sat below the entire page
+
+   The tab bar is the same <nav> element, so active state, click handling, and
+   hidden-empty-tab logic are untouched. */
+@media (max-width: 700px) {
+  /* The docked bar's height, including the home indicator. Content and the
+     now-playing controller both measure against this. */
+  :root { --tabbar-h: 60px; }
+
+  /* `backdrop-filter` on an ancestor makes that ancestor the containing block
+     for fixed descendants, which would trap the fixed tab bar inside the
+     header. Drop the filter on phones and give the header an opaque chrome so
+     scrolling content never shows through it. */
+  header {
+    padding: 10px 12px; gap: 8px;
+    backdrop-filter: none; -webkit-backdrop-filter: none;
+    background: var(--panel);
+  }
+  h1 { font-size: 18px; letter-spacing: 0; }
+  .app-version { display: none; }
+  .header-book-link { width: 38px; height: 38px; }
+  input[type="search"] { flex: 1 1 auto; width: auto; width: 100%; min-height: 40px; }
+  .header-tools {
+    display: flex; flex: 1 1 100%; gap: 8px; align-items: center;
+    overflow-x: auto; overflow-y: hidden; scrollbar-width: none;
+    -webkit-overflow-scrolling: touch; padding-bottom: 2px;
+  }
+  .header-tools::-webkit-scrollbar { display: none; }
+  .header-tools > * { flex: 0 0 auto; min-height: 40px; }
+  #settingsBtn { padding: 8px 12px; }
+
+  /* Bottom tab bar. */
+  nav.tabs {
+    position: fixed; left: 0; right: 0; bottom: 0; z-index: 40;
+    margin: 0; padding: 5px 8px calc(5px + env(safe-area-inset-bottom, 0px));
+    gap: 6px; overflow-x: auto; overflow-y: hidden;
+    background: var(--panel); border-top: 1px solid var(--line); border-bottom: 0;
+    box-shadow: 0 -8px 24px rgba(0,0,0,.35);
+    scrollbar-width: none; -webkit-overflow-scrolling: touch;
+  }
+  nav.tabs::-webkit-scrollbar { display: none; }
+  nav.tabs button {
+    flex: 0 0 auto; min-height: 44px; padding: 8px 13px; font-size: 12.5px;
+    white-space: nowrap; gap: 6px;
+  }
+  nav.tabs button.active { box-shadow: none; }
+
+  /* Everything that used to sit under the header now clears the bar. */
+  body { padding-bottom: calc(var(--tabbar-h) + env(safe-area-inset-bottom, 0px)); }
+  body.np-visible {
+    padding-bottom: calc(116px + var(--tabbar-h) + env(safe-area-inset-bottom, 0px));
+  }
+  .nowplaying {
+    bottom: calc(var(--tabbar-h) + env(safe-area-inset-bottom, 0px));
+  }
+  .catalog-detail { top: 0; }
+
+  /* Facets become one swipeable row. The chip wall was the single largest
+     block of chrome on the page. */
+  .filter-row { padding-left: 12px; padding-right: 12px; gap: 6px; }
+  .filter-head { gap: 8px; }
+  .filter-modes {
+    flex: 0 0 auto; flex-wrap: nowrap; overflow-x: auto; overflow-y: hidden;
+    scrollbar-width: none; -webkit-overflow-scrolling: touch;
+    padding-bottom: 2px; max-width: 100%;
+  }
+  .filter-modes::-webkit-scrollbar { display: none; }
+  #metadataChips {
+    flex-wrap: nowrap; overflow-x: auto; overflow-y: hidden;
+    scrollbar-width: none; -webkit-overflow-scrolling: touch;
+    padding-bottom: 4px;
+  }
+  #metadataChips::-webkit-scrollbar { display: none; }
+  .chip, .filter-modes button { flex: 0 0 auto; padding: 9px 13px; min-height: 40px; }
+  .facet-tools { margin-left: 0; flex: 0 0 auto; }
+  .facet-tools input[type="search"] { min-height: 40px; }
+  .facet-clear { min-height: 40px; padding: 8px 13px; }
+
+  /* Shelves: snap card to card, and fade the trailing edge so a rail reads as
+     "there is more this way" instead of a hard cut. */
+  .grid.rail-mode, .catalog-strip {
+    scroll-snap-type: x proximity; -webkit-overflow-scrolling: touch;
+    padding-right: 22px;
+    mask-image: linear-gradient(90deg, #000 0, #000 calc(100% - 34px), transparent 100%);
+    -webkit-mask-image: linear-gradient(90deg, #000 0, #000 calc(100% - 34px), transparent 100%);
+  }
+  .grid.rail-mode .card, .catalog-strip .card { scroll-snap-align: start; }
+  .grid.rail-mode .card { flex-basis: 132px; }
+  .catalog-strip .card { flex-basis: 132px; }
+  .catalog-shelf { grid-template-columns: repeat(auto-fill, minmax(124px, 1fr)); gap: 12px; }
+  main.grid { grid-template-columns: repeat(auto-fill, minmax(132px, 1fr)); gap: 12px; padding: 12px 12px 28px; }
+  section.row { padding-left: 12px; padding-right: 12px; }
+  .catalog-rails { padding: 14px 12px 40px; }
+
+  /* The movie detail becomes a bottom sheet. It used to render as a full-height
+     column below the rails, so tapping a poster appeared to do nothing.
+     The sheet must be opaque: a palette's translucent panel gradient is fine
+     for a side rail but lets the shelves behind it bleed through the copy. */
+  .catalog-layout, .catalog-layout.detail-collapsed { grid-template-columns: 1fr; }
+  body .catalog-layout .catalog-detail {
+    position: fixed; inset: auto 0 0 0; top: auto; z-index: 45;
+    height: auto; max-height: 84vh; overflow: auto;
+    border-left: 0; border-top: 1px solid var(--line);
+    border-radius: 18px 18px 0 0;
+    padding: 14px 16px calc(20px + env(safe-area-inset-bottom, 0px));
+    background: var(--panel); background-image: none;
+    box-shadow: 0 -16px 44px rgba(0,0,0,.5);
+  }
+  /* Collapsed means "no sheet", not a 54px vertical sliver. */
+  .catalog-layout.detail-collapsed .catalog-detail { display: none; }
+  .catalog-layout.detail-collapsed .catalog-detail-head { display: none; }
+  .catalog-detail-head { position: sticky; top: -14px; background: var(--panel); background-image: none; padding-top: 14px; }
+  .catalog-detail-hero { grid-template-columns: 104px minmax(0, 1fr); gap: 12px; }
+  .catalog-detail-cover { width: 104px; }
+
+  /* Dialogs get the full sheet treatment. */
+  dialog#detail, dialog#settingsDlg {
+    width: 100%; max-width: 100%; max-height: 92vh;
+    margin: auto auto 0; border-radius: 18px 18px 0 0; border-bottom: 0;
+  }
+  .modal-body { padding: 16px; max-height: calc(92vh - 56px); }
+  dialog video { max-height: 34vh; }
+
+  /* Episode and edition rows were four columns wide and crushed. */
+  button.ep-row { grid-template-columns: auto minmax(0, 1fr) auto; row-gap: 6px; }
+  button.ep-row .epbar { grid-column: 1 / -1; width: 100%; }
+  button.ed-row { grid-template-columns: auto minmax(0, 1fr) auto; row-gap: 4px; }
+  .editions h4 { font-size: 11px; }
+
+  /* Reading lists: the entry row had six inline columns. */
+  .lists-panel { padding-bottom: 20px; }
+  .recommended-list-grid { grid-template-columns: 1fr; gap: 12px; }
+  .recommended-list-card { min-height: 0; padding: 14px; }
+  .list-create-form { display: grid; grid-template-columns: 1fr; }
+  .list-add-row { display: grid; grid-template-columns: 1fr; }
+  .reading-list ol li {
+    display: grid; grid-template-columns: 34px 1fr; gap: 4px 10px; align-items: center;
+  }
+  .list-entry-cover { width: 34px; height: 51px; }
+  .list-position { grid-row: 1; }
+  .list-entry-title { grid-column: 2; text-align: left; }
+  .list-entry-tags, .list-entry-actions { grid-column: 2; }
+  .list-missing ol { padding-left: 18px; }
+
+  /* Touch targets. Anything interactive was 21-29px tall on a phone. */
+  button, select, input[type="search"], input[type="text"], input[type="number"], .chip, .filter-modes button {
+    min-height: 44px;
+  }
+  .actions button, .actions a, .catalog-more button, .rail-browse, .pager button { padding: 11px 15px; }
+  .ep-row { padding: 13px 14px; }
+  button.crumb, .facet-clear { min-height: 40px; }
+
+  /* Storage and Optimize pages have wide metric grids and tables. */
+  .storage-panel, .optimization-page { padding: 14px 12px 30px; }
+  .storage-heading, .optimization-hero { flex-direction: column; align-items: stretch; gap: 12px; }
+  .optimization-metrics, .optimization-run-stats { grid-template-columns: 1fr 1fr; }
+  .optimization-columns { grid-template-columns: 1fr; }
+  .optimization-target-picker { grid-template-columns: 1fr; }
+  .movie-rating-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .movie-cast-grid { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+
+  /* The now-playing controller is compact already; just make sure its tools
+     row does not collide with the docked bar. */
+  .np-bar { gap: 10px; padding: 8px 12px; }
+  .np-art { width: 44px; height: 44px; }
+}
+
+/* Landscape phones: vertical space is the scarce axis, so keep the docked bar
+   but tighten the header. */
+@media (max-width: 940px) and (orientation: landscape) {
+  :root { --tabbar-h: 52px; }
+  .nowplaying:not(.np-audio-mode) .np-video { max-height: 26vh; }
+}

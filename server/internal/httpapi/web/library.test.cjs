@@ -482,6 +482,51 @@ test('no palette token is aliased on :root, where var() would freeze it to Earth
   assert.deepEqual(aliases, [], `aliased on :root: ${aliases.join(', ')}`);
 });
 
+test('the phone layout docks the tab bar and stops the page scrolling sideways', () => {
+  const css = fs.readFileSync(`${__dirname}/library.css`, 'utf8');
+  const phone = css.slice(css.indexOf('@media (max-width: 700px)'));
+  assert.ok(phone.length > 0, 'a phone breakpoint exists');
+  // Docked, so a thumb reaches the catalog switcher without scrolling past
+  // the header. It stays the same <nav>, so tab state logic is untouched.
+  assert.match(phone, /nav\.tabs\s*\{[^}]*position:\s*fixed/);
+  assert.match(phone, /nav\.tabs\s*\{[^}]*overflow-x:\s*auto/);
+  assert.match(phone, /nav\.tabs\s*\{[^}]*env\(safe-area-inset-bottom/);
+  // The tab bar was the widest thing on the page (567px inside a 393px
+  // viewport) and was not a scroll container, so the whole page panned.
+  assert.match(phone, /\.header-tools\s*\{[^}]*overflow-x:\s*auto/);
+  assert.match(phone, /\.filter-modes\s*\{[^}]*flex-wrap:\s*nowrap[^}]*overflow-x:\s*auto/);
+  // The facet chip wall was 484px of an 852px screen.
+  assert.match(phone, /#metadataChips\s*\{[^}]*flex-wrap:\s*nowrap/);
+  // Touch targets were 21-29px tall.
+  assert.match(phone, /min-height:\s*44px/);
+  // backdrop-filter on the header would make it the containing block for the
+  // fixed tab bar and trap it inside the sticky header.
+  assert.match(phone, /header\s*\{[^}]*backdrop-filter:\s*none/);
+});
+
+test('the phone movie detail is an opaque bottom sheet, not a side rail', () => {
+  const css = fs.readFileSync(`${__dirname}/library.css`, 'utf8');
+  const phone = css.slice(css.indexOf('@media (max-width: 700px)'));
+  // Tapping a card used to update a panel below the entire page, so it looked
+  // like the tap did nothing.
+  assert.match(phone, /body \.catalog-layout \.catalog-detail\s*\{[^}]*position:\s*fixed/);
+  assert.match(phone, /body \.catalog-layout \.catalog-detail\s*\{[^}]*max-height:\s*84vh/);
+  // Opaque, so shelf art does not bleed through the synopsis. The selector
+  // needs the body prefix to outrank a palette's translucent panel gradient.
+  assert.match(phone, /body \.catalog-layout \.catalog-detail\s*\{[^}]*background:\s*var\(--panel\)[^}]*background-image:\s*none/);
+  // Collapsed means "no sheet", not the 54px desktop sliver.
+  assert.match(phone, /\.catalog-layout\.detail-collapsed \.catalog-detail\s*\{\s*display:\s*none/);
+});
+
+test('the header control cluster is a display:contents wrapper on desktop', () => {
+  // The phone layout needs a hook to make the search and the filter selects one
+  // swipeable row. `display: contents` gives it one without changing the
+  // desktop header, which must stay a single flex row.
+  assert.match(libraryHTML, /<div class="header-tools">[\s\S]*id="watched"[\s\S]*id="sort"[\s\S]*id="settingsBtn"[\s\S]*<\/div>/);
+  const css = fs.readFileSync(`${__dirname}/library.css`, 'utf8');
+  assert.match(css, /\.header-tools\s*\{\s*display:\s*contents/);
+});
+
 test('Space Bunny is a registered palette, not just a stylesheet', () => {
   // The Go page renderer rewrites data-theme before the first paint and falls
   // back to earthy for an unknown preset, so an unregistered name would be

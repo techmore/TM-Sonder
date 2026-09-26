@@ -212,6 +212,8 @@ the macOS unit tests (`.github/workflows/ci.yml`).
 - [`THEME.md`](THEME.md) — palette tokens and how to add a new one.
 - [`docs/curated-shelves.md`](docs/curated-shelves.md) — the curated
   best-of lists, year-aware matching, and the discovery rails built from them.
+- [`docs/mobile-layout.md`](docs/mobile-layout.md) — the phone layout: docked
+  tab bar, bottom sheet, and the measurements that drove it.
 - [`docs/review-2026-09.md`](docs/review-2026-09.md) — architecture review and
   prioritized improvement roadmap.
 - [`docs/performance-audit.md`](docs/performance-audit.md) — scan/stream hot
