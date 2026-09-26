@@ -857,3 +857,9 @@ body[data-theme="bunny"] .actions button.primary:disabled { opacity:.55; }
 .part-status { margin:6px 0 0; color:var(--muted); font-size:12.5px; }
 .conflict { margin:8px 0 0; padding:7px 10px; border-left:3px solid var(--warn, #c98a2e);
   background:rgba(201,138,46,.10); color:var(--fg); font-size:12.5px; }
+
+/* Version label: the narrator, part count, and any unresolved conflict for a
+   book. Keeping the reader out of the title is what lets one book appear once
+   per narration instead of as several unrelated-looking titles. */
+.card .cap .version,
+.book .version { display:block; margin-top:2px; font-size:11.5px; color:var(--muted); font-weight:400; }

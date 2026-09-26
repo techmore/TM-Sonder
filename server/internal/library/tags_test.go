@@ -98,6 +98,25 @@ func TestNarratorFromTags(t *testing.T) {
 		{"A great book with no credit", ""},
 		{"", ""},
 		{"Narrated by   ", ""},
+		// Initials and dotted names must survive: cutting on any period turned
+		// "R.C. Bray" into "R".
+		{"Narrated by R.C. Bray", "R.C. Bray"},
+		{"Narrated by R.C. Bray.", "R.C. Bray"},
+		{"Narrated by R. C. Bray", "R. C. Bray"},
+		{"Narrated by A.C. Bhaktivedanta Swami", "A.C. Bhaktivedanta Swami"},
+		{"Narrated by J. R. R. Tolkien", "J. R. R. Tolkien"},
+		// A real sentence boundary still ends the name.
+		{"Narrated by Ray Porter. Recorded 2019.", "Ray Porter"},
+		{"Narrated by Kate Reading; 2019 edition", "Kate Reading"},
+		// Honorifics and titles belong to the name.
+		{"Narrated by Dr. Smith", "Dr. Smith"},
+		{"Narrated by St. Claire", "St. Claire"},
+		{"Narrated by Mr. X", "Mr. X"},
+		{"Narrated by Prof. Killian", "Prof. Killian"},
+		{"Narrated by Miss Piggy", "Miss Piggy"},
+		// A short capitalized word that is not an abbreviation still ends the
+		// name, so the rule cannot be a blanket "short token".
+		{"Narrated by Ray Porter. Smith agreed.", "Ray Porter"},
 	}
 	for _, c := range cases {
 		if got := narratorFromTags(probe.FileTags{Comment: c.comment}); got != c.want {

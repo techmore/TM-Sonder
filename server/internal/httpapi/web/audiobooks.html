@@ -105,16 +105,23 @@
         return;
       }
       results.className = "";
-      results.innerHTML = books.map(book => `
+      results.innerHTML = books.map(book => {
+        const bits = [];
+        if (book.narrator) bits.push("Read by " + book.narrator);
+        if (book.partCount > 1) bits.push(book.partCount + " files");
+        if (book.seriesPosition) bits.push("Part " + book.seriesPosition);
+        if (book.bookConflict) bits.push(book.bookConflict.kind.replace(/_/g, " "));
+        return `
         <button class="book ${book.id === selectedID ? "selected" : ""}" onclick="openBook('${book.id}')">
           <div class="cover">${book.posterURL ? `<img src="${api(book.posterURL)}" alt="">` : "A"}</div>
           <div>
             <h3>${escapeHTML(book.title)}</h3>
             <p>${escapeHTML([book.author, book.series].filter(Boolean).join(" • ") || book.subtitle)}</p>
+            ${bits.length ? `<p class="version">${escapeHTML(bits.join(" • "))}</p>` : ""}
             <div class="meta"><span>${formatTime(book.durationSeconds)}</span><span>${book.chapterCount} chapters</span></div>
             <progress max="1" value="0"></progress>
           </div>
-        </button>`).join("");
+        </button>`;}).join("");
     }
 
     async function openBook(id) {

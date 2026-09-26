@@ -90,6 +90,17 @@
     const started = b => (b.progressSeconds || 0) > 5;
     const finished = b => frac(b) >= 0.96;
     const byline = b => [b.author, b.series].filter(Boolean).join(" • ") || b.subtitle || "";
+    // The narrator is a version of the book, not part of its name. Showing it
+    // as its own line is what lets "The Lathe of Heaven" appear once per reader
+    // instead of six unrelated-looking titles.
+    const versionLine = b => {
+      const bits = [];
+      if (b.narrator) bits.push("Read by " + b.narrator);
+      if (b.partCount > 1) bits.push(b.partCount + " files");
+      if (b.seriesPosition) bits.push("Part " + b.seriesPosition);
+      if (b.bookConflict) bits.push(b.bookConflict.kind.replace(/_/g, " "));
+      return bits.join(" • ");
+    };
 
     async function loadBooks() {
       const response = await fetch(api(`/api/audiobooks?q=${encodeURIComponent(q.value)}`));
@@ -108,9 +119,11 @@
 
     function cardHTML(b) {
       const f = frac(b);
+      const version = versionLine(b);
       return `<button class="card ${b.id === selectedID ? "selected" : ""}" onclick="openBook('${b.id}')">
         <div class="art">${b.posterURL ? `<img loading="lazy" src="${api(b.posterURL)}" alt="">` : escapeHTML((b.title || "A")[0])}</div>
         <div class="cap"><strong>${escapeHTML(b.title)}</strong><span>${escapeHTML(byline(b))}</span>
+        ${version ? `<span class="version">${escapeHTML(version)}</span>` : ""}
         ${f > 0 ? `<progress max="1" value="${f.toFixed(3)}"></progress>` : ""}</div>
         <div class="peek">${escapeHTML((b.summary || "").slice(0, 220))}${(b.summary || "").length > 220 ? "…" : ""}<br><span class="time">${formatTime(b.durationSeconds)} • ${b.chapterCount || "?"} chapters</span></div>
       </button>`;
@@ -119,11 +132,25 @@
     function shelfSort(list) {
       const arr = [...list];
       switch (sortSel.value) {
-        case "az": return arr.sort((a, b) => (a.title || "").localeCompare(b.title || ""));
+        // Order on the derived sort key, not the file name: a shelf containing
+        // "2011 - The Martian" sorted in year order when the title was used.
+        case "az": return arr.sort(compareBySortTitle);
         case "longest": return arr.sort((a, b) => (b.durationSeconds || 0) - (a.durationSeconds || 0));
         case "shortest": return arr.sort((a, b) => (a.durationSeconds || 0) - (b.durationSeconds || 0));
         default: return arr; // curated: server catalog order
       }
+    }
+
+    // Alphabetical by the server's sort key, falling back to the title for an
+    // older server that does not send one, then by narrator so the editions of
+    // one book stay together.
+    function compareBySortTitle(a, b) {
+      const ka = a.sortTitle || (a.title || "").toLowerCase();
+      const kb = b.sortTitle || (b.title || "").toLowerCase();
+      if (ka !== kb) return ka < kb ? -1 : 1;
+      const na = a.narrator || "", nb = b.narrator || "";
+      if (na !== nb) return na < nb ? -1 : 1;
+      return (a.title || "") < (b.title || "") ? -1 : 1;
     }
 
     function renderRails() {
@@ -132,7 +159,7 @@
       const counts = {};
       books.forEach(b => { if (b.author) counts[b.author] = (counts[b.author] || 0) + 1; });
       const upnext = books.filter(b => !started(b))
-        .sort((a, b) => ((counts[b.author] || 0) - (counts[a.author] || 0)) || (a.title || "").localeCompare(b.title || "")).slice(0, 10);
+        .sort((a, b) => ((counts[b.author] || 0) - (counts[a.author] || 0)) || compareBySortTitle(a, b)).slice(0, 10);
       const epics = shelfSort(books.filter(b => (b.durationSeconds || 0) >= 12 * 3600));
       const quick = shelfSort(books.filter(b => (b.durationSeconds || 0) > 0 && (b.durationSeconds || 0) < 6 * 3600));
       const shelf = shelfSort(books);

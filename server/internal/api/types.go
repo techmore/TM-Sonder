@@ -121,10 +121,20 @@ type MediaItem struct {
 	// that list per file render a 148-file book as 148 rows. BookPartIndex and
 	// BookPartCount give the position within the book so a client can present
 	// one entry and still play the parts in order.
-	BookGroupID            *string         `json:"bookGroupID,omitempty"`
-	BookGroupTitle         *string         `json:"bookGroupTitle,omitempty"`
-	BookPartIndex          int             `json:"bookPartIndex,omitempty"`
-	BookPartCount          int             `json:"bookPartCount,omitempty"`
+	BookGroupID    *string `json:"bookGroupID,omitempty"`
+	BookGroupTitle *string `json:"bookGroupTitle,omitempty"`
+	BookPartIndex  int     `json:"bookPartIndex,omitempty"`
+	BookPartCount  int     `json:"bookPartCount,omitempty"`
+	// SortTitle is the key an A-Z listing must order by, and is deliberately not
+	// the Title. Title is whatever the library file is called, which may start
+	// with a publication year ("2011 - The Martian") or embed a narrator credit
+	// ("Ubik (Daniels)"). Ordering by Title put such a shelf in year order and
+	// split one book across two places in the alphabet.
+	SortTitle string `json:"sortTitle,omitempty"`
+	// SeriesPosition and PublicationYear carry the leading number and the year
+	// that SortTitle removed, so ordering on the cleaner key loses nothing.
+	SeriesPosition         string          `json:"seriesPosition,omitempty"`
+	PublicationYear        int             `json:"publicationYear,omitempty"`
 	CoverAvailable         bool            `json:"coverAvailable"`
 	CoverEmbedded          bool            `json:"coverEmbedded"`
 	IsPlaceholder          bool            `json:"isPlaceholder"`

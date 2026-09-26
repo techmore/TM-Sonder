@@ -681,6 +681,13 @@ type catalogItem struct {
 	PosterURL       *string  `json:"posterURL"`
 	BackdropURL     *string  `json:"backdropURL"`
 	Tags            []string `json:"tags"`
+	// SortTitle is what an A-Z listing must order by. It is not the Title: a
+	// library file may be called "2011 - The Martian", and ordering on that put
+	// the shelf in year order. SeriesPosition and PublicationYear carry the
+	// number and year the sort key removed.
+	SortTitle       string `json:"sortTitle"`
+	SeriesPosition  string `json:"seriesPosition,omitempty"`
+	PublicationYear int    `json:"publicationYear,omitempty"`
 	// PartCount and Parts describe a book delivered as many files. A single
 	// file book omits them, so clients can treat the common case as unchanged.
 	PartCount int           `json:"partCount,omitempty"`
@@ -708,6 +715,14 @@ type catalogDetail struct {
 }
 
 func (s *Server) toCatalogItem(it *library.Item) catalogItem {
+	// The catalog is assembled straight from the store, which does not carry the
+	// derived ordering metadata, so recompute it here rather than reaching into
+	// the scan pipeline.
+	parts := library.SplitTitle(it.Title)
+	sortTitle := parts.Sort
+	if sortTitle == "" {
+		sortTitle = it.Title
+	}
 	// Author/Narrator come from real item fields when known (enrichment or
 	// filename parsing); Studio/Tags are the legacy fallbacks for items
 	// enriched before those fields existed.
@@ -745,6 +760,9 @@ func (s *Server) toCatalogItem(it *library.Item) catalogItem {
 		PosterURL:       it.PosterURL,
 		BackdropURL:     it.BackdropURL,
 		Tags:            it.Tags,
+		SortTitle:       sortTitle,
+		SeriesPosition:  parts.Series,
+		PublicationYear: parts.Year,
 		ProgressSeconds: it.ProgressSeconds,
 	}
 	if rec, ok := s.store.ProgressFor(it.ID); ok && !rec.UpdatedAt.IsZero() {
@@ -777,9 +795,46 @@ func (s *Server) mediaCatalog(w http.ResponseWriter, r *http.Request, kind api.M
 		}
 	}
 	writeJSON(w, http.StatusOK, catalogResponse{
-		Items: items, Count: len(items),
+		Items: sortCatalog(items), Count: len(items),
 		Theme: themeFor(s.cfg().ThemePreset), GeneratedAt: time.Now().UTC(),
 	})
+}
+
+// sortCatalog orders a catalog response by the derived sort key rather than the
+// raw file name, so the default order is already alphabetical for a library
+// whose folders are called "2011 - The Martian". Title and ID break ties, so
+// the order is total and stable across requests.
+func sortCatalog(items []catalogItem) []catalogItem {
+	out := append([]catalogItem(nil), items...)
+	sort.SliceStable(out, func(a, b int) bool {
+		ka, kb := out[a].SortTitle, out[b].SortTitle
+		if ka == "" {
+			ka = strings.ToLower(out[a].Title)
+		}
+		if kb == "" {
+			kb = strings.ToLower(out[b].Title)
+		}
+		if ka != kb {
+			return ka < kb
+		}
+		// Same book, different recording: group the narrator editions together.
+		na, nb := narratorLabel(out[a]), narratorLabel(out[b])
+		if na != nb {
+			return na < nb
+		}
+		if out[a].Title != out[b].Title {
+			return out[a].Title < out[b].Title
+		}
+		return out[a].ID < out[b].ID
+	})
+	return out
+}
+
+func narratorLabel(it catalogItem) string {
+	if it.Narrator != nil {
+		return *it.Narrator
+	}
+	return ""
 }
 
 // collapseIntoBooks merges the items of one book into a single catalog row.

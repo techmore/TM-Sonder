@@ -589,21 +589,41 @@ func TestAudiobookCatalogReportsWholeBookSibling(t *testing.T) {
 	}
 	// Two rows: the book (its four segments) and the whole-book file that was
 	// left out. The latter must stay visible so it can be inspected and
-	// deleted, rather than silently vanishing.
+	// deleted, rather than silently vanishing. Rows are sorted by the derived
+	// key, so identify them by shape rather than position.
 	if len(list.Items) != 2 {
 		t.Fatalf("items = %d, want 2 (the book plus the flagged leftover): %s",
 			len(list.Items), body)
 	}
-	book := list.Items[0]
+	var book, leftover *struct {
+		ID              string  `json:"id"`
+		Title           string  `json:"title"`
+		DurationSeconds float64 `json:"durationSeconds"`
+		PartCount       int     `json:"partCount"`
+		BookConflict    *struct {
+			Kind    string   `json:"kind"`
+			ItemIDs []string `json:"itemIDs"`
+			Detail  string   `json:"detail"`
+		} `json:"bookConflict"`
+	}
+	for i := range list.Items {
+		if list.Items[i].PartCount > 0 {
+			book = &list.Items[i]
+		} else {
+			leftover = &list.Items[i]
+		}
+	}
+	if book == nil || leftover == nil {
+		t.Fatalf("could not identify the book row and the leftover row: %s", body)
+	}
 	if book.PartCount != 4 {
 		t.Errorf("partCount = %d, want 4", book.PartCount)
 	}
 	if got := book.DurationSeconds / 3600; got < 4.9 || got > 5.1 {
 		t.Errorf("duration = %.2f h, want ~5.0 h (segments only, not 10.25 h)", got)
 	}
-	leftover := list.Items[1]
 	if leftover.ID != "Echopraxia.m4b" {
-		t.Errorf("second row id = %q, want the whole-book file", leftover.ID)
+		t.Errorf("leftover row id = %q, want the whole-book file", leftover.ID)
 	}
 	if leftover.BookConflict == nil {
 		t.Error("the leftover row is not flagged with the conflict")
@@ -673,6 +693,78 @@ func TestEbookCatalogIsNotCollapsed(t *testing.T) {
 	json.Unmarshal([]byte(getBody(t, f.ts.URL+"/api/ebooks")), &list)
 	if list.Count != 2 {
 		t.Errorf("ebook count = %d, want 2 (must not be collapsed)", list.Count)
+	}
+}
+
+// The catalog must arrive in alphabetical order of the derived key, not of the
+// raw file name. Ordering on the file name put this shelf in year order.
+func TestAudiobookCatalogIsAlphabeticalBySortTitle(t *testing.T) {
+	root := t.TempDir()
+	f := newFixture(t, func(c *config.Config) {
+		c.Libraries = []config.Library{
+			{ID: "books", Name: "Audiobooks", Path: root, Kind: "audiobook"},
+		}
+	})
+	libID := "books"
+	// Deliberately inserted in the worst possible order, and named the way the
+	// real library names them.
+	for _, rel := range []string{
+		"Andy Weir/2021 - Project Hail Mary/2021 - Project Hail Mary.m4b",
+		"Andy Weir/2019 - Randomize/2019 - Randomize.m4b",
+		"Andy Weir/2017 - Artemis/2017 - Artemis.m4b",
+		"Andy Weir/2011 - The Martian (Read by R.C. Bray)/2011 - The Martian (Read by R.C. Bray).m4b",
+		"Andy Weir/Artemis (2017)/Artemis (2017).m4b",
+		"Andy Weir/Project Hail Mary (2021)/Project Hail Mary (2021).m4b",
+	} {
+		full := filepath.Join(root, filepath.FromSlash(rel))
+		if err := os.MkdirAll(filepath.Dir(full), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(full, []byte("audio"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		f.store.Upsert(&library.Item{
+			MediaItem: api.MediaItem{
+				ID: rel, Title: filepath.Base(filepath.Dir(full)),
+				Kind: api.KindAudiobook, Format: api.FormatM4B,
+				DurationSeconds: 36000, LibraryID: &libID,
+			},
+			FilePath:           full,
+			SourceRelativePath: rel,
+			SizeBytes:          9_000_000,
+		})
+	}
+	var list struct {
+		Items []struct {
+			Title     string `json:"title"`
+			SortTitle string `json:"sortTitle"`
+		} `json:"items"`
+	}
+	body := getBody(t, f.ts.URL+"/api/audiobooks")
+	if err := json.Unmarshal([]byte(body), &list); err != nil {
+		t.Fatalf("unmarshal: %v (%s)", err, body)
+	}
+	var keys []string
+	for _, b := range list.Items {
+		keys = append(keys, b.SortTitle)
+	}
+	want := []string{
+		"artemis", "artemis",
+		"martian",
+		"project hail mary", "project hail mary",
+		"randomize",
+	}
+	if len(keys) != len(want) {
+		t.Fatalf("keys = %v, want %v", keys, want)
+	}
+	for i := range want {
+		if keys[i] != want[i] {
+			t.Errorf("position %d: key %q, want %q (full order %v)", i, keys[i], want[i], keys)
+		}
+	}
+	// The raw title must still be available for display.
+	if list.Items[0].Title == "" {
+		t.Error("display title was lost")
 	}
 }
 

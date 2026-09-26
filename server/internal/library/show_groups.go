@@ -68,6 +68,13 @@ func (s *Store) GroupedItems(libraries []config.Library) []api.MediaItem {
 			wire.BookGroupID, wire.BookGroupTitle = &id, &title
 			wire.BookPartIndex, wire.BookPartCount = g.Index, g.Count
 		}
+		// Ordering metadata is derived for every kind, not just books: the same
+		// folder-derived names appear in the movie and TV listings.
+		if parts := SplitTitle(item.Title); parts.Sort != "" {
+			wire.SortTitle = parts.Sort
+			wire.SeriesPosition = parts.Series
+			wire.PublicationYear = parts.Year
+		}
 		result = append(result, wire)
 	}
 	// Store updates are copy-on-write, so the wire values and their nested

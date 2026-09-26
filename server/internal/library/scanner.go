@@ -13,6 +13,7 @@ import (
 	"strings"
 	"sync"
 	"time"
+	"unicode"
 
 	"tm-sonder/server/internal/api"
 	"tm-sonder/server/internal/config"
@@ -539,12 +540,84 @@ func isNamerLeadIn(s string) bool {
 
 // trimNamerCredit takes the leading name from a credit fragment, stopping at
 // the first clause so a trailing comment is not absorbed into the name.
+//
+// A period only ends the name when it is sentence punctuation. Cutting on every
+// period truncated "Narrated by R.C. Bray" to "R", which is how the catalog came
+// to claim a narrator of "R" for The Martian. A period is an initial rather than
+// a sentence end when the token before it is a single letter, or when it is not
+// followed by whitespace.
 func trimNamerCredit(rest string) string {
 	rest = strings.TrimSpace(rest)
-	if cut := strings.IndexAny(rest, ".;\n"); cut > 0 {
-		rest = rest[:cut]
+	for i, r := range rest {
+		switch r {
+		case ';', '\n':
+			return strings.TrimSpace(strings.Trim(rest[:i], "-—:,"))
+		case '.':
+			if isSentencePeriod(rest, i) {
+				return strings.TrimSpace(strings.Trim(rest[:i], "-—:,"))
+			}
+		}
 	}
 	return strings.TrimSpace(strings.Trim(rest, "-—:,"))
+}
+
+// nameAbbreviations are tokens whose trailing period belongs to the name, not
+// to the sentence. Without this, "Narrated by Dr. Smith" was credited to "Dr".
+var nameAbbreviations = map[string]bool{
+	"mr": true, "mrs": true, "ms": true, "dr": true, "st": true,
+	"prof": true, "rev": true, "fr": true, "sr": true, "jr": true,
+	"capt": true, "col": true, "gen": true, "lt": true, "sgt": true,
+	"hon": true, "pres": true, "gov": true, "sra": true, "esq": true,
+}
+
+// isSentencePeriod reports whether the period at index i ends a sentence rather
+// than belonging to a name.
+//
+// Three cases keep the name going: an initial ("R.C. Bray", "J. R. R.
+// Tolkien"), a known abbreviation ("Dr. Smith", "St. Claire"), and a period with
+// no following space. Everything else -- notably a period after a lowercase
+// letter with a space after it ("Ray Porter. Recorded") -- ends the name.
+func isSentencePeriod(s string, i int) bool {
+	if i == 0 {
+		return false
+	}
+	if i+1 < len(s) && !unicode.IsSpace(rune(s[i+1])) {
+		return false // no space follows, so it is not a sentence boundary
+	}
+	// The token immediately before the period decides the initial/abbreviation
+	// cases.
+	start := i
+	for start > 0 && !unicode.IsSpace(rune(s[start-1])) {
+		start--
+	}
+	token := s[start:i]
+	if isInitialsRun(token) || nameAbbreviations[strings.ToLower(token)] {
+		return false
+	}
+	return true
+}
+
+// isInitialsRun reports whether a token is a run of capital initials, with or
+// without dots: "R", "R.C", "J.R.R". The dots are what the *next* period
+// belongs to, so the name continues.
+func isInitialsRun(token string) bool {
+	if token == "" || len(token) > 8 {
+		return false
+	}
+	letters := 0
+	for _, r := range token {
+		switch {
+		case r == '.':
+			continue
+		case unicode.IsUpper(r):
+			letters++
+			continue
+		default:
+			return false
+		}
+	}
+	// One capital, or a dotted chain of them.
+	return letters >= 1 && letters <= 4
 }
 
 func yearFromTags(date string) int {
