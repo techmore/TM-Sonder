@@ -184,6 +184,21 @@
       document.querySelector(".detail").scrollIntoView({ block: "nearest" });
     }
 
+    // The first part that was started and not finished, else the first part.
+    // Progress is stored per file, so this is the only honest place to resume a
+    // book delivered as many files.
+    function firstUnfinishedPart(parts) {
+      for (let i = 0; i < parts.length; i++) {
+        const p = parts[i];
+        const seconds = p.progressSeconds || 0;
+        if (seconds <= 5) continue;
+        const dur = p.durationSeconds || 0;
+        if (dur > 0 && seconds / dur >= 0.96) continue;   // this part is done
+        return i;
+      }
+      return 0;
+    }
+
     function renderDetail(book, chapters) {
       const f = (book.durationSeconds > 0 && (book.progressSeconds || 0) > 0) ? book.progressSeconds / book.durationSeconds : 0;
       // A book delivered as many files is one entry with an ordered parts
@@ -223,8 +238,15 @@
         </div>`;
       const player = document.querySelector("#player");
       currentParts = parts;
-      partIndex = 0;
+      // Resume where the listener actually stopped. Starting a long book at
+      // part 1 because the aggregate progress looked unstarted is the failure
+      // mode this replaces: the first part that was begun and not finished
+      // wins, else part 1.
+      partIndex = parts ? firstUnfinishedPart(parts) : 0;
       if (parts) {
+        player.src = api("/stream/" + parts[partIndex].id);
+        const status = document.querySelector("#partStatus");
+        if (status) status.textContent = `Part ${partIndex + 1} of ${parts.length}`;
         player.addEventListener("ended", () => {
           if (partIndex + 1 < currentParts.length) playPart(partIndex + 1, true);
         });
@@ -232,7 +254,10 @@
       player.addEventListener("loadedmetadata", () => {
         const id = currentParts ? currentParts[partIndex].id : book.id;
         fetch(api(`/api/playback/${id}`)).then(r => r.ok ? r.json() : null).then(session => {
-          const resume = (session && (session.seconds || book.progressSeconds)) || 0;
+          // For a book the aggregate is meaningless inside one file, so only a
+          // single-file title may fall back to book.progressSeconds.
+          const fallback = currentParts ? 0 : (book.progressSeconds || 0);
+          const resume = (session && session.seconds) || fallback;
           if (resume > 5 && resume < Math.max(player.duration - 8, 0)) player.currentTime = resume;
         }).catch(() => {});
       });

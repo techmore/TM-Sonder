@@ -393,6 +393,12 @@
     let nowPlayingMode = "audio";
     let npSeeking = false;
     let npLastSaved = 0;
+    // Multi-part book playback. nowPlayingParts is null for a single-file item,
+    // so every existing behaviour is unchanged; when it is set, the player
+    // advances through the parts on "ended" and saves progress per part, which
+    // is the granularity the server stores it at.
+    let nowPlayingParts = null;
+    let nowPlayingPartIndex = 0;
 
     function npMedia() { return $("#npMedia"); }
 
@@ -400,8 +406,100 @@
       const item = items.find(candidate => candidate.id === id);
       if (!item) return;
       if (nowPlayingItem && nowPlayingItem.id === id) { togglePlay(); return; }
+      const parts = partsOf(item);
+      if (parts) {
+        // Resume where the listener actually stopped, which is rarely part 1 of
+        // a long book.
+        const index = resumePartIndex(parts);
+        startBookPlayback(item, parts, index);
+        return;
+      }
       const record = progressFor(id);
       startPlayback(item, record && record.seconds > 5 ? record.seconds : 0);
+    }
+
+    function startBookPlayback(item, parts, index) {
+      const media = npMedia();
+      if (!media) return;
+      saveProgress(true);
+      nowPlayingItem = item;
+      nowPlayingParts = parts;
+      nowPlayingPartIndex = Math.min(Math.max(index | 0, 0), parts.length - 1);
+      nowPlayingMode = "audio";
+      npLastSaved = 0;
+      npSeeking = false;
+      prepareNowPlayingShell(item, "audio");
+      loadBookPart(false);
+    }
+
+    // Move to a part of the current book. `autoplay` is false when the user
+    // jumped there deliberately from the part list, so the browser's own
+    // gesture requirement is satisfied by that click.
+    function loadBookPart(autoplay) {
+      const media = npMedia();
+      const part = nowPlayingParts && nowPlayingParts[nowPlayingPartIndex];
+      if (!media || !part) return;
+      media.src = api("/stream/" + part.id);
+      media.load();
+      npLastSaved = 0;
+      renderNowPlaying();
+      updateMediaSession(nowPlayingItem);
+      media.addEventListener("loadedmetadata", () => {
+        const rec = progressByID.get(part.id);
+        const resume = (rec && rec.seconds) || 0;
+        if (resume > 5 && resume < Math.max((media.duration || 0) - 8, 0)) {
+          media.currentTime = resume;
+        }
+        if (autoplay) media.play().catch(() => {});
+        onTimeUpdate();
+      }, { once: true });
+    }
+
+    function advanceBookPart() {
+      if (!nowPlayingParts) return false;
+      if (nowPlayingPartIndex + 1 >= nowPlayingParts.length) return false;
+      nowPlayingPartIndex += 1;
+      loadBookPart(true);
+      return true;
+    }
+
+    // The item progress must be written to: the part being played for a book,
+    // the item itself otherwise. null when nothing is loaded.
+    function currentProgressTargetID() {
+      const part = nowPlayingParts && nowPlayingParts[nowPlayingPartIndex];
+      if (part) return part.id;
+      return nowPlayingItem ? nowPlayingItem.id : null;
+    }
+
+    function bookPartLabel() {
+      if (!nowPlayingParts) return "";
+      return `Part ${nowPlayingPartIndex + 1} of ${nowPlayingParts.length}`;
+    }
+
+    // Shared one-time setup for the player panel: visibility, the expand
+    // control, the status line, and the media-session metadata.
+    function prepareNowPlayingShell(item, mode) {
+      const host = $("#nowPlaying");
+      if (host) {
+        host.hidden = false;
+        // Video starts visible; audio never shows a video surface.
+        host.classList.toggle("np-audio-mode", mode === "audio");
+      }
+      if (typeof document !== "undefined") document.body.classList.add("np-visible");
+      const expand = $("#npExpand");
+      if (expand) {
+        expand.hidden = mode === "audio";
+        expand.textContent = "⤡";
+        expand.setAttribute("aria-label", "Hide video and keep playing");
+        expand.setAttribute("aria-pressed", "true");
+      }
+      const status = $("#npStatus");
+      if (status) {
+        status.textContent = mode === "audio"
+          ? "Plays in the background — these controls stay while you browse."
+          : "";
+      }
+      updateMediaSession(item);
     }
 
     function startPlayback(item, resumeAt = 0) {
@@ -411,6 +509,10 @@
       saveProgress(true);
 
       nowPlayingItem = item;
+      // A single-file item clears any book queue, or the "ended" handler would
+      // try to walk the previous book's parts.
+      nowPlayingParts = null;
+      nowPlayingPartIndex = 0;
       nowPlayingMode = plan.mode;
       npLastSaved = 0;
       npSeeking = false;
@@ -428,29 +530,8 @@
         }
       };
 
-      const host = $("#nowPlaying");
-      if (host) {
-        host.hidden = false;
-        // Video starts visible; audio never shows a video surface.
-        host.classList.toggle("np-audio-mode", plan.mode === "audio");
-      }
-      if (typeof document !== "undefined") document.body.classList.add("np-visible");
-      const expand = $("#npExpand");
-      if (expand) {
-        expand.hidden = plan.mode === "audio";
-        expand.textContent = "⤡";
-        expand.setAttribute("aria-label", "Hide video and keep playing");
-        expand.setAttribute("aria-pressed", "true");
-      }
-
-      const status = $("#npStatus");
-      if (status) {
-        status.textContent = plan.mode === "audio"
-          ? "Plays in the background — these controls stay while you browse."
-          : "";
-      }
+      prepareNowPlayingShell(item, plan.mode);
       renderNowPlaying();
-      updateMediaSession(item);
 
       media.addEventListener("loadedmetadata", () => {
         const duration = media.duration || 0;
@@ -482,6 +563,8 @@
         media.load();
       }
       nowPlayingItem = null;
+      nowPlayingParts = null;
+      nowPlayingPartIndex = 0;
       const host = $("#nowPlaying");
       if (host) host.hidden = true;
       if (typeof document !== "undefined") document.body.classList.remove("np-visible");
@@ -496,18 +579,26 @@
 
     // Progress is written on a 15s cadence, on pause/ended, and when the page
     // is hidden or unloaded, so background listening still records position.
+    //
+    // For a multi-part book the record belongs to the part being played, not to
+    // the book's head row: the server keys progress by item id, and the head
+    // row's own id is a real file that the listener is not currently hearing.
+    // Writing the head's id would resume the book at the wrong file.
     function saveProgress(force = false) {
       const media = npMedia();
       const item = nowPlayingItem;
       if (!item || !media || !media.duration || !Number.isFinite(media.currentTime)) return;
+      const part = nowPlayingParts && nowPlayingParts[nowPlayingPartIndex];
+      const targetID = currentProgressTargetID();
+      if (!targetID) return;
       if (!force && Math.abs(media.currentTime - npLastSaved) < 15) return;
       npLastSaved = media.currentTime;
       const payload = { seconds: media.currentTime, duration: media.duration };
-      progressByID.set(item.id, {
-        itemID: item.id, seconds: payload.seconds, duration: payload.duration,
+      progressByID.set(targetID, {
+        itemID: targetID, seconds: payload.seconds, duration: payload.duration,
         updatedAt: new Date().toISOString(),
       });
-      fetch(api("/api/progress/" + item.id), {
+      fetch(api("/api/progress/" + targetID), {
         method: "POST", headers: { "Content-Type": "application/json" },
         body: JSON.stringify(payload), keepalive: true,
       }).catch(() => {});
@@ -525,7 +616,10 @@
       }
       const sub = $("#npSub");
       if (sub) {
-        sub.textContent = [kindLabel(item.kind), item.author || item.studio || "", item.year || ""]
+        // "Part 140 of 147" is the only way to tell where you are in a book
+        // whose files are all titled the same thing.
+        sub.textContent = [kindLabel(item.kind), item.author || item.studio || "",
+                           item.year || "", bookPartLabel()]
           .filter(Boolean).join(" • ");
       }
       const art = $("#npArt");
@@ -600,11 +694,23 @@
       if (!session.setPositionState) return;
       const media = npMedia();
       if (!media || !media.duration || !Number.isFinite(media.duration) || media.duration <= 0) return;
+      // A multi-part book is one title to the lock screen, so the scrubber must
+      // span the whole book. Without the offset, a 7-hour book at part 140 of
+      // 147 reported a 2-minute duration on the lock screen.
+      const part = nowPlayingParts && nowPlayingParts[nowPlayingPartIndex];
+      let offset = 0;
+      if (part) {
+        for (const p of nowPlayingParts) {
+          if (p.id === part.id) break;
+          offset += p.durationSeconds || 0;
+        }
+      }
+      const total = part ? offset + (media.duration || 0) : media.duration;
       try {
         session.setPositionState({
-          duration: media.duration,
+          duration: total,
           playbackRate: media.playbackRate || 1,
-          position: Math.min(Math.max(media.currentTime || 0, 0), media.duration),
+          position: Math.min(Math.max(offset + (media.currentTime || 0), 0), total),
         });
       } catch { /* transient state, safe to skip */ }
     }
@@ -651,7 +757,13 @@
     on("#npMedia", "timeupdate", () => onTimeUpdate());
     on("#npMedia", "play", () => onPlayStateChange());
     on("#npMedia", "pause", () => { onPlayStateChange(); saveProgress(true); });
-    on("#npMedia", "ended", () => { onPlayStateChange(); saveProgress(true); });
+    on("#npMedia", "ended", () => {
+      // A multi-part book continues into the next file; a single-file item, and
+      // the last part of a book, just stop as before.
+      if (advanceBookPart()) return;
+      onPlayStateChange();
+      saveProgress(true);
+    });
     on("#npMedia", "loadedmetadata", () => onTimeUpdate());
     on("#npMedia", "error", () => {
       const status = $("#npStatus");
@@ -1171,6 +1283,19 @@
                 audiobook:"Audiobook", ebook:"Book", all:"All" })[v] || v;
     }
     function progressFor(id) { return progressByID.get(id) ?? null; }
+    // Book-aware progress. A single-file item is its own progress record; a
+    // multi-part book is the sum over its parts, because one part's seconds
+    // against the whole book's runtime reports a finished book as barely
+    // started. Every call site that decides "watched?", "in progress?" or draws
+    // a resume bar must use this rather than progressFor(id).
+    function progressForItem(item) {
+      const parts = partsOf(item);
+      if (!parts) return progressByID.get(item.id) ?? null;
+      const agg = bookProgress(parts);
+      if (!agg.seconds) return null;
+      return { itemID: item.id, seconds: agg.seconds, duration: agg.duration,
+               updatedAt: agg.updatedAt };
+    }
     function isWatched(p, item) {
       if (!p || p.seconds <= 0) return false;
       const dur = p.duration || item.durationSeconds || 0;
@@ -1181,7 +1306,11 @@
       return !isWatched(p, item);
     }
     function runtimeLabel(item) {
-      const d = item.durationSeconds;
+      // A multi-part book is as long as all of its files together. Showing the
+      // head part's runtime made a 7.8-hour book read as "2:22".
+      const parts = partsOf(item);
+      const d = parts ? parts.reduce((n, p) => n + (p.durationSeconds || 0), 0)
+                      : item.durationSeconds;
       if (!d || d <= 0) return "";
       return formatTime(d);
     }
@@ -1238,6 +1367,18 @@
                          }); break;
         default:         list.sort((a,b)=>a.title.localeCompare(b.title));
       }
+      // A multi-part book is ONE card, represented by its head part, whatever
+      // the dedup setting is: the trailing files are reachable only through the
+      // head, so keeping any other part would orphan the ones before it. This
+      // is deliberately client-side -- /api/library stays one row per file,
+      // which the native clients rely on for their own part handling.
+      if (list.some(i => i.bookGroupID && bookGroupByID.has(i.bookGroupID))) {
+        list = list.filter(i => {
+          const gid = i.bookGroupID;
+          if (!gid || !bookGroupByID.has(gid)) return true;
+          return bookGroupByID.get(gid)[0].id === i.id;
+        });
+      }
       if (dedupEnabled) {
         // Keep the best copy of each (kind,title); default to the highest
         // definition (rankCopy), but a copy with watch progress wins so the
@@ -1250,7 +1391,7 @@
           const key = itemGroupKey.get(i.id) ?? copyKey(i);
           const prev = byKey.get(key);
           if (!prev) { byKey.set(key, i); continue; }
-          const prevP = progressFor(prev.id), curP = progressFor(i.id);
+          const prevP = progressForItem(prev), curP = progressForItem(i);
           const prevActive = inProgress(prevP, prev) || isWatched(prevP, prev);
           const curActive = inProgress(curP, i) || isWatched(curP, i);
           const better = curActive !== prevActive ? curActive
@@ -1260,8 +1401,8 @@
         list = Array.from(byKey.values());
       }
       if (watchSel !== "all") {
-        list = list.filter(i => watchSel === "watched" ? isWatched(progressFor(i.id), i)
-                                                       : !isWatched(progressFor(i.id), i));
+        list = list.filter(i => watchSel === "watched" ? isWatched(progressForItem(i), i)
+                                                       : !isWatched(progressForItem(i), i));
       }
       return list;
     }
@@ -1303,7 +1444,11 @@
            .replace(/\b(dual|multi|subs?|ws)\b/gi, "")
            .replace(/\bv\d+\b/gi, "")                   // V2 / v3 re-encode tags
            .replace(/[^a-z0-9]+/g, "");
-      return [i.kind, t, i.year || 0, movieSplitPart(i), i.kind === "tvShow" ? (i.showGroupID || i.showTitle || i.id) : "", i.kind === "tvShow" ? (i.seasonNumber ?? "unknown") : ""].join("\u0000");
+      // A multi-file audiobook's parts share a title and year, but distinct
+      // recordings have distinct bookGroupIDs. Keep those recordings separate
+      // while still grouping every part of one recording together.
+      const bookIdentity = i.kind === "audiobook" && i.bookGroupID ? i.bookGroupID : "";
+      return [i.kind, t, i.year || 0, movieSplitPart(i), i.kind === "tvShow" ? (i.showGroupID || i.showTitle || i.id) : "", i.kind === "tvShow" ? (i.seasonNumber ?? "unknown") : "", bookIdentity].join("\u0000");
     }
     // Near-duplicate folding: typos ("007 Jame" vs "007 James"), junk tails
     // ("-1", " a", "-cd1", "800MB"), diacritics (Nausicaa/Nausicaä), and
@@ -1361,8 +1506,90 @@
       const title = k.split("\u0000")[1] || "";
       return GENERIC_EXTRAS.has(title) || GENERIC_EXTRA_PREFIXES.some(prefix => title.startsWith(prefix));
     }
+    // A book delivered as many files is ONE book with N parts, not N books.
+    // The server already says so on every row: bookGroupID names the book,
+    // bookPartIndex orders the file within it, bookPartCount gives the total.
+    //
+    // This registry is what turns that into something a person can use. Without
+    // it a 147-file recording showed a 2-minute runtime on its card (the length
+    // of whichever single part the row carried) and pressing play streamed that
+    // one part and stopped. The parts are joined here so the card can show the
+    // book's real length and the player can walk the whole thing.
+    //
+    // bookParts holds headPartID -> ordered parts. A single-file book is not in
+    // here at all, so every existing code path is untouched for the common case.
+    let bookParts = new Map();      // head part id -> [part, part, ...] in order
+    let bookGroupByID = new Map();  // bookGroupID  -> [part, part, ...] in order
+
+    function partOrder(a, b) {
+      const ia = Number(a.bookPartIndex) || 0, ib = Number(b.bookPartIndex) || 0;
+      if (ia !== ib) return ia - ib;
+      // Equal or missing index: fall back to runtime so the order is at least
+      // stable, then to id so it is deterministic.
+      const da = a.durationSeconds || 0, db = b.durationSeconds || 0;
+      if (da !== db) return da - db;
+      return String(a.id).localeCompare(String(b.id));
+    }
+
+    function rebuildBookGroups() {
+      bookParts = new Map();
+      bookGroupByID = new Map();
+      for (const i of items) {
+        if (i.isPlaceholder || i.kind !== "audiobook" || !i.bookGroupID) continue;
+        let g = bookGroupByID.get(i.bookGroupID);
+        if (!g) { g = []; bookGroupByID.set(i.bookGroupID, g); }
+        g.push(i);
+      }
+      for (const [groupID, parts] of bookGroupByID) {
+        if (parts.length < 2) { bookGroupByID.delete(groupID); continue; }
+        parts.sort(partOrder);
+        bookParts.set(parts[0].id, parts);
+      }
+    }
+
+    // partsOf returns the ordered files of the book an item belongs to, or null
+    // for a book that is a single file (and for anything that is not a book).
+    function partsOf(item) {
+      if (!item || item.kind !== "audiobook") return null;
+      return bookParts.get(item.id) || null;
+    }
+
+    function isSameBook(a, b) {
+      return !!a && !!b && !!a.bookGroupID && a.bookGroupID === b.bookGroupID;
+    }
+
+    // A book's progress is the sum over its parts, against the sum of their
+    // runtimes. Reporting one part's seconds against the whole book's duration
+    // would show a finished book as 0.5% listened.
+    function bookProgress(parts) {
+      let seconds = 0, duration = 0, updatedAt = "";
+      for (const p of parts) {
+        duration += p.durationSeconds || 0;
+        const rec = progressByID.get(p.id);
+        if (!rec) continue;
+        seconds += rec.seconds || 0;
+        if ((rec.updatedAt || "") > updatedAt) updatedAt = rec.updatedAt || "";
+      }
+      return { seconds, duration, updatedAt };
+    }
+
+    // resumePartIndex is where playback should start: the first part that was
+    // started and not finished, else the first part. Resuming a 147-part book at
+    // part 1 because the aggregate looked unstarted is the failure mode here.
+    function resumePartIndex(parts) {
+      for (let i = 0; i < parts.length; i++) {
+        const rec = progressByID.get(parts[i].id);
+        if (!rec || rec.seconds <= 5) continue;
+        const dur = rec.duration || parts[i].durationSeconds || 0;
+        if (dur > 0 && rec.seconds / dur >= 0.96) continue;  // finished; keep going
+        return i;
+      }
+      return 0;
+    }
+
     function rebuildCopyGroups() {
       listIndexGeneration++;
+      rebuildBookGroups();
       copyGroups = new Map();
       const extrasGroups = new Map();  // generic bonus-feature titles: never merged
       const yearsByKey = new Map();
@@ -1488,7 +1715,7 @@
     function sortCopyGroups() {
       for (const group of copyGroups.values()) {
         group.sort((a,b) => {
-          const pa = progressFor(a.id), pb = progressFor(b.id);
+          const pa = progressForItem(a), pb = progressForItem(b);
           const aa = inProgress(pa,a)||isWatched(pa,a), ab = inProgress(pb,b)||isWatched(pb,b);
           if (aa !== ab) return aa ? -1 : 1;
           return rankCopy(b) - rankCopy(a);
@@ -1566,7 +1793,7 @@
     }
 
     function cardHTML(item, opts = {}) {
-      const p = progressFor(item.id);
+      const p = progressForItem(item);
       const watched = isWatched(p, item);
       const pct = (() => {
         if (!p || p.seconds <= 0) return 0;
@@ -1579,8 +1806,12 @@
       const copies = opts.copyCount != null ? opts.copyCount : (dedupEnabled ? copiesOf(item).length : 1);
       const h = copies > 1 ? copyHeight(item) : 0;
       const qualityBit = h ? (h >= 2160 ? "4K" : h + "p") : "";
+      const parts = partsOf(item);
       const bookContext = item.kind === "audiobook" ? [item.author, item.series, item.seriesNumber ? `#${item.seriesNumber}` : ""].filter(Boolean).join(" · ") : "";
-      const metaBits = [bookContext, item.year || "", runtimeLabel(item), qualityBit].filter(Boolean).join(" • ");
+      // A book delivered as many files says so, so the runtime is not read as a
+      // 2-minute book. "147 files" is the honest description of the media.
+      const partsBit = parts ? `${parts.length} files` : "";
+      const metaBits = [bookContext, item.year || "", runtimeLabel(item), partsBit, qualityBit].filter(Boolean).join(" • ");
       const badge = watched
         ? `<span class="badge watched">WATCHED</span>`
         : (pct > 0 ? `<span class="badge unwatched">${Math.round(100-pct)}% LEFT</span>` : "");
@@ -2449,13 +2680,13 @@
             <div class="catalog-shelf">${shown.map(renderCard).join("")}</div>${toggle}</section>`;
         };
         const fresh = source => source
-          .filter(i => !isWatched(progressFor(i.id), i) && !inProgress(progressFor(i.id), i))
+          .filter(i => !isWatched(progressForItem(i), i) && !inProgress(progressForItem(i), i))
           .sort((a, b) => (b.year || 0) - (a.year || 0) || (a.title || "").localeCompare(b.title || ""));
         const showGroups = source => buildShowGroups(new Set(source.filter(i => i.kind === "tvShow").map(i => i.id)));
         const tabLabel = ({ documentaries:"Documentaries", audiobooks:"Audiobooks", books:"Books" })[activeTab] || "Library";
         let blocks = "";
         if (activeTab === "all") {
-          const cont = visible.filter(i => inProgress(progressFor(i.id), i)).sort(byUpdated).slice(0, 12);
+          const cont = visible.filter(i => inProgress(progressForItem(i), i)).sort(byUpdated).slice(0, 12);
           const movies = visible.filter(i => i.kind === "movie").slice(0, 12);
           const shows = showGroups(visible).slice(0, 12);
           const documentaries = visible.filter(i => i.kind === "documentary").slice(0, 12);
@@ -2486,7 +2717,7 @@
                    curatedRails(CURATED_KINDS.tv) +
                    fullShelf("All TV shows", `${shows.length.toLocaleString()} shows in your catalog`, shows, showCardHTML);
         } else {
-          const cont = visible.filter(i => inProgress(progressFor(i.id), i)).sort(byUpdated).slice(0, 10);
+          const cont = visible.filter(i => inProgress(progressForItem(i), i)).sort(byUpdated).slice(0, 10);
           const picks = fresh(visible).slice(0, 12);
           const continueLabel = activeTab === "audiobooks" ? "Continue Listening" : activeTab === "books" ? "Continue Reading" : "Continue Watching";
           const upNextLabel = activeTab === "audiobooks" ? "Up Next" : activeTab === "books" ? "Next Reads" : "Unwatched Picks";
@@ -2508,7 +2739,7 @@
       }
       const continuing = items.filter(i =>
         ["movie","tvShow","documentary"].includes(i.kind) &&
-        inProgress(progressFor(i.id), i))
+        inProgress(progressForItem(i), i))
         .sort((a,b)=>(progressByID.get(b.id)?.updatedAt || "").localeCompare(
                       progressByID.get(a.id)?.updatedAt || ""));
 
@@ -2826,12 +3057,22 @@
         openMovieDetail(id);
         return;
       }
-      const p = progressFor(id);
+      const p = progressForItem(item);
       const plan = playbackPlan(item);
-      const resumeAt = p && p.seconds > 5 ? p.seconds : 0;
       const isCurrent = nowPlayingItem && nowPlayingItem.id === item.id;
       const media = npMedia();
       const playingNow = isCurrent && media && !media.paused;
+      // For a book the resume position is the offset of the part to pick up in,
+      // not the aggregate: "Resume at 6:12:04" is only meaningful within a file.
+      const bookPartsForItem = partsOf(item);
+      let resumeAt = p && p.seconds > 5 ? p.seconds : 0;
+      let resumeLabel = "";
+      if (bookPartsForItem) {
+        const idx = resumePartIndex(bookPartsForItem);
+        const rec = progressByID.get(bookPartsForItem[idx].id);
+        resumeAt = (rec && rec.seconds) || 0;
+        if (idx > 0) resumeLabel = `Resume at part ${idx + 1}`;
+      }
 
       // Playback lives in the persistent controller so it survives closing
       // this modal; here we only show metadata and a transport button.
@@ -2839,6 +3080,11 @@
         ? `<div class="play-hint">${mediaLabel(plan.mode)} plays in the player at the bottom and keeps playing while you browse.</div>`
         : `<div class="not-playable"><strong>.${escapeHTML((item.format || "?").toUpperCase())}</strong> can't play here.
              <a href="${api("/stream/" + item.id)}" target="_blank" rel="noopener">Open in a native player</a>.</div>`;
+      // A 147-file book has no meaningful "editions" list -- the files are its
+      // parts, not alternate copies of it.
+      const partsHTML = bookPartsForItem
+        ? `<div class="detail-facets"><span class="detail-link">${bookPartsForItem.length} files · plays through in order</span></div>`
+        : "";
 
       $("#detailTitle").textContent =
         item.showTitle && item.seasonNumber != null
@@ -2856,7 +3102,8 @@
       const detailFacetHTML = detailFacets.length ? `<div class="detail-facets" aria-label="Related audiobook filters">${detailFacets.join("")}</div>` : "";
       const summaryBits = [item.summary, item.subtitle].filter(Boolean)
         .map(s => `<p class="summary">${escapeHTML(s)}</p>`).join("");
-      const playLabel = playingNow ? "Pause" : resumeAt ? "Resume at " + formatTime(resumeAt) : "Play";
+      const playLabel = playingNow ? "Pause"
+        : resumeLabel || (resumeAt ? "Resume at " + formatTime(resumeAt) : "Play");
 
       $("#detailBody").innerHTML = `
         ${playerHTML}
@@ -2865,8 +3112,9 @@
           .filter(Boolean).join(" • ")}</div>
         ${summaryBits}
         ${detailFacetHTML}
+        ${partsHTML}
         ${tags ? `<div class="tagrow">${tags}</div>` : ""}
-        ${editionsHTML(item)}
+        ${bookPartsForItem ? "" : editionsHTML(item)}
         <div class="actions">
           ${plan ? `<button class="primary" onclick="startPlaybackById('${escapeHTML(item.id)}')">${playLabel}</button>` : ""}
           <a href="${api("/stream/" + item.id)}" target="_blank" rel="noopener">Open stream URL</a>

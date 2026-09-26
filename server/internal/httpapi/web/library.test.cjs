@@ -5,11 +5,33 @@ const vm = require('node:vm');
 
 function catalog(items, progress = []) {
   const source = fs.readFileSync(`${__dirname}/library.js`, 'utf8');
+  // A minimal DOM: visibleItems() reads the filter selects through $, and the
+  // book-part tests need to drive them ("watched" / "unwatched").
+  const fields = { q: '', watched: 'all', sort: 'title', coverFilter: 'all' };
+  const $ = sel => {
+    const key = String(sel).replace(/^[#.]/, '');
+    const node = { dataset: {}, hidden: false, style: {},
+             classList: { toggle(){}, add(){}, remove(){}, contains(){ return false; } },
+             addEventListener(){}, removeEventListener(){}, querySelector(){ return null; },
+             querySelectorAll(){ return []; }, setAttribute(){}, getAttribute(){ return null; },
+             appendChild(){}, remove(){}, focus(){}, closest(){ return null; },
+             textContent: '', innerHTML: '', load(){}, play(){ return Promise.resolve(); },
+             pause(){}, duration: 0, currentTime: 0, paused: true, src: '' };
+    // The selects are read through `.value`, and a test has to be able to set
+    // them, so the property reads and writes the shared field rather than a copy.
+    return Object.defineProperty(node, 'value', {
+      get() { return fields[key] ?? ''; }, set(v) { fields[key] = v; }, configurable: true,
+    });
+  };
   const context = vm.createContext({ window: { Sonder: {
     api: value => value,
     escapeHTML: value => String(value),
     formatTime: value => String(value),
-  } } });
+  } }, $, document: { createElement: () => ({ canPlayType: () => 'probably' }),
+                     addEventListener(){}, querySelector: $, querySelectorAll(){ return []; },
+                     body: { classList: { add(){}, remove(){} } } },
+    navigator: {}, localStorage: { getItem: () => null, setItem(){}, removeItem(){} } });
+  context.fields = fields;
   vm.runInContext(source.slice(0, source.indexOf('    function seasonLabel')), context);
   context.input = items;
   context.progress = progress;
@@ -535,5 +557,148 @@ test('Space Bunny is a registered palette, not just a stylesheet', () => {
   assert.match(webui, /preset != "dark" && preset != "techmore" && preset != "bunny"/);
   const handlers = fs.readFileSync(`${__dirname}/../handlers.go`, 'utf8');
   assert.match(handlers, /case "bunny":[\s\S]{0,320}?Accent:\s+"#6FE3C3"/);
+});
+
+// --- multi-part books -----------------------------------------------------
+//
+// A book delivered as many files is one book. The real library has a 147-file
+// recording whose head part is 142 seconds and whose whole runtime is 7.8
+// hours: before this, the card read "2:22" and pressing play streamed that one
+// file and stopped.
+
+const part = (id, bookGroupID, bookPartIndex, durationSeconds, extra = {}) => ({
+  id, title: 'Complications: A Surgeon\'s Notes', kind: 'audiobook', year: 2003,
+  format: 'm4b', bookGroupID, bookPartIndex, bookPartCount: 3,
+  durationSeconds, ...extra,
+});
+
+test('a multi-part book is one card, represented by its head part', () => {
+  const get = catalog([
+    part('p1', 'bk', 1, 142), part('p2', 'bk', 2, 900), part('p3', 'bk', 3, 800),
+    { id: 'single', title: 'Dune', kind: 'audiobook', year: 1965, format: 'm4b', durationSeconds: 3600 },
+  ]);
+  const shown = get('visibleItems().map(i => i.id)');
+  assert.deepEqual(shown.sort(), ['p1', 'single']);
+  // The head part is what represents the book, never a trailing file.
+  assert.equal(get('visibleItems().some(i => i.id === "p2")'), false);
+});
+
+test('a book collapses to one card even with dedup switched off', () => {
+  // The collapse is about the book's identity, not about duplicate suppression.
+  // Leaving it inside the dedup branch meant "show every copy" turned a
+  // 147-part book back into 147 cards.
+  const get = catalog([
+    part('p1', 'bk', 1, 142), part('p2', 'bk', 2, 900), part('p3', 'bk', 3, 800),
+  ]);
+  assert.equal(get('(dedupEnabled = false, visibleItems().length)'), 1);
+});
+
+test('a book card reports the whole runtime, not one file', () => {
+  const get = catalog([part('p1', 'bk', 1, 142), part('p2', 'bk', 2, 900), part('p3', 'bk', 3, 800)]);
+  // The harness stubs formatTime to String(), so this asserts the *total* the
+  // card is given -- 1842s rather than the head part's 142s.
+  assert.equal(get('runtimeLabel(items[0])'), '1842');
+  assert.match(get('cardHTML(items[0])'), /3 files/);
+});
+
+test('two different books that share a title stay two cards', () => {
+  // The grouping is by bookGroupID, never by title: two recordings of the same
+  // book are different books.
+  const get = catalog([
+    part('a1', 'bkA', 1, 600), part('a2', 'bkA', 2, 600),
+    part('b1', 'bkB', 1, 700), part('b2', 'bkB', 2, 700),
+  ]);
+  assert.equal(get('visibleItems().length'), 2);
+});
+
+test('parts are ordered by their index, not by arrival', () => {
+  const get = catalog([part('p3', 'bk', 3, 800), part('p1', 'bk', 1, 142), part('p2', 'bk', 2, 900)]);
+  // Only the head part is a key: a trailing file is reachable *through* the
+  // head, which is why the head is what represents the book.
+  assert.equal(get('partsOf(items[0])'), null);
+  assert.deepEqual(get('partsOf(items.find(i => i.id === "p1")).map(p => p.id)'), ['p1', 'p2', 'p3']);
+});
+
+test('a book is not finished until every part is', () => {
+  // One part's seconds against the whole book's runtime reported a completed
+  // recording as barely started.
+  const get = catalog(
+    [part('p1', 'bk', 1, 1000), part('p2', 'bk', 2, 1000), part('p3', 'bk', 3, 1000)],
+    [{ id: 'p1', seconds: 990, duration: 1000 }, { id: 'p2', seconds: 990, duration: 1000 }],
+  );
+  const agg = get('progressForItem(items[0])');
+  assert.equal(agg.seconds, 1980);
+  assert.equal(agg.duration, 3000);
+  assert.equal(get('isWatched(progressForItem(items[0]), items[0])'), false);
+  assert.equal(get('inProgress(progressForItem(items[0]), items[0])'), true);
+});
+
+test('a single-file book is untouched by any of this', () => {
+  const get = catalog([{ id: 'dune', title: 'Dune', kind: 'audiobook', year: 1965, format: 'm4b', durationSeconds: 3600 }],
+                       [{ id: 'dune', seconds: 1800, duration: 3600 }]);
+  assert.equal(get('partsOf(items[0])'), null);
+  assert.equal(get('progressForItem(items[0]).seconds'), 1800);
+  assert.equal(get('runtimeLabel(items[0])'), '3600');
+  assert.equal(get('visibleItems().length'), 1);
+});
+
+test('resume opens the part that was started, not the first one', () => {
+  const get = catalog(
+    [part('p1', 'bk', 1, 100), part('p2', 'bk', 2, 100), part('p3', 'bk', 3, 100)],
+    [{ id: 'p1', seconds: 100, duration: 100 }, { id: 'p2', seconds: 40, duration: 100 }],
+  );
+  assert.equal(get('resumePartIndex(partsOf(items[0]))'), 1);
+});
+
+test('resume skips parts that are already finished', () => {
+  const get = catalog(
+    [part('p1', 'bk', 1, 100), part('p2', 'bk', 2, 100), part('p3', 'bk', 3, 100)],
+    [{ id: 'p1', seconds: 100, duration: 100 }, { id: 'p2', seconds: 50, duration: 100 }],
+  );
+  assert.equal(get('resumePartIndex(partsOf(items.find(i => i.id === "p1")))'), 1);
+});
+
+test('a book nobody started opens at part one', () => {
+  const get = catalog([part('p1', 'bk', 1, 100), part('p2', 'bk', 2, 100)]);
+  assert.equal(get('resumePartIndex(partsOf(items[0]))'), 0);
+});
+
+test('the player walks the parts and stops after the last one', () => {
+  const get = catalog([part('p1', 'bk', 1, 100), part('p2', 'bk', 2, 100), part('p3', 'bk', 3, 100)]);
+  // advanceBookPart walks forward and reports when the book is over, which is
+  // what stops the "ended" handler from looping past the last file.
+  assert.equal(get('(startBookPlaybackTest = (nowPlayingParts = partsOf(items[0]), nowPlayingPartIndex = 0, advanceBookPart()))'), true);
+  assert.equal(get('nowPlayingPartIndex'), 1);
+  assert.equal(get('advanceBookPart()'), true);
+  assert.equal(get('nowPlayingPartIndex'), 2);
+  assert.equal(get('advanceBookPart()'), false);
+});
+
+test('progress is written to the part being played, not the book head', () => {
+  // The server keys progress by item id, and the head row's id is a real file
+  // the listener is not currently hearing. Writing the head's id would resume
+  // the book at the wrong file.
+  const get = catalog([part('p1', 'bk', 1, 100), part('p2', 'bk', 2, 100)]);
+  assert.equal(get('(nowPlayingParts = partsOf(items[0]), nowPlayingPartIndex = 1, currentProgressTargetID())'), 'p2');
+  assert.equal(get('(nowPlayingParts = null, currentProgressTargetID())'), null);
+});
+
+test('the now-playing panel says which part of the book is playing', () => {
+  const get = catalog([part('p1', 'bk', 1, 100), part('p2', 'bk', 2, 100), part('p3', 'bk', 3, 100)]);
+  assert.equal(get('(nowPlayingParts = partsOf(items[0]), nowPlayingPartIndex = 2, bookPartLabel())'), 'Part 3 of 3');
+});
+
+test('a single-file book is not part-labelled', () => {
+  const get = catalog([{ id: 'dune', title: 'Dune', kind: 'audiobook', year: 1965, format: 'm4b', durationSeconds: 3600 }]);
+  assert.equal(get('bookPartLabel()'), '');
+});
+
+test('a book is filtered by the watched filter using its whole progress', () => {
+  const get = catalog(
+    [part('p1', 'bk', 1, 1000), part('p2', 'bk', 2, 1000)],
+    [{ id: 'p1', seconds: 1000, duration: 1000 }, { id: 'p2', seconds: 1000, duration: 1000 }],
+  );
+  assert.equal(get('($("#watched").value = "watched", visibleItems().length)'), 1);
+  assert.equal(get('($("#watched").value = "unwatched", visibleItems().length)'), 0);
 });
 

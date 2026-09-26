@@ -653,6 +653,11 @@ type catalogPart struct {
 	Index           int     `json:"index"`
 	DurationSeconds float64 `json:"durationSeconds"`
 	PosterURL       *string `json:"posterURL"`
+	// ProgressSeconds is this file's own position. Without it a client cannot
+	// tell which part the listener stopped at, because the book's aggregate
+	// progress says only that the book is part-watched -- and a 147-file book
+	// would then always reopen at part 1.
+	ProgressSeconds float64 `json:"progressSeconds,omitempty"`
 }
 
 // catalogConflict reports a book folder whose files could not be merged into
@@ -935,6 +940,7 @@ func (s *Server) collapseIntoBooks(all []*library.Item, q string) []catalogItem 
 				Index:           i + 1,
 				DurationSeconds: p.DurationSeconds,
 				PosterURL:       p.PosterURL,
+				ProgressSeconds: p.ProgressSeconds,
 			})
 			if entry.PosterURL == nil && p.PosterURL != nil {
 				entry.PosterURL = p.PosterURL
@@ -995,13 +1001,17 @@ func (s *Server) bookPartsFor(item *library.Item) ([]catalogPart, *catalogConfli
 	parts := make([]catalogPart, 0, g.Count)
 	for _, p := range all {
 		if pg, ok := groups[p.ID]; ok && pg.ID == g.ID {
-			parts = append(parts, catalogPart{
+			part := catalogPart{
 				ID:              p.ID,
 				Title:           p.Title,
 				Index:           pg.Index,
 				DurationSeconds: p.DurationSeconds,
 				PosterURL:       p.PosterURL,
-			})
+			}
+			if rec, found := s.store.ProgressFor(p.ID); found {
+				part.ProgressSeconds = rec.Seconds
+			}
+			parts = append(parts, part)
 		}
 	}
 	sort.Slice(parts, func(a, b int) bool { return parts[a].Index < parts[b].Index })
