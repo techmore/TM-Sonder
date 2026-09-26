@@ -2,7 +2,11 @@ name: CI
 
 on:
   push:
-    branches: [main, master, go-port, fix/**, codex/**]
+    # Every branch, not a hand-maintained list. The list was [main, master,
+    # go-port, fix/**, codex/**], so work on dev-container -- where the container
+    # machine and the audiobooks work actually lived -- never ran CI at all.
+    # A green main said nothing about whether those branches were buildable.
+    branches: ["**"]
   pull_request:
 
 jobs:
@@ -61,6 +65,19 @@ jobs:
           LDFLAGS="-s -w -X main.version=${VERSION}"
           CGO_ENABLED=0 GOOS=darwin GOARCH=arm64 go build -trimpath -ldflags "$LDFLAGS" -o ../bin/sonder-darwin-arm64 ./cmd/sonder
           CGO_ENABLED=0 GOOS=linux  GOARCH=arm64 go build -trimpath -ldflags "$LDFLAGS" -o ../bin/sonder-linux-arm64  ./cmd/sonder
+          # linux/amd64 is the deploy target: the server host is x86_64. It was
+          # missing here, so the architecture that actually runs in production
+          # was the one architecture CI never built.
+          CGO_ENABLED=0 GOOS=linux  GOARCH=amd64 go build -trimpath -ldflags "$LDFLAGS" -o ../bin/sonder-linux-amd64  ./cmd/sonder
+      - name: Web client tests
+        run: node --test server/internal/httpapi/web/library.test.cjs
+      - name: Deploy script tests
+        # The deploy script is what runs on the server, and it is the one piece
+        # of this repo that cannot be exercised by the server's own test suite.
+        # Its architecture guard and both rollback paths are driven here against
+        # stubs, which is how the same-second backup collision was found.
+        run: go test ./...
+        working-directory: deploy
       - name: Upload artifacts
         uses: actions/upload-artifact@v4
         with:

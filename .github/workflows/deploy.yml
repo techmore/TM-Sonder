@@ -1,0 +1,119 @@
+# Deploy to the server host when main moves.
+#
+# Why a self-hosted runner: GitHub's hosted runners sit on the public internet
+# and cannot reach the server. It is behind a NAT with only 80/443/8096
+# forwarded, and administration happens over Tailscale (100.x). An SSH deploy
+# from a hosted runner would need port 22 exposed to the internet, which is not a
+# trade worth making for a convenience.
+#
+# A self-hosted runner runs *on* the server, so it needs no inbound access at
+# all: GitHub tells it what to do over an outbound HTTPS connection. That also
+# means the deploy happens where the binary and the systemd user unit already
+# are, with no key material in GitHub secrets.
+#
+# One-time setup, on the server, needs a registration token from the repo's
+# Actions settings (see docs/local-to-production.md).
+
+name: Deploy
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+# One deploy at a time. Two overlapping deploys swapping the same binary would
+# race on the backup and the health check.
+concurrency:
+  group: tm-sonder-deploy
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: Build and verify
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.25"
+
+      - name: Format check
+        working-directory: server
+        run: |
+          unformatted=$(gofmt -l .)
+          if [ -n "$unformatted" ]; then
+            echo "gofmt needed on:"; echo "$unformatted"; exit 1
+          fi
+
+      - name: Vet
+        working-directory: server
+        run: go vet ./...
+
+      - name: Test
+        working-directory: server
+        run: go test -count=1 ./...
+
+      - name: Web client tests
+        run: node --test server/internal/httpapi/web/library.test.cjs
+
+      - name: Deploy script tests
+        run: go test ./...
+        working-directory: deploy
+
+      - name: Build the server's binary
+        working-directory: server
+        run: |
+          version="${GITHUB_SHA::12}"
+          ldflags="-s -w -X main.version=${version}"
+          ldflags="$ldflags -X tm-sonder/server/internal/httpapi.Version=${version}"
+          ldflags="$ldflags -X tm-sonder/server/internal/httpapi.Build=${GITHUB_SHA}"
+          mkdir -p ../bin
+          CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpath -ldflags "$ldflags" \
+            -o ../bin/sonder-linux-amd64 ./cmd/sonder
+          # Recorded in the job summary so the deploy can assert the running
+          # server reports this version, not merely that a process exists.
+          echo "version=${version}" >> "$GITHUB_OUTPUT"
+
+      - name: Upload the deployable binary
+        uses: actions/upload-artifact@v4
+        with:
+          name: sonder-linux-amd64
+          path: server/../bin/sonder-linux-amd64
+
+  deploy:
+    name: Deploy to the server
+    needs: build
+    # The labels the runner on the server registers with. This job simply does
+    # not run anywhere else, which is the point: there is no hosted-runner path
+    # that could half-deploy.
+    runs-on: [self-hosted, linux, x64, tm-sonder]
+    steps:
+      - name: Fetch the deploy script and binary
+        uses: actions/checkout@v4
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: sonder-linux-amd64
+          path: bin
+
+      - name: Stage the binary beside the target
+        run: |
+          set -euo pipefail
+          mkdir -p bin
+          mv -f bin/sonder-linux-amd64 bin/.sonder-linux-amd64.incoming
+          chmod 0755 bin/.sonder-linux-amd64.incoming
+          ls -l bin/
+
+      - name: Deploy (with automatic rollback on failure)
+        run: ./deploy/deploy-sonder.sh "${{ needs.build.outputs.version }}"
+
+      - name: Confirm the service is serving
+        run: |
+          set -euo pipefail
+          export XDG_RUNTIME_DIR="/run/user/$(id -u)"
+          systemctl --user is-active tm-sonder
+          systemctl --user --no-pager status tm-sonder | head -12
