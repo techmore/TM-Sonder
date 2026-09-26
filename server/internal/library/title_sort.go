@@ -27,6 +27,16 @@ var leadingYear = regexp.MustCompile(`^\s*(\d{4})\s*[-–—_]\s*`)
 // "13 Towers of Midnight", "14b River of Souls".
 var leadingOrdinal = regexp.MustCompile(`^\s*(\d{1,3})\s*([a-z]?)\s*[-–—_]\s*|^\s*(\d{1,3})\s*([a-z]?)\s+`)
 
+// leadingSeriesParen matches a leading parenthetical that ends in a number, which
+// is how this library marks a series position: "(Culture 1) Race and Culture",
+// "(Book 3) Title", "(Vol. 2) Title". A parenthetical with no trailing number is
+// part of the title and is kept, so "(Unabridged)" and "(Almost) Everything"
+// survive.
+//
+// Without this the sort key began with "(" and the title read as noise, which
+// is how the Culture series ended up sorted away from its own title.
+var leadingSeriesParen = regexp.MustCompile(`^\s*\(\s*([^)]{0,36}?)(\d{1,4}[a-z]?)\s*\)\s*`)
+
 // trailingYear matches a trailing publication year in parentheses.
 var trailingYear = regexp.MustCompile(`\s*[\(\[](\d{4})[\)\]]\s*$`)
 
@@ -51,8 +61,11 @@ type TitleParts struct {
 	// Sort is the key an A-Z ordering should use. Empty articles are dropped so
 	// "The Lathe of Heaven" files under L.
 	Sort string
-	// Series is the leading series position, when the name carried one.
-	Series string
+	// Series is the series name and SeriesNumber the position within it, when the
+	// name carried a series marker. SeriesPosition is the position as text,
+	// which is what a client should show.
+	Series       string
+	SeriesNumber int
 	// Year is the leading or trailing four-digit year, when present.
 	Year int
 	// NarratorHint is a trailing credit that was moved out of the sort key,
@@ -74,6 +87,23 @@ func SplitTitle(raw string) TitleParts {
 		return out
 	}
 
+	// "(Culture 1) Race and Culture" -> series "Culture", position 1, title
+	// "Race and Culture". Checked before the year/ordinal rules because a
+	// parenthetical year would otherwise be read as a series position.
+	if m := leadingSeriesParen.FindStringSubmatch(s); m != nil {
+		name := strings.TrimSpace(m[1])
+		pos := strings.TrimSpace(m[2])
+		rest := strings.TrimSpace(s[len(m[0]):])
+		// Never strip the whole name: a marker must be followed by a title.
+		if rest != "" {
+			if name != "" {
+				out.Series = strings.TrimSuffix(name, ".")
+			}
+			out.SeriesNumber = atoiSafe(strings.TrimRight(pos, "abcdefghijklmnopqrstuvwxyz"))
+			s = rest
+			out.HadPrefix = true
+		}
+	}
 	// "2011 - The Martian" -> year 2011, title "The Martian".
 	if m := leadingYear.FindStringSubmatch(s); m != nil {
 		out.Year = atoiSafe(m[1])

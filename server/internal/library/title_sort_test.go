@@ -196,6 +196,71 @@ func TestSplitTitlePreservesInitialsAndDropsTheDash(t *testing.T) {
 	}
 }
 
+// The Culture series is filed as "(Culture 1) Race and Culture", which sorted
+// under "(" and read as noise. A leading parenthetical that ends in a number is
+// a series position; one that does not is part of the title and must survive.
+func TestSplitTitleHandlesLeadingSeriesParenthetical(t *testing.T) {
+	cases := []struct {
+		in, display, series string
+		num                 int
+	}{
+		{"(Culture 1) Race and Culture", "Race and Culture", "Culture", 1},
+		{"(Culture 3) Conquests and Cultures", "Conquests and Cultures", "Culture", 3},
+		{"(Book 3) The Robots of Dawn", "The Robots of Dawn", "Book", 3},
+		{"(Vol. 2) Dune", "Dune", "Vol", 2},
+		{"(14b) River of Souls", "River of Souls", "", 14},
+	}
+	for _, c := range cases {
+		p := SplitTitle(c.in)
+		if p.Display != c.display || p.Series != c.series || p.SeriesNumber != c.num {
+			t.Errorf("%q -> display=%q series=%q num=%d, want %q/%q/%d",
+				c.in, p.Display, p.Series, p.SeriesNumber, c.display, c.series, c.num)
+		}
+		if p.Sort != sortKey(c.display) {
+			t.Errorf("%q: sort %q should equal the display key %q", c.in, p.Sort, sortKey(c.display))
+		}
+	}
+}
+
+func TestSplitTitleKeepsNonPositionalParenthetical(t *testing.T) {
+	for _, in := range []string{
+		"(Unabridged) Dune",
+		"(Almost) Everything",
+		"(A Novel) Something",
+		"(Science Fiction) Collection",
+	} {
+		p := SplitTitle(in)
+		if p.Display != in {
+			t.Errorf("%q was stripped to %q, but it has no series position", in, p.Display)
+		}
+	}
+	// A parenthetical that is the entire name is not stripped either.
+	if p := SplitTitle("(1)"); p.Display != "(1)" {
+		t.Errorf("(1) became %q", p.Display)
+	}
+}
+
+// Two books of one series must land on the sort key of their own title, which is
+// the whole point: the series marker is metadata, not the name. They therefore
+// sort by title, not by series order.
+func TestSplitTitleSeriesBooksSortByTheirOwnTitle(t *testing.T) {
+	a := SplitTitle("(Culture 1) Race and Culture")
+	b := SplitTitle("(Culture 2) Migrations and Cultures")
+	c := SplitTitle("(Culture 3) Conquests and Cultures")
+	if a.SeriesNumber != 1 || b.SeriesNumber != 2 || c.SeriesNumber != 3 {
+		t.Errorf("series positions lost: %d %d %d", a.SeriesNumber, b.SeriesNumber, c.SeriesNumber)
+	}
+	// Title order, not series order: Conquests, Migrations, Race.
+	if !(c.Sort < b.Sort && b.Sort < a.Sort) {
+		t.Errorf("Culture books do not sort by title: %q %q %q", c.Sort, b.Sort, a.Sort)
+	}
+	for _, p := range []TitleParts{a, b, c} {
+		if strings.HasPrefix(p.Sort, "(") {
+			t.Errorf("sort key still starts with a parenthesis: %q", p.Sort)
+		}
+	}
+}
+
 func TestSplitTitleIsIdempotent(t *testing.T) {
 	// Applying it to an already-clean title must not change it, so a caller can
 	// run it on stored or derived names without checking first.
