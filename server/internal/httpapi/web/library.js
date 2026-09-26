@@ -506,12 +506,16 @@
       if (list) list.hidden = !(expanded && npQueueOpen);
     }
 
+    function isMobileViewport() {
+      return typeof window !== "undefined" && typeof window.matchMedia === "function" &&
+        window.matchMedia("(max-width: 700px)").matches;
+    }
+
     // On a phone the detail dialog is an entry point into the player, not a
     // second surface that should remain stacked above it. Desktop keeps the
     // dialog open so the existing browse-and-play flow is unchanged.
     function closeDetailOnMobile() {
-      if (typeof window === "undefined" || typeof window.matchMedia !== "function") return;
-      if (!window.matchMedia("(max-width: 700px)").matches) return;
+      if (!isMobileViewport()) return;
       const detail = $("#detail");
       if (detail?.open && typeof detail.close === "function") detail.close();
     }
@@ -587,7 +591,10 @@
           ? "Plays in the background — these controls stay while you browse."
           : "";
       }
-      setPlayerExpanded(false);
+      // Audiobooks should feel like a listening app on a phone. Open the
+      // dedicated surface immediately; the compact dock remains available
+      // after the listener taps Minimize.
+      setPlayerExpanded(mode === "audio" && isMobileViewport());
       updateMediaSession(item);
     }
 

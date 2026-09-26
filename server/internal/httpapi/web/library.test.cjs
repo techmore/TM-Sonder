@@ -775,15 +775,19 @@ test('the mobile player has a full listening surface and part queue', () => {
   assert.match(libraryHTML, /id="npQueueList"/);
   const css = fs.readFileSync(`${__dirname}/library.css`, 'utf8');
   const phone = css.slice(css.indexOf('@media (max-width: 700px)'));
-  assert.match(phone, /\.np-play \{[^}]*min-height: 48px/);
+  assert.match(phone, /body:not\(\.np-expanded\) \.np-controls \.np-play \{[^}]*width:44px/);
   assert.match(phone, /body\.np-expanded \.nowplaying \{/);
   assert.match(phone, /body\.np-expanded \.np-art \{[^}]*width:min\(72vw, 320px\)/);
   assert.match(phone, /body\.np-expanded \.np-controls \.np-play \{[^}]*width:72px/);
+  assert.match(phone, /body:not\(\.np-expanded\) \.np-bar \{/);
+  assert.match(phone, /body:not\(\.np-expanded\) \.np-controls #npBack/);
   // The list is rendered only for a multi-part audiobook and is controlled by
   // the same expanded player state as the rest of the listening surface.
   const src = fs.readFileSync(`${__dirname}/library.js`, 'utf8');
   assert.match(src, /function setPlayerExpanded\(expanded\)/);
+  assert.match(src, /function isMobileViewport\(\)/);
   assert.match(src, /function closeDetailOnMobile\(\)/);
+  assert.match(src, /setPlayerExpanded\(mode === "audio" && isMobileViewport\(\)\)/);
   assert.match(src, /function renderPartQueue\(\)/);
   assert.match(src, /on\("#npMobileToggle"/);
   assert.match(src, /on\("#npQueueList"/);
