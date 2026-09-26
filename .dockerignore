@@ -6,6 +6,8 @@ m4b_work
 server/.ab-av1-*
 server/sonder
 server/*.profraw
+Packages
+.opencode
 .poster-cache
 __pycache__
 IOS_Client_Xcode

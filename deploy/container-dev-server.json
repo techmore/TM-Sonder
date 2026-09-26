@@ -1,0 +1,34 @@
+// Local Apple Container development configuration for the migrated NAS layout.
+// The host media mount is read-only; /data is the isolated dev volume.
+{
+  "port": 8096,
+  "webPort": 8096,
+  "apiPort": 8097,
+  "dataDir": "/data",
+  "libraries": [
+    { "id": "plex-audiobook-plex", "name": "Audiobooks", "path": "/media/plex/Audiobooks", "kind": "audiobook" },
+    { "id": "plex-ebook-plex", "name": "Books", "path": "/media/plex/ebook", "kind": "ebook" },
+    { "id": "plex-movie-plex", "name": "Movies", "path": "/media/plex/movies", "kind": "movie" },
+    { "id": "plex-tvShow-plex", "name": "TV Shows", "path": "/media/plex/tv_shows", "kind": "tvShow" }
+  ],
+  "allowLAN": true,
+  "pairingToken": "",
+  "safeScan": true,
+  "themePreset": "techmore",
+  "libraryLayout": "rails",
+  "audiobookLayout": "rails",
+  "moviesLayout": "rails",
+  "tvLayout": "rails",
+  "hideEmptyLibraries": true,
+  "mediaCache": {
+    "enabled": true,
+    "maxBytes": 107374182400,
+    "minFreeBytes": 21474836480
+  },
+  "ffmpegPath": "ffmpeg",
+  "ffprobePath": "ffprobe",
+  "probeWorkers": 0,
+  "thumbWorkers": 0,
+  "transcode": { "maxConcurrent": 2, "hwaccel": "none", "preset": "veryfast" },
+  "logDir": "/data/logs"
+}

@@ -1,0 +1,14 @@
+{
+  "selectedMode": "public",
+  "selectedInterface": "",
+  "selectedIPv4": "",
+  "webBindAddress": "0.0.0.0",
+  "apiBindAddress": "127.0.0.1",
+  "webPort": 8096,
+  "apiPort": 8097,
+  "publicDomain": "",
+  "publicHealthCheckURL": "",
+  "caddyEnabled": false,
+  "caddyBindAddress": "0.0.0.0",
+  "caddyUpstream": ""
+}

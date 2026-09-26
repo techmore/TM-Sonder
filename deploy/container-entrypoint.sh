@@ -7,4 +7,4 @@ if [ ! -f "$config" ]; then
   cp /etc/sonder/server.json "$config"
 fi
 
-exec /sonder -config "$config"
+exec /sonder -config "$config" "$@"
