@@ -153,8 +153,12 @@ func TestParseFilenameAudiobookUsesAuthorBookStructure(t *testing.T) {
 			"Project Hail Mary", "Andy Weir", "Audiobook",
 		},
 		{
+			// The year moves out of the title and into Parsed.Year, which the
+			// subtitle reports. Displaying "The Lathe of Heaven (2003)" as the
+			// title duplicates the year in two places, and the sort key strips
+			// it anyway.
 			"/audiobooks/Ursula K. Le Guin/The Lathe of Heaven (2003)/old-noisy-name.m4b",
-			"The Lathe of Heaven (2003)", "Ursula K. Le Guin", "Audiobook - 2003",
+			"The Lathe of Heaven", "Ursula K. Le Guin", "Audiobook - 2003",
 		},
 		{
 			"/audiobooks/Project Hail Mary.m4b",
@@ -163,10 +167,33 @@ func TestParseFilenameAudiobookUsesAuthorBookStructure(t *testing.T) {
 	}
 	for _, c := range cases {
 		p := ParseFilename(c.path, "audiobook")
-		if p.Title != c.wantTitle || p.Series != c.wantAuthor || p.Subtitle != c.wantSubtitle {
-			t.Errorf("%s: title/author/subtitle = %q/%q/%q, want %q/%q/%q",
-				c.path, p.Title, p.Series, p.Subtitle, c.wantTitle, c.wantAuthor, c.wantSubtitle)
+		// The author goes on the dedicated field only. Series is left free for a
+		// real series, so the audiobook metadata pass can write one without
+		// overwriting the author the folder gave us.
+		if p.Author != c.wantAuthor {
+			t.Errorf("%s: author = %q, want %q", c.path, p.Author, c.wantAuthor)
 		}
+		if p.Series != "" {
+			t.Errorf("%s: series = %q, want empty (it must not hold the author)",
+				c.path, p.Series)
+		}
+		if p.Title != c.wantTitle || p.Subtitle != c.wantSubtitle {
+			t.Errorf("%s: title/subtitle = %q/%q, want %q/%q",
+				c.path, p.Title, p.Subtitle, c.wantTitle, c.wantSubtitle)
+		}
+	}
+}
+
+// The year must come from the book folder, and an "Unknown Author" folder must
+// not be retained as an author.
+func TestParseFilenameAudiobookUsesCanonicalFolders(t *testing.T) {
+	p := ParseFilename("/audiobooks/Andy Weir/Project Hail Mary (2021)/2021 - Project Hail Mary.m4b", "audiobook")
+	if p.Title != "Project Hail Mary" || p.Year != 2021 || p.Author != "Andy Weir" {
+		t.Fatalf("canonical audiobook parse = %+v", p)
+	}
+	p2 := ParseFilename("/audiobooks/Unknown Author/Book/01 - Chapter.m4b", "audiobook")
+	if p2.Author != "" {
+		t.Errorf("unknown author folder was retained: %q", p2.Author)
 	}
 }
 
@@ -223,8 +250,8 @@ func TestEbookAuthorSplit(t *testing.T) {
 		if c.path == "/lib/Books/plain.epub" {
 			wantAuthor = "" // junk dir ignored
 		}
-		if p.Series != wantAuthor {
-			t.Errorf("%s: author = %q, want %q", c.path, p.Series, wantAuthor)
+		if p.Author != wantAuthor {
+			t.Errorf("%s: author = %q, want %q", c.path, p.Author, wantAuthor)
 		}
 	}
 }

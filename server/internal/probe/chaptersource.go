@@ -17,7 +17,7 @@ const maxChapterEntries = 512
 // requests don't re-run ffprobe. The cache is bounded and returns copies.
 type ChapterSource struct {
 	mu      sync.Mutex
-	getItem func(itemID string) (path string, mod time.Time, ok bool)
+	getItem func(itemID string) (path string, mod time.Time, duration float64, ok bool)
 	ffprobe string
 	cache   map[string]chapterCacheEntry
 	order   []string
@@ -30,7 +30,7 @@ type chapterCacheEntry struct {
 
 // NewChapterSource builds a chapter source. getItem resolves an item ID to its
 // file path and modification time (typically library.Store.Get).
-func NewChapterSource(getItem func(itemID string) (string, time.Time, bool), ffprobe string) *ChapterSource {
+func NewChapterSource(getItem func(itemID string) (string, time.Time, float64, bool), ffprobe string) *ChapterSource {
 	return &ChapterSource{
 		getItem: getItem,
 		ffprobe: ffprobe,
@@ -39,7 +39,7 @@ func NewChapterSource(getItem func(itemID string) (string, time.Time, bool), ffp
 }
 
 func (c *ChapterSource) ChaptersFor(ctx context.Context, itemID string) ([]api.AudiobookChapter, error) {
-	path, mod, ok := c.getItem(itemID)
+	path, mod, duration, ok := c.getItem(itemID)
 	if !ok {
 		return nil, os.ErrNotExist
 	}
@@ -55,6 +55,7 @@ func (c *ChapterSource) ChaptersFor(ctx context.Context, itemID string) ([]api.A
 	if err != nil {
 		return nil, err
 	}
+	chapters = ValidateChapters(chapters, duration)
 	c.mu.Lock()
 	c.storeLocked(itemID, chapterCacheEntry{mod: mod, chapters: chapters})
 	c.mu.Unlock()

@@ -61,6 +61,36 @@ func ParseChapters(data []byte) []api.AudiobookChapter {
 	return out
 }
 
+// ValidateChapters rejects a chapter list that cannot belong to the probed
+// media duration. A corrupt partial M4B can otherwise send players to chapter
+// markers hours beyond the end of the file.
+func ValidateChapters(chapters []api.AudiobookChapter, duration float64) []api.AudiobookChapter {
+	if len(chapters) == 0 || duration <= 0 {
+		return chapters
+	}
+	tolerance := duration * 0.01
+	if tolerance < 2 {
+		tolerance = 2
+	}
+	previousStart := float64(0)
+	for _, chapter := range chapters {
+		if chapter.StartSeconds < 0 || chapter.StartSeconds > duration+tolerance {
+			return nil
+		}
+		if chapter.StartSeconds+0.001 < previousStart {
+			return nil
+		}
+		if chapter.EndSeconds != nil {
+			end := *chapter.EndSeconds
+			if end < chapter.StartSeconds || end > duration+tolerance {
+				return nil
+			}
+		}
+		previousStart = chapter.StartSeconds
+	}
+	return chapters
+}
+
 func atofOr(s string, fallback float64) float64 {
 	if v, ok := atof(s); ok {
 		return v

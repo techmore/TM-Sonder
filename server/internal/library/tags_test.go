@@ -203,6 +203,73 @@ func TestNarratorProvenanceSurvivesRebuild(t *testing.T) {
 	}
 }
 
+// Reconciling the two metadata passes is where this is easiest to get wrong:
+// the folder layout, the container tags, and a provider all claim author and
+// narrator. Precedence must be layout > provider > tags, with tags able to
+// correct only their own earlier output.
+func TestAuthorAndNarratorPrecedenceAcrossBothPasses(t *testing.T) {
+	// 1. The folder wins over a disagreeing tag.
+	folderAuthor := "Andy Weir"
+	it := &Item{MediaItem: api.MediaItem{Author: &folderAuthor}}
+	applyAudiobookMetadata(it, &probe.Result{
+		MetadataTags: map[string]string{"artist": "Someone Else"},
+	})
+	if it.Author == nil || *it.Author != "Andy Weir" {
+		t.Errorf("tag displaced the layout author: %v", it.Author)
+	}
+	if it.AuthorFromTags {
+		t.Error("layout author was marked as tag-derived")
+	}
+
+	// 2. A tag fills an empty author, and records that it did.
+	empty := &Item{}
+	applyAudiobookMetadata(empty, &probe.Result{
+		MetadataTags: map[string]string{"artist": "Tag Author"},
+	})
+	if empty.Author == nil || *empty.Author != "Tag Author" {
+		t.Errorf("tag did not fill the empty author: %v", empty.Author)
+	}
+	if !empty.AuthorFromTags {
+		t.Error("tag-derived author was not recorded")
+	}
+
+	// 3. A tag may correct its own earlier value.
+	wrong := "R"
+	it3 := &Item{MediaItem: api.MediaItem{Narrator: &wrong}, NarratorFromTags: true}
+	applyAudiobookMetadata(it3, &probe.Result{
+		MetadataTags: map[string]string{"narrated_by": "R.C. Bray"},
+	})
+	if it3.Narrator == nil || *it3.Narrator != "R.C. Bray" {
+		t.Errorf("tag could not correct its own earlier narrator: %v", it3.Narrator)
+	}
+
+	// 4. A provider's narrator is never displaced.
+	provider := "Enriched Narrator"
+	it4 := &Item{MediaItem: api.MediaItem{Narrator: &provider}}
+	applyAudiobookMetadata(it4, &probe.Result{
+		MetadataTags: map[string]string{"narrated_by": "Tag Narrator"},
+	})
+	if *it4.Narrator != "Enriched Narrator" {
+		t.Errorf("tag displaced the provider narrator: %q", *it4.Narrator)
+	}
+}
+
+// A real series must land in Series and must not overwrite the author, which is
+// what happened when the parser stuffed the author into the Series slot.
+func TestSeriesDoesNotOverwriteAuthor(t *testing.T) {
+	author := "Philip K. Dick"
+	it := &Item{MediaItem: api.MediaItem{Author: &author}}
+	applyAudiobookMetadata(it, &probe.Result{
+		MetadataTags: map[string]string{"series": "The Exegesis"},
+	})
+	if it.Series != "The Exegesis" {
+		t.Errorf("series = %q, want %q", it.Series, "The Exegesis")
+	}
+	if it.Author == nil || *it.Author != "Philip K. Dick" {
+		t.Errorf("series write clobbered the author: %v", it.Author)
+	}
+}
+
 func TestYearFromTags(t *testing.T) {
 	cases := map[string]int{
 		"2021":        2021,

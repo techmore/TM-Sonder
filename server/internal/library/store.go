@@ -41,12 +41,14 @@ type Item struct {
 	// not sufficient evidence that the tags are unread, because many files
 	// simply have no narrator to report.
 	ProbedTagsRead bool `json:"probedTagsRead,omitempty"`
-	// NarratorFromTags records that the narrator came from the file's own
-	// comment tag rather than a metadata provider. It exists because a tag read
-	// is a pure function of the file and so must be allowed to correct an
-	// earlier tag read, while still never overwriting a provider's value.
-	// Without it, a value the tag reader itself got wrong ("Narrated by R.C.
-	// Bray" parsed to "R") could never be repaired by re-reading the same tag.
+	// AuthorFromTags and NarratorFromTags record that a credit came from the
+	// file's own container tags rather than the folder layout or a metadata
+	// provider. They exist because a tag read is a pure function of the file
+	// and so must be allowed to correct an earlier tag read, while still never
+	// displacing a layout-derived or provider-supplied value. Without them, a
+	// value the tag reader itself got wrong ("Narrated by R.C. Bray" parsed to
+	// "R") could never be repaired by re-reading the same tag.
+	AuthorFromTags   bool      `json:"authorFromTags,omitempty"`
 	NarratorFromTags bool      `json:"narratorFromTags,omitempty"`
 	ModTime          time.Time `json:"modTime"`
 	ParseVersion     int       `json:"parseVersion,omitempty"` // parser semantics stamp; older versions rebuild on rescan

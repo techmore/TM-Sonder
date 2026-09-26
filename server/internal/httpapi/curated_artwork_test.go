@@ -43,7 +43,15 @@ func TestCuratedArtworkIsReversibleAndCannotUseTraversal(t *testing.T) {
 	if err := os.Remove(manifestPath); err != nil {
 		t.Fatal(err)
 	}
-	if f.s.wireItems()[0].PosterURL != original.PosterURL {
-		t.Fatal("removing override did not restore source")
+	// After the override is removed the curated URL must be gone. It does not
+	// have to become nil: a movie with no artwork of its own is given a
+	// synthetic poster URL, because the poster endpoint can still render a
+	// placeholder. The contract is "the override was reverted", not "no URL".
+	after := f.s.wireItems()[0]
+	if after.PosterURL != nil && strings.HasPrefix(*after.PosterURL, "/artwork/curated/") {
+		t.Fatalf("curated override still applied after removal: %q", *after.PosterURL)
+	}
+	if after.CoverSource != nil && *after.CoverSource == "wikimedia-curated" {
+		t.Error("curated cover source survived removal of the manifest")
 	}
 }

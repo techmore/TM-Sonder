@@ -74,14 +74,12 @@ func uuidV5(ns [16]byte, name string) string {
 // (IDs are path-derived, so progress and item identity survive the rebuild),
 // which propagates parsing fixes to already-cataloged libraries without a
 // full wipe.
-// 14: a tag read can now correct an earlier tag read of the same field.
-// Version 13 fixed the initial-period bug in the narrator credit, but the
-// rebuild merge carried the previously-derived "R" forward and a non-empty
-// field was never overwritten, so the bad value could not be repaired. This
-// bump forces the one rebuild that re-reads those tags. A "suspiciously short
-// narrator" heuristic would have been cheaper but would re-probe forever if the
-// re-read ever produced a short value again.
-const ParserVersion = 14
+// 15: reconciles the upstream "Prepare audiobook metadata normalization" work
+// with the Author/Book folder derivation, so both live in one tree. History:
+// 10 upstream's baseline, 11 the author/book fix, 12 container tag reading,
+// 13 the initial-period narrator fix, 14 tag reads able to correct themselves,
+// and 15 this merge. The number only has to keep increasing.
+const ParserVersion = 15
 
 // Parsed is the ported result of SonderMediaParser.parseTitle. Kind is chosen
 // by the scanner from library config + extension, not by the parser.
@@ -96,7 +94,8 @@ type Parsed struct {
 	MetadataID       string
 	Edition          string
 	SplitPart        string
-	Series           string // ebook/audiobook series or author grouping
+	Author           string // canonical author/creator from the library layout
+	Series           string // actual series name, when known
 	SeriesNumber     float64
 }
 
@@ -146,6 +145,25 @@ func cleanMediaTitle(s string) string {
 	s = strings.ReplaceAll(s, ".", " ")
 	s = strings.ReplaceAll(s, "_", " ")
 	return strings.TrimSpace(s)
+}
+
+// cleanAuthorFolder normalizes a folder name for use as an author, without
+// running it through cleanBookFolder's title cleanup. cleanMediaTitle collapses
+// punctuation in a way that is right for "Ursula K. Le Guin" as a title but
+// wrong as a person: it turned "K. Le" into "K  Le". Author names keep their
+// periods and their spacing.
+func cleanAuthorFolder(s string) string {
+	s = removePlexTags(s)
+	s = removeSplitSuffix(s)
+	s = reTrailingQuality.ReplaceAllString(s, "")
+	return strings.Join(strings.Fields(s), " ")
+}
+
+func cleanBookFolder(s string) string {
+	s = removePlexTags(s)
+	s = removeSplitSuffix(s)
+	s = reTrailingQuality.ReplaceAllString(s, "")
+	return cleanMediaTitle(s)
 }
 
 func removePlexTags(s string) string {
@@ -464,31 +482,43 @@ func ParseFilename(path, libraryKind string) Parsed {
 		}
 		return simpleParsed(t, sub, year, metadataSource, metadataID, edition, splitPart)
 	case "audiobook":
-		t := fileTitle
-		if t == "" {
-			t = removePlexTags(raw)
+		title := fileTitle
+		year := fileYear
+		// The standard layout is Author/Book/file. Prefer the book folder for
+		// its canonical title/year so numbered tracks and year-prefixed files do
+		// not become separate books in the catalog.
+		if !looksLikeJunkDir(parent) {
+			if folderTitle, folderYear, ok := movieNameAndYear(parent); ok {
+				title, year = folderTitle, folderYear
+			} else if folderTitle := cleanBookFolder(parent); folderTitle != "" {
+				title = folderTitle
+			}
 		}
-		// The maintained audiobook layout is Author/Book/Book.m4b. Prefer the
-		// book folder as canonical title and its parent as author. The same
-		// relative shape holds inside the legacy compact wrapper, so this also
-		// keeps wrapped books addressable while they are being unwrapped.
-		bookFolder := strings.TrimSpace(filepath.Base(filepath.Dir(path)))
-		authorFolder := strings.TrimSpace(filepath.Base(filepath.Dir(filepath.Dir(path))))
-		bookFolderOK := bookFolder != "" && !looksLikeJunkDir(bookFolder)
-		if bookFolderOK {
-			t = bookFolder
+		if title == "" {
+			title = removePlexTags(raw)
 		}
+		// The maintained audiobook layout is Author/Book/Book.m4b, and the
+		// block above already takes the book folder as the title. What it does
+		// not do is read the *grandparent*, which is the author. The same
+		// relative shape holds inside the legacy compact wrapper, so wrapped
+		// books stay attributed while they are being unwrapped.
+		// grandparent has already been through cleanMediaTitle, which is right
+		// for a title but mangles a person ("K. Le Guin" -> "K  Le Guin"), so
+		// the author is read from the raw directory name instead.
+		authorFolder := cleanAuthorFolder(filepath.Base(filepath.Dir(filepath.Dir(path))))
 		author := ""
-		if bookFolderOK && authorFolder != "" && !looksLikeJunkDir(authorFolder) {
+		if authorFolder != "" && !looksLikeJunkDir(authorFolder) {
 			author = authorFolder
 		}
-		year := firstNonZero(extractYear(raw), extractYear(parent))
 		sub := "Audiobook"
 		if year > 0 {
 			sub = "Audiobook - " + strconv.Itoa(year)
 		}
-		p := simpleParsed(t, sub, year, metadataSource, metadataID, edition, splitPart)
-		p.Series = author
+		p := simpleParsed(title, sub, year, metadataSource, metadataID, edition, splitPart)
+		// Only the dedicated Author field is set. Series is left for an actual
+		// series, so the audiobook metadata pass can write one without
+		// overwriting the author the folder gave us.
+		p.Author = author
 		for _, candidate := range []string{parent, raw} {
 			if m := reSeriesNumber.FindStringSubmatch(candidate); m != nil {
 				p.SeriesNumber, _ = strconv.ParseFloat(m[1], 64)
@@ -518,7 +548,7 @@ func ParseFilename(path, libraryKind string) Parsed {
 		}
 		p := simpleParsed(t, sub, extractYear(raw), metadataSource, metadataID, edition, splitPart)
 		if author != "" {
-			p.Series = author
+			p.Author = author
 		}
 		return p
 	}
@@ -596,7 +626,8 @@ func looksLikeJunkDir(name string) bool {
 	n := strings.ToLower(name)
 	for _, junk := range []string{"ebook", "ebooks", "books", "book", "calibre",
 		"library", "mybooks", "download", "downloads", "converted", "unknown",
-		"audio", "audiobook", "audiobooks", "audio books"} {
+		"unknown author", "various", "inbox", "torrents",
+		"audio", "audiobook", "audiobooks", "audio books", "/", ".", ".."} {
 		if n == junk {
 			return true
 		}

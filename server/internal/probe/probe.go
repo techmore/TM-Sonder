@@ -31,6 +31,10 @@ type Result struct {
 	VideoStreamCount   int
 	HasAttachedPicture bool
 	UnsupportedStreams int
+	// MetadataTags contains normalized container-level tags from ffprobe, with
+	// keys lower-cased, © stripped and separators folded, and values trimmed.
+	// Metadata() reads it, so both accessors share one normalization.
+	MetadataTags map[string]string
 	// StreamCount is the number of streams ffprobe reported. Zero means the
 	// file had no readable streams (broken/unsupported), which callers use to
 	// distinguish "probed successfully" from "probe returned nothing".
@@ -56,6 +60,16 @@ type FileTags struct {
 	Date        string
 	Comment     string
 	Description string
+	// Fields an audiobook's own container may carry beyond the core four.
+	// Audible-style files use a "narrated_by" atom; retagged files leave the
+	// narrator in Comment, which is why the catalog also parses the comment.
+	Narrator   string
+	Series     string
+	Publisher  string
+	Edition    string
+	SeriesPart string
+	AudibleID  string
+	AudnexusID string
 }
 
 // ffprobeStream is the subset of one ffprobe stream the catalog consumes.
@@ -155,6 +169,9 @@ func Parse(data []byte) (*Result, error) {
 			}
 		}
 	}
+	if len(raw.Format.Tags) > 0 {
+		res.MetadataTags = normalizeTags(raw.Format.Tags)
+	}
 	if d, ok := atof(raw.Format.Duration); ok {
 		res.DurationSeconds = d
 	}
@@ -182,10 +199,44 @@ var tagAliases = map[string]string{
 	"album":        "Album",
 	"composer":     "Composer",
 	"genre":        "Genre",
+	"genres":       "Genre",
 	"date":         "Date",
 	"year":         "Date",
 	"comment":      "Comment",
 	"description":  "Description",
+	"summary":      "Description",
+	// Fields the audiobook metadata pass reads. Present in Audible/retagged
+	// containers as "narrated_by", and as a bare "narrator" elsewhere.
+	"narrator":         "Narrator",
+	"narrated_by":      "Narrator",
+	"narratedby":       "Narrator",
+	"series":           "Series",
+	"showmovement":     "Series",
+	"publisher":        "Publisher",
+	"label":            "Publisher",
+	"edition":          "Edition",
+	"series_part":      "SeriesPart",
+	"seriespart":       "SeriesPart",
+	"part":             "SeriesPart",
+	"audible_id":       "AudibleID",
+	"audibleid":        "AudibleID",
+	"asin":             "AudibleID",
+	"audnexus_id":      "AudnexusID",
+	"audnexusid":       "AudnexusID",
+	"publication_date": "Date",
+}
+
+// Metadata returns the first non-empty value for the supplied tag aliases. It
+// is the accessor the audiobook metadata pass uses, and it benefits from the
+// same normalization as the typed fields, so "©ART" and "----:com.apple.iTunes:
+// ALBUMARTIST" both resolve.
+func (r *Result) Metadata(names ...string) string {
+	for _, name := range names {
+		if v := strings.TrimSpace(r.MetadataTags[normalizeTagKey(name)]); v != "" {
+			return v
+		}
+	}
+	return ""
 }
 
 // parseFileTags normalizes ffprobe's format.tags map into FileTags. Later
@@ -206,6 +257,13 @@ func parseFileTags(raw map[string]string) FileTags {
 		"Date":        &out.Date,
 		"Comment":     &out.Comment,
 		"Description": &out.Description,
+		"Narrator":    &out.Narrator,
+		"Series":      &out.Series,
+		"Publisher":   &out.Publisher,
+		"Edition":     &out.Edition,
+		"SeriesPart":  &out.SeriesPart,
+		"AudibleID":   &out.AudibleID,
+		"AudnexusID":  &out.AudnexusID,
 	}
 	for k, v := range raw {
 		field, ok := tagAliases[normalizeTagKey(k)]
@@ -217,6 +275,21 @@ func parseFileTags(raw map[string]string) FileTags {
 		}
 		if *assign[field] == "" {
 			*assign[field] = v
+		}
+	}
+	return out
+}
+
+// normalizeTags builds the lower-cased, ©-stripped lookup map that Metadata
+// reads, so both accessors share one normalization.
+func normalizeTags(raw map[string]string) map[string]string {
+	if len(raw) == 0 {
+		return nil
+	}
+	out := make(map[string]string, len(raw))
+	for k, v := range raw {
+		if v = strings.TrimSpace(v); v != "" {
+			out[normalizeTagKey(k)] = v
 		}
 	}
 	return out

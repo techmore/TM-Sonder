@@ -728,9 +728,7 @@ func (s *Server) toCatalogItem(it *library.Item) catalogItem {
 	// enriched before those fields existed.
 	var author, narrator, series *string
 	if it.Kind == api.KindAudiobook || it.Kind == api.KindEbook {
-		// For book kinds the parser stores the series (or filename-derived
-		// author) in Studio; surface it on the dedicated Series field too.
-		if sv := strings.TrimSpace(it.Studio); sv != "" {
+		if sv := strings.TrimSpace(it.Series); sv != "" {
 			series = &sv
 		}
 	}

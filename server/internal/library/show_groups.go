@@ -52,7 +52,11 @@ func (s *Store) GroupedItems(libraries []config.Library) []api.MediaItem {
 		wire := item.MediaItem
 		wire.CoverEmbedded = item.ProbedHasCover
 		wire.CoverAvailable = item.PosterPath != "" && item.PosterSource != "thumbnail"
-		if item.PosterSource == "thumbnail" && (item.Kind == api.KindMovie || item.Kind == api.KindTVShow || item.Kind == api.KindDocumentary) {
+		if item.Kind == api.KindMovie && wire.PosterURL == nil {
+			u := "/artwork/poster/" + wire.ID
+			wire.PosterURL = &u
+		}
+		if item.PosterSource == "thumbnail" && (item.Kind == api.KindTVShow || item.Kind == api.KindDocumentary) {
 			wire.PosterURL = nil
 		}
 		if item.Kind == api.KindTVShow && item.LibraryID != nil {
