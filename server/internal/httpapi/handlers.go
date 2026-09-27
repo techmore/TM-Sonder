@@ -720,6 +720,27 @@ type catalogDetail struct {
 	Chapters []audiobookChapter `json:"chapters"`
 }
 
+// audiobookTimelineChapter places each embedded chapter on the book-wide
+// playback timeline. PartID and PartIndex retain the source-file context for
+// multipart books; StartSeconds and EndSeconds are absolute book positions.
+type audiobookTimelineChapter struct {
+	Index        int     `json:"index"`
+	Title        string  `json:"title"`
+	PartID       string  `json:"partID"`
+	PartIndex    int     `json:"partIndex"`
+	StartSeconds float64 `json:"startSeconds"`
+	EndSeconds   float64 `json:"endSeconds"`
+}
+
+type audiobookChapterTimeline struct {
+	ItemID          string                     `json:"itemID"`
+	Available       bool                       `json:"available"`
+	ChapterCount    int                        `json:"chapterCount"`
+	PartCount       int                        `json:"partCount"`
+	DurationSeconds float64                    `json:"durationSeconds"`
+	Chapters        []audiobookTimelineChapter `json:"chapters"`
+}
+
 func (s *Server) toCatalogItem(it *library.Item) catalogItem {
 	// The catalog is assembled straight from the store, which does not carry the
 	// derived ordering metadata, so recompute it here rather than reaching into
@@ -1071,6 +1092,90 @@ func (s *Server) handleAudiobookDetail(w http.ResponseWriter, r *http.Request) {
 		Item:     detail,
 		Chapters: chapters,
 	})
+}
+
+// handleAudiobookChapters returns embedded chapter markers across all files
+// in a book, using the same ordered parts and summed runtime as playback.
+func (s *Server) handleAudiobookChapters(w http.ResponseWriter, r *http.Request) {
+	it, ok := s.store.Get(r.PathValue("id"))
+	if !ok || it.Kind != api.KindAudiobook {
+		writeError(w, http.StatusNotFound, "Audiobook not found")
+		return
+	}
+
+	parts, _, multi := s.bookPartsFor(it)
+	if !multi {
+		parts = []catalogPart{{
+			ID: it.ID, Title: it.Title, Index: 1, DurationSeconds: it.DurationSeconds,
+		}}
+	}
+	timeline := audiobookChapterTimeline{
+		ItemID: it.ID, Available: s.chapters != nil,
+		PartCount: len(parts), Chapters: []audiobookTimelineChapter{},
+	}
+	for _, part := range parts {
+		duration := part.DurationSeconds
+		if duration <= 0 {
+			if stored, found := s.store.Get(part.ID); found {
+				duration = stored.DurationSeconds
+			}
+		}
+		timeline.DurationSeconds += duration
+	}
+	if !timeline.Available {
+		writeJSON(w, http.StatusOK, timeline)
+		return
+	}
+
+	var bookOffset float64
+	for partIndex, part := range parts {
+		duration := part.DurationSeconds
+		if duration <= 0 {
+			if stored, found := s.store.Get(part.ID); found {
+				duration = stored.DurationSeconds
+			}
+		}
+
+		chapters, err := s.chapters.ChaptersFor(r.Context(), part.ID)
+		if err != nil {
+			// A partial count is misleading. Keep playback usable but tell the
+			// client to fall back to the whole-book/part progress view.
+			timeline.Available = false
+			timeline.Chapters = []audiobookTimelineChapter{}
+			timeline.ChapterCount = 0
+			writeJSON(w, http.StatusOK, timeline)
+			return
+		}
+
+		for chapterIndex, chapter := range chapters {
+			start := chapter.StartSeconds
+			end := duration
+			if chapter.EndSeconds != nil && *chapter.EndSeconds > start {
+				end = *chapter.EndSeconds
+			}
+			if chapterIndex+1 < len(chapters) {
+				nextStart := chapters[chapterIndex+1].StartSeconds
+				if nextStart > start && (end <= start || nextStart < end) {
+					end = nextStart
+				}
+			}
+			if end <= start {
+				continue
+			}
+			title := strings.TrimSpace(chapter.Title)
+			if title == "" {
+				title = "Chapter " + strconv.Itoa(len(timeline.Chapters)+1)
+			}
+			timeline.Chapters = append(timeline.Chapters, audiobookTimelineChapter{
+				Index: len(timeline.Chapters) + 1, Title: title,
+				PartID: part.ID, PartIndex: partIndex + 1,
+				StartSeconds: bookOffset + start, EndSeconds: bookOffset + end,
+			})
+		}
+		bookOffset += duration
+	}
+	timeline.ChapterCount = len(timeline.Chapters)
+	writeJSON(w, http.StatusOK, timeline)
 }
 
 // handleEbooks implements GET /api/ebooks?q= — ebook catalog.

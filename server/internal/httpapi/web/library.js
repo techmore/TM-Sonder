@@ -403,6 +403,24 @@
     let npSleepDeadline = 0;
     let npSleepAtPartEnd = false;
     let npSleepTimeout = null;
+    let nowPlayingChapters = null; // null while loading; [] when unavailable or absent.
+    let nowPlayingChaptersAvailable = false;
+    let npChapterRequest = 0;
+    const audiobookChapterCache = new Map();
+
+    function readPlayerPreference(key, fallback, values) {
+      try {
+        const value = localStorage.getItem(key);
+        return values.includes(value) ? value : fallback;
+      } catch { return fallback; }
+    }
+
+    let npProgressScope = readPlayerPreference("sonder.player.progressScope", "book", ["book", "section"]);
+    let npTimeDisplay = readPlayerPreference("sonder.player.timeDisplay", "remaining", ["remaining", "elapsed"]);
+
+    function savePlayerPreference(key, value) {
+      try { localStorage.setItem(key, value); } catch { /* storage may be disabled */ }
+    }
 
     function npMedia() { return $("#npMedia"); }
 
@@ -445,6 +463,7 @@
       npLastSaved = 0;
       npSeeking = false;
       prepareNowPlayingShell(item, "audio");
+      loadBookChapters(item);
       loadBookPart(true);
       closeDetailOnMobile();
     }
@@ -499,6 +518,163 @@
     function bookPartLabel() {
       if (!nowPlayingParts) return "";
       return `Part ${nowPlayingPartIndex + 1} of ${nowPlayingParts.length}`;
+    }
+
+    function loadBookChapters(item) {
+      const request = ++npChapterRequest;
+      nowPlayingChapters = null;
+      nowPlayingChaptersAvailable = false;
+      if (!item || item.kind !== "audiobook" || typeof fetch !== "function") {
+        nowPlayingChapters = [];
+        return;
+      }
+      const cached = audiobookChapterCache.get(item.id);
+      if (cached) {
+        nowPlayingChapters = cached.chapters;
+        nowPlayingChaptersAvailable = cached.available;
+        return;
+      }
+      fetch(api(`/api/audiobooks/${encodeURIComponent(item.id)}/chapters`))
+        .then(response => response.ok ? response.json() : null)
+        .then(result => {
+          if (request !== npChapterRequest || nowPlayingItem?.id !== item.id) return;
+          const available = result?.available === true && Array.isArray(result.chapters);
+          const chapters = available ? result.chapters.filter(chapter =>
+            Number.isFinite(Number(chapter.startSeconds)) &&
+            Number.isFinite(Number(chapter.endSeconds)) &&
+            Number(chapter.endSeconds) > Number(chapter.startSeconds)
+          ) : [];
+          nowPlayingChapters = chapters;
+          nowPlayingChaptersAvailable = available;
+          audiobookChapterCache.set(item.id, { available, chapters });
+          renderNowPlaying();
+          renderPlaybackProgress(bookTimeline());
+        })
+        .catch(() => {
+          if (request !== npChapterRequest || nowPlayingItem?.id !== item.id) return;
+          nowPlayingChapters = [];
+          nowPlayingChaptersAvailable = false;
+          renderNowPlaying();
+          renderPlaybackProgress(bookTimeline());
+        });
+    }
+
+    function currentBookChapter(tl = bookTimeline()) {
+      if (!nowPlayingChaptersAvailable || !nowPlayingChapters?.length) return null;
+      const position = Math.max(0, tl.position || 0);
+      for (let i = 0; i < nowPlayingChapters.length; i++) {
+        const chapter = nowPlayingChapters[i];
+        if (position >= chapter.startSeconds &&
+            (position < chapter.endSeconds || (i === nowPlayingChapters.length - 1 && position <= chapter.endSeconds))) {
+          return chapter;
+        }
+      }
+      return null;
+    }
+
+    function currentBookSection(tl = bookTimeline()) {
+      const chapter = currentBookChapter(tl);
+      if (chapter) {
+        return {
+          kind: "chapter", label: `Chapter ${chapter.index} of ${nowPlayingChapters.length}`,
+          start: chapter.startSeconds, end: chapter.endSeconds, chapter,
+        };
+      }
+      if (!nowPlayingParts || nowPlayingParts.length < 2) return null;
+      const media = npMedia();
+      let start = 0;
+      for (let i = 0; i < nowPlayingPartIndex; i++) start += nowPlayingParts[i].durationSeconds || 0;
+      const part = nowPlayingParts[nowPlayingPartIndex];
+      const duration = part?.durationSeconds || (media && media.duration) || 0;
+      if (!(duration > 0)) return null;
+      return {
+        kind: "part", label: `Part ${nowPlayingPartIndex + 1} of ${nowPlayingParts.length}`,
+        start, end: start + duration, part,
+      };
+    }
+
+    function playbackProgressTimeline(book = bookTimeline()) {
+      const section = npProgressScope === "section" ? currentBookSection(book) : null;
+      if (!section) return { scope: "book", start: 0, position: book.position, total: book.total, section: null };
+      const total = Math.max(0, section.end - section.start);
+      return {
+        scope: section.kind, start: section.start,
+        position: Math.min(Math.max(book.position - section.start, 0), total),
+        total, section,
+      };
+    }
+
+    function playbackContextLabel(tl = bookTimeline()) {
+      if (!nowPlayingItem || nowPlayingItem.kind !== "audiobook") return bookPartLabel() || kindLabel(nowPlayingItem?.kind);
+      const chapter = currentBookChapter(tl);
+      if (chapter) {
+        const part = nowPlayingParts?.length > 1 ? ` · Part ${chapter.partIndex} of ${nowPlayingParts.length}` : "";
+        return `Chapter ${chapter.index} of ${nowPlayingChapters.length}${part}`;
+      }
+      if (bookPartLabel()) return bookPartLabel();
+      if (nowPlayingChapters === null) return "Loading chapters…";
+      if (!nowPlayingChaptersAvailable) return "Chapter info unavailable";
+      return nowPlayingChapters.length ? "Finding current chapter…" : "No embedded chapters";
+    }
+
+    function playbackTimeLabel(view) {
+      if (!(view.total > 0)) return "Time unavailable";
+      const remaining = Math.max(0, view.total - view.position);
+      return npTimeDisplay === "remaining"
+        ? (remaining <= 0 ? "Finished" : `${formatTime(remaining)} left`)
+        : `${formatTime(view.position)} / ${formatTime(view.total)}`;
+    }
+
+    function togglePlaybackScope() {
+      if (!currentBookSection()) return;
+      npProgressScope = npProgressScope === "section" ? "book" : "section";
+      savePlayerPreference("sonder.player.progressScope", npProgressScope);
+      renderPlaybackProgress(bookTimeline());
+    }
+
+    function togglePlaybackTimeDisplay() {
+      npTimeDisplay = npTimeDisplay === "remaining" ? "elapsed" : "remaining";
+      savePlayerPreference("sonder.player.timeDisplay", npTimeDisplay);
+      renderPlaybackProgress(bookTimeline());
+    }
+
+    function renderAudiobookProgressControls(book, view) {
+      const item = nowPlayingItem;
+      const controls = $("#npBookProgressControls");
+      const legacy = $("#npLegacySeekReadouts");
+      const scopeButton = $("#npScopeToggle");
+      const scopeLabel = $("#npScopeLabel");
+      const timeButton = $("#npTimeToggle");
+      const isAudiobook = !!item && item.kind === "audiobook" && nowPlayingMode === "audio";
+      if (controls) controls.hidden = !isAudiobook;
+      if (legacy) legacy.hidden = isAudiobook;
+      if (!isAudiobook) return;
+
+      const section = currentBookSection(book);
+      const selectedSection = npProgressScope === "section" && section;
+      if (scopeButton && scopeLabel) {
+        scopeButton.disabled = !section;
+        scopeLabel.textContent = selectedSection
+          ? section.label
+          : nowPlayingChaptersAvailable && nowPlayingChapters.length
+            ? `Whole book · ${nowPlayingChapters.length} chapters`
+            : "Whole book";
+        scopeButton.setAttribute("aria-pressed", selectedSection ? "true" : "false");
+        scopeButton.setAttribute("aria-label", selectedSection
+          ? `Showing ${section.label.toLowerCase()} progress. Switch to whole-book progress.`
+          : section
+            ? `Showing whole-book progress. Switch to ${section.label.toLowerCase()} progress.`
+            : nowPlayingChapters === null
+              ? "Whole-book progress. Chapter markers are loading."
+              : "Whole-book progress. No chapter or part section is available.");
+      }
+      if (timeButton) {
+        timeButton.textContent = playbackTimeLabel(view);
+        const scopeName = selectedSection ? section.label.toLowerCase() : "whole book";
+        const nextMode = npTimeDisplay === "remaining" ? "elapsed and total time" : "time remaining";
+        timeButton.setAttribute("aria-label", `${playbackTimeLabel(view)} for the ${scopeName}. Tap to show ${nextMode}.`);
+        timeButton.title = `Tap to switch to ${nextMode}`;
+      }
     }
 
     function setClassEnabled(node, className, enabled) {
@@ -640,7 +816,10 @@
         return;
       }
       queue.hidden = false;
-      if (title) title.textContent = `${nowPlayingParts.length} parts`;
+      if (title) {
+        const chapterCount = nowPlayingChaptersAvailable ? nowPlayingChapters.length : 0;
+        title.textContent = `${nowPlayingParts.length} parts${chapterCount ? ` · ${chapterCount} chapters` : ""}`;
+      }
       if (toggle) {
         toggle.textContent = npQueueOpen ? "Hide list" : "Show list";
         toggle.setAttribute("aria-expanded", npQueueOpen ? "true" : "false");
@@ -725,6 +904,7 @@
       nowPlayingMode = plan.mode;
       npLastSaved = 0;
       npSeeking = false;
+      loadBookChapters(item);
 
       media.src = api(plan.url);
       syncPlaybackRate(media);
@@ -775,6 +955,7 @@
     function stopPlayback() {
       const media = npMedia();
       saveProgress(true);
+      npChapterRequest++;
       if (media) {
         media.pause();
         media.removeAttribute("src");
@@ -783,6 +964,8 @@
       nowPlayingItem = null;
       nowPlayingParts = null;
       nowPlayingPartIndex = 0;
+      nowPlayingChapters = null;
+      nowPlayingChaptersAvailable = false;
       npQueueOpen = false;
       setSleepTimer("off", false);
       setPlayerExpanded(false);
@@ -843,9 +1026,14 @@
       }
       const partLabel = $("#npPartLabel");
       if (partLabel) {
-        partLabel.textContent = [bookPartLabel() || kindLabel(item.kind), item.year || ""].filter(Boolean).join(" · ");
+        partLabel.textContent = [playbackContextLabel(), item.year || ""].filter(Boolean).join(" · ");
         partLabel.hidden = false;
       }
+      const audiobookControls = $("#npBookProgressControls");
+      const legacyReadouts = $("#npLegacySeekReadouts");
+      const isAudiobook = item.kind === "audiobook" && nowPlayingMode === "audio";
+      if (audiobookControls) audiobookControls.hidden = !isAudiobook;
+      if (legacyReadouts) legacyReadouts.hidden = isAudiobook;
       const mobileKind = $("#npMobileKind");
       if (mobileKind) mobileKind.textContent = item.kind === "audiobook" ? "NOW PLAYING · AUDIOBOOK" : `NOW PLAYING · ${mediaLabel(nowPlayingMode).toUpperCase()}`;
       const art = $("#npArt");
@@ -919,16 +1107,23 @@
 
     function renderPlaybackProgress(tl) {
       const seek = $("#npSeek");
-      // The bar spans the book, so the thumb means the same thing on every
-      // part instead of jumping back to the left on each file boundary.
+      const view = nowPlayingItem?.kind === "audiobook" && nowPlayingMode === "audio"
+        ? playbackProgressTimeline(tl) : { scope: "book", start: 0, position: tl.position, total: tl.total, section: null };
+      // The default bar spans the book. When the listener selects a chapter or
+      // file section, the same thumb instead spans only that listening section.
       if (seek && !npSeeking) {
-        const ratio = tl.total > 0 ? Math.min(Math.max(tl.position / tl.total, 0), 1) : 0;
+        const ratio = view.total > 0 ? Math.min(Math.max(view.position / view.total, 0), 1) : 0;
         seek.value = String(Math.round(ratio * 1000));
         if (seek.style?.setProperty) seek.style.setProperty("--np-progress", `${(ratio * 100).toFixed(2)}%`);
       }
-      const cur = $("#npCur"); if (cur) cur.textContent = formatTime(tl.position);
-      const dur = $("#npDur"); if (dur) dur.textContent = formatTime(tl.total);
+      const cur = $("#npCur"); if (cur) cur.textContent = formatTime(view.position);
+      const dur = $("#npDur"); if (dur) dur.textContent = formatTime(view.total);
       renderEta(tl);
+      renderAudiobookProgressControls(tl, view);
+      const partLabel = $("#npPartLabel");
+      if (partLabel && nowPlayingItem?.kind === "audiobook") {
+        partLabel.textContent = [playbackContextLabel(tl), nowPlayingItem.year || ""].filter(Boolean).join(" · ");
+      }
     }
 
     function onTimeUpdate() {
@@ -1079,6 +1274,8 @@
       npQueueOpen = !npQueueOpen;
       renderPartQueue();
     });
+    on("#npScopeToggle", "click", () => togglePlaybackScope());
+    on("#npTimeToggle", "click", () => togglePlaybackTimeDisplay());
     on("#npQueueList", "click", event => {
       const button = event.target.closest?.("[data-np-part-index]");
       if (!button) return;
@@ -1107,13 +1304,13 @@
     });
     on("#npSeek", "input", event => {
       npSeeking = true;
-      // The bar is in book coordinates, so the target is a book position. This
-      // is also what makes the on-page bar and the lock-screen scrubber agree.
       const tl = bookTimeline();
-      if (tl.total > 0) {
-        const target = (Number(event.target.value) / 1000) * tl.total;
+      const view = nowPlayingItem?.kind === "audiobook" && nowPlayingMode === "audio"
+        ? playbackProgressTimeline(tl) : { start: 0, total: tl.total };
+      if (view.total > 0) {
+        const target = view.start + (Number(event.target.value) / 1000) * view.total;
         const cur = $("#npCur");
-        if (cur) cur.textContent = formatTime(target);
+        if (cur) cur.textContent = formatTime(target - view.start);
         seekBookTo(target);
       }
     });

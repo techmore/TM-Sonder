@@ -703,8 +703,12 @@ body.np-visible { padding-bottom:116px; }
 .np-skip { position:relative; padding:0; }
 .np-skip svg { display:block; width:27px; height:27px; margin:auto; }
 .np-skip span { position:absolute; inset:0; display:grid; place-items:center; padding-top:5px; font-size:9px; font-weight:700; }
-.np-seek { display:flex; align-items:center; gap:10px; flex:2 1 260px; min-width:0; }
-.np-seek input[type="range"] { flex:1; min-width:0; accent-color:var(--accent); }
+.np-seek { display:grid; grid-template-columns:minmax(0,1fr); gap:5px; flex:2 1 260px; min-width:0; }
+.np-seek input[type="range"] { grid-column:1; width:100%; min-width:0; accent-color:var(--accent); }
+.np-seek-readouts, .np-book-progress {
+  display:flex; align-items:center; justify-content:space-between; gap:8px; min-width:0;
+}
+.np-seek-readouts[hidden], .np-book-progress[hidden] { display:none; }
 .np-time { color:var(--muted); font-size:12px; font-variant-numeric:tabular-nums; white-space:nowrap; }
 /* Time left in the whole book. Kept separate from the elapsed/total pair
    because it answers a different question and competes for the same row. */
@@ -713,6 +717,19 @@ body.np-visible { padding-bottom:116px; }
   white-space:nowrap; padding:1px 6px; border-radius:999px;
   background:var(--panel2); border:1px solid var(--line);
 }
+.np-scope-toggle, .np-time-toggle {
+  display:inline-flex; align-items:center; justify-content:center; gap:6px;
+  min-height:32px; max-width:100%; padding:4px 9px; border:1px solid var(--line);
+  border-radius:999px; background:var(--panel2); color:var(--text); cursor:pointer;
+  font:inherit; font-size:11px; font-variant-numeric:tabular-nums; white-space:nowrap;
+}
+.np-scope-toggle { overflow:hidden; text-overflow:ellipsis; }
+.np-scope-toggle > span:first-child { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.np-scope-chevron { color:var(--muted); font-size:14px; line-height:1; }
+.np-time-toggle { color:var(--accent); }
+.np-scope-toggle:hover:not(:disabled), .np-time-toggle:hover { border-color:var(--accent); }
+.np-scope-toggle:focus-visible, .np-time-toggle:focus-visible { outline:2px solid var(--accent); outline-offset:2px; }
+.np-scope-toggle:disabled { opacity:.62; cursor:default; }
 .np-tools { display:flex; align-items:center; gap:8px; flex:0 0 auto; }
 .np-link {
   display:inline-flex; align-items:center; justify-content:center; min-height:36px;
@@ -1183,7 +1200,9 @@ body[data-theme="bunny"] .actions button.primary:disabled { opacity:.55; }
   body:not(.np-expanded) .np-seek { grid-area:seek; order:initial; display:block; width:100%; min-width:0; }
   body:not(.np-expanded) .np-seek input[type="range"] { display:block; width:100%; height:12px; }
   body:not(.np-expanded) .np-time, body:not(.np-expanded) .np-eta,
-  body:not(.np-expanded) .np-tools { display:none; }
+  body:not(.np-expanded) .np-tools,
+  body:not(.np-expanded) .np-seek-readouts,
+  body:not(.np-expanded) .np-book-progress { display:none; }
   body:not(.np-expanded) .np-queue { display:none; }
   body:not(.np-expanded) .np-status:not(:empty) { padding:0 14px 8px; color:var(--np-highlight); }
 
@@ -1241,10 +1260,16 @@ body[data-theme="bunny"] .actions button.primary:disabled { opacity:.55; }
     white-space:normal; overflow:visible;
   }
   body.np-expanded .np-seek {
-    order:3; display:grid; flex:0 0 auto; grid-template-columns:1fr auto; gap:9px;
+    order:3; display:grid; flex:0 0 auto; grid-template-columns:minmax(0,1fr); gap:9px;
     width:100%; margin-top:27px;
   }
-  body.np-expanded .np-seek input[type="range"] { grid-column:1 / -1; width:100%; height:30px; margin:0; }
+  body.np-expanded .np-seek input[type="range"] { grid-column:1; width:100%; height:30px; margin:0; }
+  body.np-expanded .np-seek-readouts, body.np-expanded .np-book-progress { width:100%; }
+  body.np-expanded .np-scope-toggle, body.np-expanded .np-time-toggle {
+    min-height:38px; padding:6px 11px; font-size:12px;
+  }
+  body.np-expanded .np-scope-toggle { flex:1 1 auto; justify-content:space-between; min-width:0; }
+  body.np-expanded .np-time-toggle { flex:0 0 auto; }
   body.np-expanded .np-time, body.np-expanded .np-eta {
     margin:0; padding:0; border:0; background:none; color:var(--np-muted);
     font-size:12px; font-variant-numeric:tabular-nums;

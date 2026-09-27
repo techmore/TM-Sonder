@@ -220,10 +220,16 @@
       </div>
       <div class="np-seek">
         <input type="range" id="npSeek" min="0" max="1000" value="0" step="1" aria-label="Seek">
-        <span class="np-time"><span id="npCur">0:00</span> / <span id="npDur">0:00</span></span>
-        <!-- Time left in the whole book, not the current file. A 7-hour book on
-             a 5-minute part would otherwise always read "4:55 left". -->
-        <span class="np-eta" id="npEta" hidden></span>
+        <div class="np-seek-readouts" id="npLegacySeekReadouts">
+          <span class="np-time"><span id="npCur">0:00</span> / <span id="npDur">0:00</span></span>
+          <span class="np-eta" id="npEta" hidden></span>
+        </div>
+        <div class="np-book-progress" id="npBookProgressControls" hidden>
+          <button type="button" class="np-scope-toggle" id="npScopeToggle" aria-pressed="false" aria-label="Show whole-book progress">
+            <span id="npScopeLabel">Whole book</span><span class="np-scope-chevron" aria-hidden="true">⌄</span>
+          </button>
+          <button type="button" class="np-time-toggle" id="npTimeToggle" aria-label="Toggle audiobook time display">0:00 left</button>
+        </div>
       </div>
       <div class="np-tools">
         <label class="np-rate">

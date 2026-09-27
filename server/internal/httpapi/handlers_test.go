@@ -2,6 +2,7 @@ package httpapi
 
 import (
 	"compress/gzip"
+	"context"
 	"encoding/json"
 	"io"
 	"net/http"
@@ -17,6 +18,12 @@ import (
 	"tm-sonder/server/internal/library"
 	"tm-sonder/server/internal/mediacache"
 )
+
+type fixtureChapters map[string][]api.AudiobookChapter
+
+func (f fixtureChapters) ChaptersFor(_ context.Context, itemID string) ([]api.AudiobookChapter, error) {
+	return f[itemID], nil
+}
 
 type fixture struct {
 	s     *Server
@@ -428,6 +435,95 @@ func TestAudiobookRoutes(t *testing.T) {
 	resp, _ := get(t, f.ts.URL+"/api/audiobooks/movie1")
 	if resp.StatusCode != 404 {
 		t.Errorf("movie as audiobook should 404, got %d", resp.StatusCode)
+	}
+}
+
+func TestAudiobookChapterTimelineUsesWholeBookCoordinates(t *testing.T) {
+	root := t.TempDir()
+	f := newFixture(t, func(c *config.Config) {
+		c.Libraries = []config.Library{{ID: "books", Name: "Audiobooks", Path: root, Kind: "audiobook"}}
+	})
+	libID := "books"
+	for _, part := range []struct {
+		id, rel string
+		dur     float64
+	}{
+		{"p1", "Author/A Shared Book/1.mp3", 100},
+		{"p2", "Author/A Shared Book/2.mp3", 200},
+		{"p3", "Author/A Shared Book/3.mp3", 100},
+	} {
+		path := filepath.Join(root, filepath.FromSlash(part.rel))
+		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(path, []byte("audio"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		f.store.Upsert(&library.Item{
+			MediaItem: api.MediaItem{
+				ID: part.id, Title: "A Shared Book", Kind: api.KindAudiobook,
+				Format: api.FormatMP3, DurationSeconds: part.dur, LibraryID: &libID,
+			},
+			FilePath: path, SourceRelativePath: part.rel, SizeBytes: 2_000_000,
+		})
+	}
+	end50, end30 := 50.0, 30.0
+	f.s.SetChapterProvider(fixtureChapters{
+		"p1": {
+			{Index: 0, Title: "Opening", StartSeconds: 0, EndSeconds: &end50},
+			{Index: 1, Title: "First turn", StartSeconds: 50},
+		},
+		"p2": {
+			{Index: 0, Title: "Crossing", StartSeconds: 0, EndSeconds: &end30},
+			{Index: 1, Title: "Arrival", StartSeconds: 30},
+		},
+		"p3": {{Index: 0, Title: "Epilogue", StartSeconds: 0}},
+	})
+
+	resp, body := get(t, f.ts.URL+"/api/audiobooks/p2/chapters")
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("status = %d, body=%s", resp.StatusCode, body)
+	}
+	var timeline struct {
+		ItemID          string  `json:"itemID"`
+		Available       bool    `json:"available"`
+		ChapterCount    int     `json:"chapterCount"`
+		PartCount       int     `json:"partCount"`
+		DurationSeconds float64 `json:"durationSeconds"`
+		Chapters        []struct {
+			Index        int     `json:"index"`
+			Title        string  `json:"title"`
+			PartID       string  `json:"partID"`
+			PartIndex    int     `json:"partIndex"`
+			StartSeconds float64 `json:"startSeconds"`
+			EndSeconds   float64 `json:"endSeconds"`
+		} `json:"chapters"`
+	}
+	if err := json.Unmarshal([]byte(body), &timeline); err != nil {
+		t.Fatalf("unmarshal timeline: %v (%s)", err, body)
+	}
+	if timeline.ItemID != "p2" || !timeline.Available || timeline.ChapterCount != 5 ||
+		timeline.PartCount != 3 || timeline.DurationSeconds != 400 {
+		t.Fatalf("timeline summary = %+v", timeline)
+	}
+	if len(timeline.Chapters) != 5 {
+		t.Fatalf("chapters = %+v", timeline.Chapters)
+	}
+	want := []struct {
+		id         string
+		part       int
+		start, end float64
+	}{
+		{"p1", 1, 0, 50}, {"p1", 1, 50, 100},
+		{"p2", 2, 100, 130}, {"p2", 2, 130, 300},
+		{"p3", 3, 300, 400},
+	}
+	for i, expected := range want {
+		got := timeline.Chapters[i]
+		if got.Index != i+1 || got.PartID != expected.id || got.PartIndex != expected.part ||
+			got.StartSeconds != expected.start || got.EndSeconds != expected.end {
+			t.Errorf("chapter %d = %+v, want %+v", i+1, got, expected)
+		}
 	}
 }
 

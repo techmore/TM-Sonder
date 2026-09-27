@@ -770,6 +770,41 @@ test('switching parts immediately shows the new book position before metadata lo
   );
 });
 
+test('audiobook progress switches between whole book and chapter time', () => {
+  const get = catalog([part('p1', 'bk', 1, 100), part('p2', 'bk', 2, 200)]);
+  const result = get(`(() => {
+    nowPlayingItem=items[0]; nowPlayingMode="audio";
+    nowPlayingParts=partsOf(items[0]); nowPlayingPartIndex=1;
+    $("#npMedia").currentTime=30; $("#npMedia").duration=200;
+    nowPlayingChaptersAvailable=true;
+    nowPlayingChapters=[
+      {index:1,title:"Opening",partID:"p1",partIndex:1,startSeconds:0,endSeconds:100},
+      {index:2,title:"The Crossing",partID:"p2",partIndex:2,startSeconds:100,endSeconds:160},
+      {index:3,title:"Arrival",partID:"p2",partIndex:2,startSeconds:160,endSeconds:300},
+    ];
+    npProgressScope="book"; npTimeDisplay="remaining";
+    renderPlaybackProgress(bookTimeline());
+    const bookLabel=$("#npScopeLabel").textContent;
+    togglePlaybackScope();
+    const section=playbackProgressTimeline(bookTimeline());
+    const chapterLabel=$("#npScopeLabel").textContent;
+    const chapterRemaining=$("#npTimeToggle").textContent;
+    togglePlaybackTimeDisplay();
+    const chapterElapsed=$("#npTimeToggle").textContent;
+    return {bookLabel,chapterLabel,chapterRemaining,chapterElapsed,
+      scope:section.scope,start:section.start,position:section.position,total:section.total,
+      chapterContext:$("#npPartLabel").textContent};
+  })()`);
+  assert.deepEqual(result, {
+    bookLabel: 'Whole book · 3 chapters',
+    chapterLabel: 'Chapter 2 of 3',
+    chapterRemaining: '30 left',
+    chapterElapsed: '30 / 60',
+    scope: 'chapter', start: 100, position: 30, total: 60,
+    chapterContext: 'Chapter 2 of 3 · Part 2 of 2 · 2003',
+  });
+});
+
 test('switching parts preserves the selected playback speed after media load', () => {
   const get = catalog([part('p1', 'bk', 1, 300), part('p2', 'bk', 2, 300)]);
   assert.equal(
@@ -785,13 +820,12 @@ test('a single-file item reports its own duration and position', () => {
 });
 
 test('the seek bar addresses the whole book', () => {
-  // iOS reports seekto in whatever coordinates setPositionState published. If
-  // the bar were per-file, the lock screen would drive a 7-hour book from a
-  // 5-minute file's range.
+  // iOS reports seekto in whole-book coordinates. The on-page slider can scope
+  // to one chapter, but it maps back to book coordinates before seeking.
   const get = catalog([part('p1', 'bk', 1, 600), part('p2', 'bk', 2, 600), part('p3', 'bk', 3, 600)]);
   const src = fs.readFileSync(`${__dirname}/library.js`, 'utf8');
-  // The slider maps through bookTimeline, not media.duration.
-  assert.match(src, /const target = \(Number\(event\.target\.value\) \/ 1000\) \* tl\.total;/);
+  // The slider maps through its selected book/chapter range, not media.duration.
+  assert.match(src, /const target = view\.start \+ \(Number\(event\.target\.value\) \/ 1000\) \* view\.total;/);
   assert.doesNotMatch(src, /Number\(event\.target\.value\) \/ 1000\) \* media\.duration/);
   // And the lock screen routes through the same function rather than assigning
   // media.currentTime, which would be per-file.
@@ -811,6 +845,9 @@ test('the lock screen gets the author, the narrator and the series', () => {
 
 test('the mobile player has readable contrast and listening controls', () => {
   assert.match(libraryHTML, /id="npEta"/);
+  assert.match(libraryHTML, /id="npScopeToggle"/);
+  assert.match(libraryHTML, /id="npTimeToggle"/);
+  assert.match(libraryHTML, /id="npBookProgressControls"/);
   assert.match(libraryHTML, /id="npMobileToggle"/);
   assert.match(libraryHTML, /id="npMobileKind"/);
   assert.match(libraryHTML, /id="npDetails"/);
