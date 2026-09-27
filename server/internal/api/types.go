@@ -214,6 +214,59 @@ type ProgressRecord struct {
 	SubtitlesEnabled *bool     `json:"subtitlesEnabled,omitempty"`
 }
 
+// ReadingSession records one continuous client playback session. The media
+// seconds and wall-clock seconds let the UI report both listening time and
+// effective playback speed without counting pauses as reading time.
+type ReadingSession struct {
+	ID            string    `json:"id"`
+	StartedAt     time.Time `json:"startedAt"`
+	UpdatedAt     time.Time `json:"updatedAt"`
+	ActiveSeconds float64   `json:"activeSeconds"`
+	MediaSeconds  float64   `json:"mediaSeconds"`
+}
+
+// BookReadRun groups listening sessions from the first play through the
+// completion of one audiobook read. Resuming after a restart continues the
+// same run; a later read starts a new run.
+type BookReadRun struct {
+	ID            string           `json:"id"`
+	StartedAt     time.Time        `json:"startedAt"`
+	CompletedAt   *time.Time       `json:"completedAt,omitempty"`
+	ActiveSeconds float64          `json:"activeSeconds"`
+	MediaSeconds  float64          `json:"mediaSeconds"`
+	Sessions      []ReadingSession `json:"sessions"`
+}
+
+// BookReadingRecord is user-curated state for a catalog book. Sonder currently
+// has one shared library profile, so queue/like/history state is shared across
+// signed-in clients and devices.
+type BookReadingRecord struct {
+	ItemID    string        `json:"itemID"`
+	QueuedAt  *time.Time    `json:"queuedAt,omitempty"`
+	LikedAt   *time.Time    `json:"likedAt,omitempty"`
+	UpdatedAt time.Time     `json:"updatedAt"`
+	Reads     []BookReadRun `json:"reads"`
+}
+
+// ReadingState keeps the queue order separate from each book's reading
+// history, making a book reusable in any number of curated lists.
+type ReadingState struct {
+	Queue   []string            `json:"queue"`
+	Records []BookReadingRecord `json:"records"`
+}
+
+type LibraryReadingUpdate struct {
+	Queued *bool `json:"queued,omitempty"`
+	Liked  *bool `json:"liked,omitempty"`
+}
+
+type ReadingSessionUpdate struct {
+	SessionID     string  `json:"sessionID"`
+	ActiveSeconds float64 `json:"activeSeconds"`
+	MediaSeconds  float64 `json:"mediaSeconds"`
+	Completed     bool    `json:"completed,omitempty"`
+}
+
 type LibraryResponse struct {
 	Items            []MediaItem      `json:"items"`
 	Progress         []ProgressRecord `json:"progress"`

@@ -239,6 +239,57 @@ func TestProgressRouteAcceptsUpdate(t *testing.T) {
 	}
 }
 
+func TestReadingQueueLikesAndSessionsAPI(t *testing.T) {
+	f := newFixture(t, nil)
+	audio := f.addItem(t, "audio-book", "Audio Book")
+	audio.Kind = api.KindAudiobook
+	audio.Format = api.FormatM4B
+	f.store.Upsert(audio)
+	ebook := f.addItem(t, "ebook-book", "Ebook")
+	ebook.Kind = api.KindEbook
+	ebook.Format = api.FormatEPUB
+	f.store.Upsert(ebook)
+
+	request := func(method, url, body string) (*http.Response, string) {
+		t.Helper()
+		req, err := http.NewRequest(method, url, strings.NewReader(body))
+		if err != nil {
+			t.Fatal(err)
+		}
+		req.Header.Set("Content-Type", "application/json")
+		resp, err := http.DefaultClient.Do(req)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return resp, readAll(t, resp)
+	}
+
+	resp, body := request(http.MethodPatch, f.ts.URL+"/api/reading/audio-book", `{"queued":true,"liked":true}`)
+	if resp.StatusCode != http.StatusOK || !strings.Contains(body, `"itemID":"audio-book"`) {
+		t.Fatalf("set book state = %d %s", resp.StatusCode, body)
+	}
+	resp, _ = request(http.MethodPatch, f.ts.URL+"/api/reading/ebook-book", `{"queued":true}`)
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("queue ebook status = %d", resp.StatusCode)
+	}
+	resp, body = request(http.MethodPost, f.ts.URL+"/api/reading/queue/reorder", `{"itemIDs":["ebook-book","audio-book"]}`)
+	if resp.StatusCode != http.StatusOK || !strings.Contains(body, `"queue":["ebook-book","audio-book"]`) {
+		t.Fatalf("reorder queue = %d %s", resp.StatusCode, body)
+	}
+	resp, body = request(http.MethodPost, f.ts.URL+"/api/reading/audio-book/sessions", `{"sessionID":"session-1","activeSeconds":120,"mediaSeconds":180,"completed":true}`)
+	if resp.StatusCode != http.StatusOK || !strings.Contains(body, `"completedAt"`) || !strings.Contains(body, `"activeSeconds":120`) {
+		t.Fatalf("record audiobook session = %d %s", resp.StatusCode, body)
+	}
+	resp, _ = request(http.MethodPost, f.ts.URL+"/api/reading/ebook-book/sessions", `{"sessionID":"session-ebook"}`)
+	if resp.StatusCode != http.StatusNotFound {
+		t.Fatalf("ebook session status = %d, want not found", resp.StatusCode)
+	}
+	resp, body = request(http.MethodGet, f.ts.URL+"/api/reading", "")
+	if resp.StatusCode != http.StatusOK || !strings.Contains(body, `"likedAt"`) || !strings.Contains(body, `"queue":["ebook-book","audio-book"]`) {
+		t.Fatalf("get reading state = %d %s", resp.StatusCode, body)
+	}
+}
+
 func TestStatusRoute(t *testing.T) {
 	f := newFixture(t, nil)
 	f.addItem(t, "s1", "One")

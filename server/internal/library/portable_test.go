@@ -30,6 +30,15 @@ func TestPortableBundleRemapsPathsAndPreservesUserData(t *testing.T) {
 		t.Fatal("add list item failed")
 	}
 	source.SetProgress(api.ProgressRecord{ItemID: itemID, Seconds: 42, Duration: 100, UpdatedAt: time.Now().UTC()})
+	queued, liked := true, true
+	if _, ok := source.SetBookReadingFlags(itemID, &queued, &liked, time.Now().UTC()); !ok {
+		t.Fatal("set reading queue and like failed")
+	}
+	if _, ok := source.RecordReadSession(itemID, api.ReadingSessionUpdate{
+		SessionID: "portable-session", ActiveSeconds: 30, MediaSeconds: 45,
+	}, time.Now().UTC()); !ok {
+		t.Fatal("record reading session failed")
+	}
 
 	bundle := source.ExportBundle([]config.Library{{ID: libraryID, Name: "Audiobooks", Path: oldRoot, Kind: string(api.KindAudiobook)}})
 	remapped, err := RemapBundlePaths(&bundle, []config.Library{{ID: libraryID, Name: "Audiobooks", Path: newRoot, Kind: string(api.KindAudiobook)}}, nil)
@@ -48,7 +57,7 @@ func TestPortableBundleRemapsPathsAndPreservesUserData(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if result.Items != 1 || result.Lists != 1 || result.Progress != 1 {
+	if result.Items != 1 || result.Lists != 1 || result.Progress != 1 || result.ReadingRecords != 1 || result.QueuedBooks != 1 || result.LikedBooks != 1 {
 		t.Fatalf("import result = %+v", result)
 	}
 	item, ok := destination.Get(itemID)
@@ -57,6 +66,21 @@ func TestPortableBundleRemapsPathsAndPreservesUserData(t *testing.T) {
 	}
 	if got := destination.Lists()[0].ItemIDs; len(got) != 1 || got[0] != itemID {
 		t.Fatalf("imported list items = %v", got)
+	}
+	reading := destination.ReadingState()
+	if len(reading.Queue) != 1 || reading.Queue[0] != itemID || len(reading.Records) != 1 || reading.Records[0].LikedAt == nil || len(reading.Records[0].Reads) != 1 {
+		t.Fatalf("imported reading state = %+v", reading)
+	}
+	if _, err := destination.ImportBundle(bundle, "merge"); err != nil {
+		t.Fatal(err)
+	}
+	merged := destination.ReadingState().Records[0]
+	if len(merged.Reads) != 1 || len(merged.Reads[0].Sessions) != 1 || merged.Reads[0].ActiveSeconds != 30 || merged.Reads[0].MediaSeconds != 45 {
+		t.Fatalf("re-import duplicated or changed listening totals: %+v", merged.Reads)
+	}
+	bundle.Snapshot.Reading.Records[0].Reads[0].Sessions[0].ActiveSeconds = 999
+	if got := destination.ReadingState().Records[0].Reads[0].Sessions[0].ActiveSeconds; got != 30 {
+		t.Fatalf("imported session aliases bundle memory: activeSeconds = %v", got)
 	}
 }
 

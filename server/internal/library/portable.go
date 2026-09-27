@@ -26,11 +26,14 @@ type DataBundle struct {
 }
 
 type DataImportResult struct {
-	Mode          string `json:"mode"`
-	Items         int    `json:"items"`
-	Lists         int    `json:"lists"`
-	Progress      int    `json:"progress"`
-	PathsRemapped int    `json:"pathsRemapped"`
+	Mode           string `json:"mode"`
+	Items          int    `json:"items"`
+	Lists          int    `json:"lists"`
+	Progress       int    `json:"progress"`
+	ReadingRecords int    `json:"readingRecords"`
+	QueuedBooks    int    `json:"queuedBooks"`
+	LikedBooks     int    `json:"likedBooks"`
+	PathsRemapped  int    `json:"pathsRemapped"`
 }
 
 // ExportBundle returns a deep copy suitable for JSON encoding or backup.
@@ -177,6 +180,14 @@ func (s *Store) ImportBundle(bundle DataBundle, mode string) (DataImportResult, 
 			}
 		}
 		s.progress = progress
+		s.reading = make(map[string]*api.BookReadingRecord, len(bundle.Snapshot.Reading.Records))
+		for i := range bundle.Snapshot.Reading.Records {
+			record := cloneReadingRecord(bundle.Snapshot.Reading.Records[i])
+			if record.ItemID != "" {
+				s.reading[record.ItemID] = &record
+			}
+		}
+		s.readingQueue = append([]string(nil), bundle.Snapshot.Reading.Queue...)
 		s.directories = append([]api.MediaDirectory(nil), bundle.Snapshot.Directories...)
 		s.activity = append([]api.ActivityEvent(nil), bundle.Snapshot.Activity...)
 		s.lists = cloneLists(bundle.Snapshot.Lists)
@@ -209,14 +220,107 @@ func (s *Store) ImportBundle(bundle DataBundle, mode string) (DataImportResult, 
 				s.lists = append(s.lists, cloneBookList(list))
 			}
 		}
+		mergeReadingRecords(s.reading, bundle.Snapshot.Reading.Records)
+		queued := make(map[string]bool, len(s.readingQueue))
+		for _, id := range s.readingQueue {
+			queued[id] = true
+		}
+		for _, id := range bundle.Snapshot.Reading.Queue {
+			if !queued[id] {
+				s.readingQueue = append(s.readingQueue, id)
+				queued[id] = true
+			}
+		}
 	}
 	s.gen = max64(s.gen+1, bundle.Snapshot.Generation+1)
+	queuedCount, likedCount := 0, 0
+	for _, id := range s.readingQueue {
+		if s.reading[id] != nil {
+			queuedCount++
+		}
+	}
+	for _, record := range s.reading {
+		if record.LikedAt != nil {
+			likedCount++
+		}
+	}
 	return DataImportResult{
-		Mode:     mode,
-		Items:    len(s.items),
-		Lists:    len(s.lists),
-		Progress: len(s.progress),
+		Mode:           mode,
+		Items:          len(s.items),
+		Lists:          len(s.lists),
+		Progress:       len(s.progress),
+		ReadingRecords: len(s.reading),
+		QueuedBooks:    queuedCount,
+		LikedBooks:     likedCount,
 	}, nil
+}
+
+func mergeReadingRecords(destination map[string]*api.BookReadingRecord, source []api.BookReadingRecord) {
+	if destination == nil {
+		return
+	}
+	for _, incoming := range source {
+		if incoming.ItemID == "" {
+			continue
+		}
+		current := destination[incoming.ItemID]
+		if current == nil {
+			copy := cloneReadingRecord(incoming)
+			destination[incoming.ItemID] = &copy
+			continue
+		}
+		merged := cloneReadingRecord(*current)
+		if incoming.UpdatedAt.After(merged.UpdatedAt) {
+			merged.UpdatedAt = incoming.UpdatedAt
+			merged.QueuedAt = cloneTimePtr(incoming.QueuedAt)
+			merged.LikedAt = cloneTimePtr(incoming.LikedAt)
+		}
+		runsByID := make(map[string]int, len(merged.Reads))
+		for i := range merged.Reads {
+			runsByID[merged.Reads[i].ID] = i
+		}
+		for _, inRun := range incoming.Reads {
+			runIndex, exists := runsByID[inRun.ID]
+			if !exists {
+				copied := cloneReadingRecord(api.BookReadingRecord{Reads: []api.BookReadRun{inRun}})
+				merged.Reads = append(merged.Reads, copied.Reads[0])
+				runIndex = len(merged.Reads) - 1
+				runsByID[inRun.ID] = runIndex
+			}
+			run := &merged.Reads[runIndex]
+			sessionsByID := make(map[string]int, len(run.Sessions))
+			for i := range run.Sessions {
+				sessionsByID[run.Sessions[i].ID] = i
+			}
+			for _, inSession := range inRun.Sessions {
+				if index, ok := sessionsByID[inSession.ID]; ok {
+					if inSession.ActiveSeconds > run.Sessions[index].ActiveSeconds {
+						run.ActiveSeconds += inSession.ActiveSeconds - run.Sessions[index].ActiveSeconds
+						run.Sessions[index].ActiveSeconds = inSession.ActiveSeconds
+					}
+					if inSession.MediaSeconds > run.Sessions[index].MediaSeconds {
+						run.MediaSeconds += inSession.MediaSeconds - run.Sessions[index].MediaSeconds
+						run.Sessions[index].MediaSeconds = inSession.MediaSeconds
+					}
+					if inSession.UpdatedAt.After(run.Sessions[index].UpdatedAt) {
+						run.Sessions[index].UpdatedAt = inSession.UpdatedAt
+					}
+				} else {
+					run.Sessions = append(run.Sessions, inSession)
+					run.ActiveSeconds += inSession.ActiveSeconds
+					run.MediaSeconds += inSession.MediaSeconds
+					sessionsByID[inSession.ID] = len(run.Sessions) - 1
+				}
+			}
+			if inRun.CompletedAt != nil && (run.CompletedAt == nil || inRun.CompletedAt.After(*run.CompletedAt)) {
+				run.CompletedAt = cloneTimePtr(inRun.CompletedAt)
+			}
+			if run.StartedAt.IsZero() || (!inRun.StartedAt.IsZero() && inRun.StartedAt.Before(run.StartedAt)) {
+				run.StartedAt = inRun.StartedAt
+			}
+		}
+		destination[incoming.ItemID] = &merged
+	}
 }
 
 func cloneLists(in []BookList) []BookList {

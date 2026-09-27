@@ -172,6 +172,10 @@ Includes:
 | Method | Path | Purpose |
 | --- | --- | --- |
 | GET | `/api/library` | Full library catalog, progress records, public server settings, activity, and theme. |
+| GET | `/api/reading` | Ordered book queue, likes, and audiobook read/session history. |
+| PATCH/PUT | `/api/reading/{id}` | Set `queued` and/or `liked` for an audiobook or ebook. |
+| POST | `/api/reading/queue/reorder` | Set queue order with `{ "itemIDs": ["..."] }`. |
+| POST | `/api/reading/{id}/sessions` | Upsert cumulative audiobook session time; body has `sessionID`, `activeSeconds`, `mediaSeconds`, and optional `completed`. |
 | GET | `/library.json` | Compatibility alias for `/api/library`. |
 | GET | `/api/movies/{id}/metadata` | Lazy, cached movie primer, cast/character portraits, directors, genres, and published ratings for the Rails detail panel. |
 | GET | `/api/data/export` | Download a versioned, media-independent Sonder data bundle containing catalog metadata, lists, tags, order, and progress. |
@@ -198,8 +202,8 @@ Includes:
 `GET /api/data/export` returns JSON with `format: "tm-sonder-data"`, a bundle
 version, the configured library definitions, and a versioned catalog snapshot.
 Media files are never included. The snapshot contains catalog metadata,
-stable list references, list-specific tags and order, playback progress, and
-activity history.
+stable list references, list-specific tags and order, playback progress,
+activity history, reading queue/likes, and audiobook listening history.
 
 `POST /api/data/import` accepts the exported document directly. The optional
 `mode` defaults to `replace`; `merge` overlays catalog items and newer progress
@@ -213,9 +217,36 @@ library roots to their current roots, for example:
   "format": "tm-sonder-data",
   "version": 1,
   "libraries": [],
-  "snapshot": {"schemaVersion": 2, "items": [], "progress": [], "lists": []}
+  "snapshot": {"schemaVersion": 3, "items": [], "progress": [], "reading": {"queue": [], "records": []}, "lists": []}
 }
 ```
+
+### Book queue and listening history
+
+`GET /api/reading` returns `queue` as ordered catalog item IDs and `records` as
+book state. Use `PATCH /api/reading/{id}` with `{"queued":true}` and/or
+`{"liked":true}` to change a book's queue or like state. Queue order is
+updated through `POST /api/reading/queue/reorder`.
+
+Audiobook clients post cumulative (not per-request delta) session totals to
+`POST /api/reading/{id}/sessions`, for example:
+
+```json
+{
+  "sessionID": "unique-client-session-id",
+  "activeSeconds": 1800,
+  "mediaSeconds": 2250,
+  "completed": false
+}
+```
+
+`activeSeconds` is real playback time excluding pauses; `mediaSeconds` is the
+amount of the recording consumed, so their ratio reflects average playback
+speed. Cumulative totals make retries idempotent. Mark `completed` only when
+the final part of the book ends. Each audiobook can then retain multiple
+completed read runs with start/finish dates and active listening duration.
+The current EPUB/PDF view opens the file externally; page-level ebook position
+and reading time are not yet tracked by Sonder.
 
 Import is an in-memory/catalog operation followed by an atomic persistence
 write. It does not walk the media roots, probe files, or prune missing media.

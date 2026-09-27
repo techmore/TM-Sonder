@@ -188,6 +188,16 @@
       border-radius:8px; padding:9px 14px; text-decoration:none; cursor:pointer;
     }
     .actions button.primary { background:var(--accent); border-color:var(--accent); color:var(--accent-dark); font-weight:700; }
+    .book-actions { display:flex; align-items:center; flex-wrap:wrap; gap:8px; margin:14px 0; }
+    .book-actions button { min-height:40px; padding:8px 12px; border:1px solid var(--line); border-radius:999px; background:var(--panel2); color:var(--text); cursor:pointer; }
+    .book-actions button[aria-pressed="true"] { color:var(--accent); border-color:var(--accent); background:rgba(182,213,109,.12); }
+    #detailShareStatus { min-height:1em; color:var(--muted); font-size:12px; }
+    .book-read-history { margin:18px 0; padding:14px 16px; border:1px solid var(--line); border-radius:10px; background:var(--bg); }
+    .book-read-history h3 { margin:0 0 8px; font-size:14px; }
+    .book-read-history ol { margin:0; padding:0; list-style:none; }
+    .book-read-history li { display:flex; justify-content:space-between; gap:14px; padding:9px 0; border-top:1px solid var(--line); }
+    .book-read-history li:first-child { border-top:0; }
+    .book-read-history li span { color:var(--muted); text-align:right; font-size:12px; }
     .not-playable { background:var(--panel2); border:1px dashed var(--line); border-radius:8px; padding:18px; text-align:center; color:var(--muted); }
     .play-hint { background:var(--panel2); border:1px solid var(--line); border-radius:8px; padding:12px 14px; color:var(--muted); font-size:13px; margin-bottom:14px; }
     .empty-state { padding:60px 22px; text-align:center; color:var(--muted); }
@@ -465,6 +475,30 @@ body.optimize-mode #backRow { display:none !important; }
 .lists-panel { padding:18px; }
 .lists-panel h2 { margin:0 0 5px; }
 .muted { color:var(--muted); }
+.reading-queue { margin:14px 0 24px; padding:16px; border:1px solid var(--accent); border-radius:13px; background:linear-gradient(145deg,var(--panel),var(--panel2)); }
+.reading-queue-head { display:flex; justify-content:space-between; align-items:center; gap:12px; }
+.reading-queue-head h3 { margin:0; }
+.reading-queue-head p { margin:4px 0 0; color:var(--muted); font-size:13px; }
+.reading-queue-head > span { display:grid; place-items:center; min-width:32px; height:32px; border-radius:50%; background:var(--accent); color:var(--accent-dark); font-weight:700; }
+.reading-queue ol { margin:12px 0 0; padding:0; list-style:none; }
+.reading-queue li { display:flex; align-items:center; gap:10px; padding:10px 0; border-top:1px solid var(--line); }
+.queue-cover { width:42px; height:60px; flex:0 0 42px; object-fit:cover; border-radius:5px; background:var(--panel2); }
+.queue-cover-empty { display:grid; place-items:center; border:1px solid var(--line); color:var(--muted); }
+.queue-position { min-width:22px; color:var(--muted); font-variant-numeric:tabular-nums; }
+.queue-title { border:0; padding:0; background:none; color:var(--accent); cursor:pointer; font:inherit; font-weight:600; text-align:left; }
+.queue-meta { color:var(--muted); font-size:12px; }
+.queue-actions { display:flex; gap:4px; margin-left:auto; }
+.queue-actions button { min-height:36px; padding:5px 9px; border:1px solid var(--line); border-radius:7px; background:var(--panel2); color:var(--text); cursor:pointer; }
+.queue-actions button:disabled { opacity:.4; cursor:default; }
+.queue-empty, .queue-status { margin:10px 0 0; color:var(--muted); font-size:13px; }
+.liked-books { margin:14px 0 24px; padding:16px; border:1px solid var(--line); border-radius:13px; background:var(--panel); }
+.liked-books .reading-queue-head h3 { margin:0; }
+.liked-books .reading-queue-head p { margin:4px 0 0; color:var(--muted); font-size:13px; }
+.liked-book-grid { display:grid; grid-template-columns:repeat(auto-fill,minmax(220px,1fr)); gap:8px; margin-top:12px; }
+.liked-book { display:grid; grid-template-columns:40px minmax(0,1fr) 38px; gap:9px; align-items:center; padding:8px; border:1px solid var(--line); border-radius:9px; background:var(--bg); }
+.liked-book > img, .liked-book > span { width:40px; height:56px; object-fit:cover; border-radius:5px; }
+.liked-book > span { display:grid; place-items:center; color:var(--accent); background:var(--panel2); }
+.liked-book > button:last-child { min-height:38px; border:1px solid var(--line); border-radius:50%; background:var(--panel2); color:var(--accent); cursor:pointer; }
 .list-create-form, .list-add-row { display:flex; flex-wrap:wrap; gap:8px; margin:14px 0; }
 .list-create-form input, .list-add-row input, .list-add-row select { min-width:150px; flex:1 1 180px; }
 .list-create-form button, .list-add-row button { flex:0 0 auto; }
@@ -1126,6 +1160,14 @@ body[data-theme="bunny"] .actions button.primary:disabled { opacity:.55; }
   .list-entry-title { grid-column: 2; text-align: left; }
   .list-entry-tags, .list-entry-actions { grid-column: 2; }
   .list-missing ol { padding-left: 18px; }
+  .reading-queue li { display:grid; grid-template-columns:42px 24px minmax(0,1fr); gap:5px 9px; }
+  .queue-cover { grid-row:1 / span 3; }
+  .queue-position { grid-column:2; grid-row:1; }
+  .queue-title { grid-column:3; }
+  .queue-meta { grid-column:3; }
+  .queue-actions { grid-column:3; margin:2px 0 0; flex-wrap:wrap; }
+  .book-read-history li { display:grid; gap:4px; }
+  .book-read-history li span { text-align:left; }
 
   /* Touch targets. Anything interactive was 21-29px tall on a phone. */
   button, select, input[type="search"], input[type="text"], input[type="number"], .chip, .filter-modes button {

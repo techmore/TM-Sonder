@@ -1,6 +1,9 @@
     let items = [];
     let lists = [];
     let selectedListID = null;
+    let readingState = { queue: [], records: [] };
+    const readingByID = new Map();
+    let detailItemID = null;
     // Curated-shelf candidate pools, keyed by sorted media kinds. Rebuilt when
     // the catalog or the copy grouping changes.
     const listCandidateState = new Map();
@@ -409,7 +412,171 @@
     let nowPlayingChapters = null; // null while loading; [] when unavailable or absent.
     let nowPlayingChaptersAvailable = false;
     let npChapterRequest = 0;
+    let npReadSession = null;
     const audiobookChapterCache = new Map();
+
+    const PENDING_PROGRESS_KEY = "tmSonderPendingProgress";
+    const PENDING_READING_KEY = "tmSonderPendingReadingSessions";
+    function localJSON(key, fallback) {
+      try {
+        const value = localStorage.getItem(key);
+        return value ? JSON.parse(value) : fallback;
+      } catch { return fallback; }
+    }
+    function writeLocalJSON(key, value) {
+      try { localStorage.setItem(key, JSON.stringify(value)); } catch { /* private browsing/storage full */ }
+    }
+    function pendingProgress() {
+      const value = localJSON(PENDING_PROGRESS_KEY, []);
+      return Array.isArray(value) ? value : [];
+    }
+    function savePendingProgress(record) {
+      const pending = pendingProgress();
+      const index = pending.findIndex(entry => entry.itemID === record.itemID);
+      if (index < 0) pending.push(record);
+      else if (String(record.updatedAt) >= String(pending[index].updatedAt)) pending[index] = record;
+      writeLocalJSON(PENDING_PROGRESS_KEY, pending);
+    }
+    function clearPendingProgress(itemID, updatedAt) {
+      const pending = pendingProgress().filter(entry => entry.itemID !== itemID || entry.updatedAt !== updatedAt);
+      writeLocalJSON(PENDING_PROGRESS_KEY, pending);
+    }
+    function restorePendingProgress() {
+      for (const record of pendingProgress()) {
+        if (!record?.itemID || !Number.isFinite(Number(record.seconds))) continue;
+        const current = progressByID.get(record.itemID);
+        if (!current || String(record.updatedAt) > String(current.updatedAt || "")) {
+          progressByID.set(record.itemID, record);
+        }
+      }
+    }
+    function serverCheckpointIsCurrent(serverRecord, localRecord) {
+      return !!serverRecord && String(serverRecord.updatedAt || "") >= String(localRecord.updatedAt || "");
+    }
+    async function replayPendingProgress(serverProgress = []) {
+      const serverByID = new Map((serverProgress || []).map(record => [record.itemID, record]));
+      for (const record of pendingProgress()) {
+        if (!record?.itemID) continue;
+        const current = serverByID.get(record.itemID);
+        if (serverCheckpointIsCurrent(current, record)) {
+          clearPendingProgress(record.itemID, record.updatedAt);
+          continue;
+        }
+        try {
+          const response = await fetch(api("/api/progress/" + record.itemID), {
+            method: "POST", headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ seconds: record.seconds, duration: record.duration }), keepalive: true,
+          });
+          if (!response.ok) continue;
+          const session = await response.json().catch(() => null);
+          const acknowledged = session?.updatedAt || record.updatedAt;
+          const visible = progressByID.get(record.itemID);
+          if (!visible || String(visible.updatedAt || "") <= record.updatedAt) {
+            progressByID.set(record.itemID, { ...record, updatedAt: acknowledged });
+          }
+          clearPendingProgress(record.itemID, record.updatedAt);
+        } catch { /* retry on the next page load or online event */ }
+      }
+    }
+    function pendingReadingSessions() {
+      const value = localJSON(PENDING_READING_KEY, []);
+      return Array.isArray(value) ? value : [];
+    }
+    function savePendingReadingSession(payload) {
+      const pending = pendingReadingSessions();
+      const index = pending.findIndex(entry => entry.sessionID === payload.sessionID && entry.itemID === payload.itemID);
+      if (index < 0) pending.push(payload);
+      else if (payload.activeSeconds >= pending[index].activeSeconds) pending[index] = payload;
+      writeLocalJSON(PENDING_READING_KEY, pending);
+    }
+    function clearPendingReadingSession(payload) {
+      const pending = pendingReadingSessions().filter(entry =>
+        entry.sessionID !== payload.sessionID || entry.itemID !== payload.itemID ||
+        entry.activeSeconds > payload.activeSeconds || entry.mediaSeconds > payload.mediaSeconds);
+      writeLocalJSON(PENDING_READING_KEY, pending);
+    }
+    async function postReadingSession(payload) {
+      const response = await fetch(api("/api/reading/" + payload.itemID + "/sessions"), {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload), keepalive: true,
+      });
+      if (!response.ok) throw new Error("Reading history could not be synced");
+      const record = await response.json();
+      readingByID.set(record.itemID, record);
+      clearPendingReadingSession(payload);
+      renderReadingLists();
+      if (detailItemID === record.itemID && $("#detail")?.open) openDetail(detailItemID, true);
+    }
+    async function replayPendingReadingSessions() {
+      for (const payload of pendingReadingSessions()) {
+        if (!payload?.itemID || !payload?.sessionID) continue;
+        try { await postReadingSession(payload); } catch { /* retry on the next visit */ }
+      }
+    }
+    function makeSessionID() {
+      try { if (window.crypto?.randomUUID) return window.crypto.randomUUID(); } catch { /* fallback below */ }
+      return `read-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+    }
+    function readingBookID(item) {
+      if (!item || item.kind !== "audiobook") return "";
+      const group = item.bookGroupID && bookGroupByID.get(item.bookGroupID);
+      if (group?.length) return group[0].id;
+      const parts = partsOf(item);
+      return parts?.[0]?.id || item.id;
+    }
+    function sampleReadTime(finalSample = false) {
+      const session = npReadSession;
+      const media = npMedia();
+      if (!session || !media || !Number.isFinite(media.currentTime)) return;
+      const now = typeof performance !== "undefined" && performance.now ? performance.now() : Date.now();
+      const playing = !media.paused || finalSample;
+      if (session.lastWall != null && playing) {
+        const elapsed = (now - session.lastWall) / 1000;
+        if (elapsed > 0 && elapsed <= 5) {
+          session.activeSeconds += elapsed;
+          const mediaDelta = media.currentTime - session.lastPosition;
+          const expectedMax = Math.max(4, elapsed * Math.max(0.25, Number(media.playbackRate) || 1) * 2.5);
+          if (mediaDelta > 0 && mediaDelta <= expectedMax) session.mediaSeconds += mediaDelta;
+        }
+      }
+      session.lastWall = now;
+      session.lastPosition = media.currentTime;
+    }
+    function persistReadSession(completed = false, close = false) {
+      const session = npReadSession;
+      if (!session) return;
+      const payload = {
+        itemID: session.itemID, sessionID: session.sessionID,
+        activeSeconds: Math.round(session.activeSeconds * 10) / 10,
+        mediaSeconds: Math.round(session.mediaSeconds * 10) / 10,
+        ...(completed ? { completed: true } : {}),
+      };
+      if (completed || close) {
+        session.closed = true;
+        if (npReadSession === session) npReadSession = null;
+      }
+      if (!completed && payload.activeSeconds === session.lastSentActive && payload.mediaSeconds === session.lastSentMedia) return;
+      session.lastSentActive = payload.activeSeconds;
+      session.lastSentMedia = payload.mediaSeconds;
+      savePendingReadingSession(payload);
+      postReadingSession(payload).catch(() => {});
+    }
+    function startReadSession() {
+      const itemID = readingBookID(nowPlayingItem);
+      if (!itemID) return;
+      if (npReadSession?.itemID === itemID && !npReadSession.closed) {
+        npReadSession.lastWall = null;
+        npReadSession.lastPosition = null;
+        persistReadSession(false);
+        return;
+      }
+      if (npReadSession) persistReadSession(false, true);
+      npReadSession = {
+        itemID, sessionID: makeSessionID(), activeSeconds: 0, mediaSeconds: 0,
+        lastWall: null, lastPosition: null, lastSentActive: -1, lastSentMedia: -1, closed: false,
+      };
+      persistReadSession(false);
+    }
 
     function readPlayerPreference(key, fallback, values) {
       try {
@@ -522,6 +689,8 @@
       const media = npMedia();
       if (!media) return;
       saveProgress(true);
+      sampleReadTime(true);
+      persistReadSession(false, true);
       nowPlayingItem = item;
       nowPlayingParts = parts;
       nowPlayingPartIndex = Math.min(Math.max(index | 0, 0), parts.length - 1);
@@ -1006,6 +1175,8 @@
       const media = npMedia();
       if (!plan || !media) return;
       saveProgress(true);
+      sampleReadTime(true);
+      persistReadSession(false, true);
 
       nowPlayingItem = item;
       // A single-file item clears any book queue, or the "ended" handler would
@@ -1066,6 +1237,8 @@
     function stopPlayback() {
       const media = npMedia();
       saveProgress(true);
+      sampleReadTime(true);
+      persistReadSession(false, true);
       stopAirPlayAvailabilityListener();
       npChapterRequest++;
       if (media) {
@@ -1103,6 +1276,7 @@
     function saveProgress(force = false) {
       const media = npMedia();
       const item = nowPlayingItem;
+      sampleReadTime();
       if (!item || !media || !media.duration || !Number.isFinite(media.currentTime)) return;
       const part = nowPlayingParts && nowPlayingParts[nowPlayingPartIndex];
       const targetID = currentProgressTargetID();
@@ -1110,13 +1284,25 @@
       if (!force && Math.abs(media.currentTime - npLastSaved) < 15) return;
       npLastSaved = media.currentTime;
       const payload = { seconds: media.currentTime, duration: media.duration };
-      progressByID.set(targetID, {
+      const checkpoint = {
         itemID: targetID, seconds: payload.seconds, duration: payload.duration,
         updatedAt: new Date().toISOString(),
-      });
+      };
+      progressByID.set(targetID, checkpoint);
+      savePendingProgress(checkpoint);
       fetch(api("/api/progress/" + targetID), {
         method: "POST", headers: { "Content-Type": "application/json" },
         body: JSON.stringify(payload), keepalive: true,
+      }).then(async response => {
+        if (!response.ok) return;
+        const saved = await response.json().catch(() => null);
+        if (saved?.updatedAt) {
+          const current = progressByID.get(targetID);
+          if (!current || String(current.updatedAt || "") <= checkpoint.updatedAt) {
+            progressByID.set(targetID, { ...checkpoint, updatedAt: saved.updatedAt });
+          }
+        }
+        clearPendingProgress(targetID, checkpoint.updatedAt);
       }).catch(() => {});
     }
 
@@ -1242,6 +1428,7 @@
     function onTimeUpdate() {
       const media = npMedia();
       if (!media) return;
+      sampleReadTime();
       renderPlaybackProgress(bookTimeline());
       updatePositionState();
       saveProgress(false);
@@ -1438,19 +1625,27 @@
     on("#npSeek", "change", () => { npSeeking = false; });
     on("#npMedia", "timeupdate", () => onTimeUpdate());
     on("#npMedia", "play", () => {
+      startReadSession();
       onPlayStateChange();
       const status = $("#npStatus");
       if (status?.textContent === playbackPrompt()) status.textContent = "";
       checkSleepTimer();
     });
-    on("#npMedia", "pause", () => { onPlayStateChange(); saveProgress(true); });
+    on("#npMedia", "pause", () => {
+      sampleReadTime(true);
+      onPlayStateChange();
+      saveProgress(true);
+      persistReadSession(false);
+    });
     on("#npMedia", "ended", () => {
+      sampleReadTime(true);
       if (npSleepAtPartEnd) { finishSleepTimer(); return; }
       // A multi-part book continues into the next file; a single-file item, and
       // the last part of a book, just stop as before.
       if (advanceBookPart()) return;
       onPlayStateChange();
       saveProgress(true);
+      if (nowPlayingItem?.kind === "audiobook") persistReadSession(true, true);
     });
     on("#npMedia", "loadedmetadata", () => onTimeUpdate());
     on("#npMedia", "error", () => {
@@ -1481,10 +1676,18 @@
       else if (event.key === "ArrowRight") { event.preventDefault(); skipBy(15); }
     });
     onDocument("visibilitychange", () => {
-      if (typeof document !== "undefined" && document.visibilityState === "hidden") saveProgress(true);
+      if (typeof document !== "undefined" && document.visibilityState === "hidden") {
+        sampleReadTime(true);
+        saveProgress(true);
+        persistReadSession(false);
+      }
       checkSleepTimer();
     });
-    onDocument("pagehide", () => saveProgress(true));
+    onDocument("pagehide", () => {
+      sampleReadTime(true);
+      saveProgress(true);
+      persistReadSession(false);
+    });
 
     // --- metadata facets (genres / authors / narrators / studios) ----------
     // Facets are scoped to the items in the current tab, so movie genres and
@@ -2264,6 +2467,36 @@
       return bookParts.get(item.id) || null;
     }
 
+    function readingRecordID(item) {
+      return item?.kind === "audiobook" ? readingBookID(item) : (item?.id || "");
+    }
+
+    function formatReadDuration(seconds) {
+      const total = Math.max(0, Math.floor(Number(seconds) || 0));
+      const days = Math.floor(total / 86400);
+      const hours = Math.floor((total % 86400) / 3600);
+      const minutes = Math.floor((total % 3600) / 60);
+      if (days) return `${days}d${hours ? ` ${hours}h` : ""}`;
+      if (hours) return `${hours}h${minutes ? ` ${minutes}m` : ""}`;
+      if (minutes) return `${minutes}m`;
+      return `${total}s`;
+    }
+
+    function readHistoryHTML(record) {
+      const runs = record?.reads || [];
+      if (!runs.length) return "";
+      const rows = [...runs].reverse().slice(0, 10).map(run => {
+        const started = new Date(run.startedAt);
+        const completed = run.completedAt ? new Date(run.completedAt) : null;
+        const span = completed ? Math.max(0, (completed - started) / 1000) : null;
+        const speed = run.activeSeconds > 0 ? run.mediaSeconds / run.activeSeconds : 0;
+        const elapsed = completed ? `Finished in ${formatReadDuration(span)}` : `In progress · started ${started.toLocaleDateString()}`;
+        const speedLabel = speed > 0 ? ` · ${speed.toFixed(2).replace(/0+$/, "").replace(/\.$/, "")}× average speed` : "";
+        return `<li><strong>${elapsed}</strong><span>${formatReadDuration(run.activeSeconds)} listening${speedLabel}</span></li>`;
+      }).join("");
+      return `<section class="book-read-history"><h3>Listening history</h3><ol>${rows}</ol></section>`;
+    }
+
     function isSameBook(a, b) {
       return !!a && !!b && !!a.bookGroupID && a.bookGroupID === b.bookGroupID;
     }
@@ -2821,7 +3054,104 @@
       const response = await fetch(api("/api/lists"));
       if (!response.ok) throw new Error("Lists unavailable");
       lists = (await response.json()).lists || [];
-      if (["audiobooks", "books"].includes(activeTab)) renderLists();
+      if (["all", "audiobooks", "books"].includes(activeTab)) renderLists();
+    }
+
+    async function refreshReadingState() {
+      const response = await fetch(api("/api/reading"), { cache: "no-store" });
+      if (!response.ok) throw new Error("Reading state unavailable");
+      readingState = await response.json();
+      readingState.queue = Array.isArray(readingState.queue) ? readingState.queue : [];
+      readingState.records = Array.isArray(readingState.records) ? readingState.records : [];
+      readingByID.clear();
+      for (const record of readingState.records) readingByID.set(record.itemID, record);
+      renderReadingLists();
+      if (detailItemID && $("#detail")?.open) openDetail(detailItemID, true);
+      await replayPendingReadingSessions();
+    }
+
+    async function setBookReadingFlag(itemID, field, value) {
+      const response = await fetch(api("/api/reading/" + itemID), {
+        method: "PATCH", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ [field]: value }),
+      });
+      if (!response.ok) throw new Error("Could not update this book");
+      const record = await response.json();
+      readingByID.set(record.itemID, record);
+      if (field === "queued") {
+        const queue = readingState.queue.filter(id => id !== itemID);
+        if (value) queue.push(itemID);
+        readingState.queue = queue;
+      }
+      renderReadingLists();
+      if (detailItemID && $("#detail")?.open) openDetail(detailItemID, true);
+    }
+
+    async function moveReadingQueue(index, direction) {
+      const queue = [...readingState.queue];
+      const target = index + direction;
+      if (index < 0 || target < 0 || target >= queue.length) return;
+      [queue[index], queue[target]] = [queue[target], queue[index]];
+      const response = await fetch(api("/api/reading/queue/reorder"), {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ itemIDs: queue }),
+      });
+      if (!response.ok) throw new Error("Could not reorder the reading queue");
+      readingState.queue = (await response.json()).queue || queue;
+      renderReadingLists();
+    }
+
+    async function shareBook(itemID) {
+      const item = items.find(candidate => candidate.id === itemID);
+      const canonicalID = readingRecordID(item) || itemID;
+      const shareURL = new URL("/", window.location.href);
+      shareURL.search = "";
+      shareURL.hash = "";
+      shareURL.searchParams.set("book", canonicalID);
+      const data = { title: item?.title || "TM Sonder book", text: item?.author ? `By ${item.author}` : "Open this book in TM Sonder", url: shareURL.toString() };
+      const status = $("#detailShareStatus");
+      try {
+        if (navigator.share) {
+          if (status) status.textContent = "Opening share sheet…";
+          await navigator.share(data);
+        } else if (navigator.clipboard?.writeText) await navigator.clipboard.writeText(data.url);
+        else throw new Error("Sharing is unavailable in this browser");
+        if (status) status.textContent = navigator.share ? "Book shared." : "Book link copied.";
+      } catch (error) {
+        if (status) status.textContent = error?.name === "AbortError" ? "" : (error.message || "Could not share this book");
+      }
+    }
+
+    function renderReadingQueue() {
+      if (!["all", "audiobooks", "books"].includes(activeTab)) return "";
+      const entries = readingState.queue.map((id, index) => ({
+        id, index, item: items.find(candidate => candidate.id === id),
+      })).filter(entry => entry.item && ["audiobook", "ebook"].includes(entry.item.kind));
+      const rows = entries.map(({ id, index, item }) => {
+        const poster = item.posterURL
+          ? `<img class="queue-cover" src="${escapeHTML(api(item.posterURL))}" alt="" loading="lazy">`
+          : `<span class="queue-cover queue-cover-empty" aria-hidden="true">▧</span>`;
+        const progress = item.kind === "audiobook" ? progressForItem(item) : null;
+        const progressLabel = progress?.seconds > 0
+          ? ` · ${Math.min(100, Math.round(progress.seconds / (progress.duration || item.durationSeconds || 1) * 100))}% heard`
+          : "";
+        return `<li>${poster}<span class="queue-position">${index + 1}.</span><button class="queue-title" data-action="open-detail" data-id="${escapeHTML(id)}">${escapeHTML(item.title)}</button><span class="queue-meta">${escapeHTML([item.author, kindLabel(item.kind)].filter(Boolean).join(" · ") + progressLabel)}</span><span class="queue-actions"><button type="button" data-action="move-reading-queue" data-index="${index}" data-direction="-1" aria-label="Move ${escapeHTML(item.title)} up" ${index === 0 ? "disabled" : ""}>↑</button><button type="button" data-action="move-reading-queue" data-index="${index}" data-direction="1" aria-label="Move ${escapeHTML(item.title)} down" ${index === readingState.queue.length - 1 ? "disabled" : ""}>↓</button><button type="button" data-action="remove-reading-queue" data-id="${escapeHTML(id)}">Remove</button></span></li>`;
+      }).join("");
+      return `<section class="reading-queue"><div class="reading-queue-head"><div><h3>Reading queue</h3><p>Books to listen to or read next, in your chosen order.</p></div><span>${entries.length}</span></div><p class="queue-status" id="readingQueueStatus" role="status" aria-live="polite"></p>${rows ? `<ol>${rows}</ol>` : `<p class="queue-empty">Your queue is empty. Save a book from its details to keep it here.</p>`}</section>`;
+    }
+
+    function renderLikedBooks() {
+      if (!["all", "audiobooks", "books"].includes(activeTab)) return "";
+      const liked = [...readingByID.values()]
+        .filter(record => record.likedAt)
+        .map(record => ({ record, item: items.find(candidate => candidate.id === record.itemID) }))
+        .filter(entry => entry.item && ["audiobook", "ebook"].includes(entry.item.kind))
+        .sort((a, b) => a.item.title.localeCompare(b.item.title));
+      if (!liked.length) return "";
+      return `<section class="liked-books"><div class="reading-queue-head"><div><h3>Liked books</h3><p>Your saved favourites across audiobooks and ebooks.</p></div><span>${liked.length}</span></div><div class="liked-book-grid">${liked.slice(0, 48).map(({ record, item }) => {
+        const cover = item.posterURL ? `<img src="${escapeHTML(api(item.posterURL))}" alt="" loading="lazy">` : `<span aria-hidden="true">♥</span>`;
+        return `<article class="liked-book">${cover}<button class="queue-title" data-action="open-detail" data-id="${escapeHTML(item.id)}">${escapeHTML(item.title)}</button><button type="button" data-action="toggle-book-like" data-id="${escapeHTML(record.itemID)}" aria-label="Unlike ${escapeHTML(item.title)}">♥</button></article>`;
+      }).join("")}</div></section>`;
     }
 
     async function listMutation(path, options) {
@@ -3082,7 +3412,7 @@
         return `<article class="reading-list${selectedListID === list.id ? " selected-reading-list" : ""}" data-list-id="${escapeHTML(list.id)}"><div class="reading-list-head"><div>${title}${list.description ? `<p>${escapeHTML(list.description)}</p>` : ""}<div>${listTags}</div></div><button data-action="delete-list" data-list-id="${escapeHTML(list.id)}">Delete</button></div>${addRow}<ol>${entries || '<li class="list-empty">No titles yet.</li>'}</ol>${missingHTML}</article>`;
       }).join("");
       const detailHeader = selectedList ? `<div class="list-detail-header"><button data-action="back-to-lists">‹ All lists</button><span class="muted">Dedicated list page</span></div>` : "";
-      host.innerHTML = detailHeader + recommended + (saved || '<div class="empty-state">Create a list to start building a queue.</div>');
+      host.innerHTML = detailHeader + renderReadingQueue() + renderLikedBooks() + recommended + (saved || '<div class="empty-state">Create a list to start building a queue.</div>');
     }
 
     function listPoolLabel(kinds) {
@@ -3671,6 +4001,25 @@
         target?.click();
       }
       else if (act === "open-detail" && btn.dataset.id) openDetail(btn.dataset.id);
+      else if (act === "toggle-reading-queue" && btn.dataset.id) {
+        setBookReadingFlag(btn.dataset.id, "queued", !readingState.queue.includes(btn.dataset.id))
+          .catch(error => { const status = $("#detailShareStatus"); if (status) status.textContent = error.message || "Could not update queue"; });
+      }
+      else if (act === "toggle-book-like" && btn.dataset.id) {
+        setBookReadingFlag(btn.dataset.id, "liked", !readingByID.get(btn.dataset.id)?.likedAt)
+          .catch(error => { const status = $("#detailShareStatus"); if (status) status.textContent = error.message || "Could not update like"; });
+      }
+      else if (act === "share-book" && btn.dataset.id) shareBook(btn.dataset.id);
+      else if (act === "move-reading-queue") {
+        moveReadingQueue(Number(btn.dataset.index), Number(btn.dataset.direction)).catch(error => {
+          const status = $("#readingQueueStatus"); if (status) status.textContent = error.message || "Could not reorder queue";
+        });
+      }
+      else if (act === "remove-reading-queue" && btn.dataset.id) {
+        setBookReadingFlag(btn.dataset.id, "queued", false).catch(error => {
+          const status = $("#readingQueueStatus"); if (status) status.textContent = error.message || "Could not remove book";
+        });
+      }
       else if (act === "open-show" && btn.dataset.show) openShowPage(btn.dataset.show);
       else if (act === "open-season") { openSeason = Number(btn.dataset.season); render(); syncHash(true); window.scrollTo({top:0}); }
       else if (act === "switch-copy" && btn.dataset.id) switchCopy(btn.dataset.id);
@@ -3782,6 +4131,7 @@
     function openDetail(id, keepVideo) {
       const item = items.find(i => i.id === id);
       if (!item) return;
+      detailItemID = id;
       if (activeTab === "movies" && libraryLayout === "rails" && !$("#movieCatalog")?.hidden) {
         openMovieDetail(id);
         return;
@@ -3833,6 +4183,14 @@
         .map(s => `<p class="summary">${escapeHTML(s)}</p>`).join("");
       const playLabel = playingNow ? "Pause"
         : resumeLabel || (resumeAt ? "Resume at " + formatTime(resumeAt) : "Play");
+      const recordID = readingRecordID(item);
+      const readingRecord = readingByID.get(recordID);
+      const isQueued = readingState.queue.includes(recordID);
+      const isLiked = !!readingRecord?.likedAt;
+      const readingActions = ["audiobook", "ebook"].includes(item.kind)
+        ? `<div class="book-actions" aria-label="Book actions"><button type="button" data-action="toggle-reading-queue" data-id="${escapeHTML(recordID)}" aria-pressed="${isQueued}">${isQueued ? "✓ In reading queue" : "+ Add to reading queue"}</button><button type="button" data-action="toggle-book-like" data-id="${escapeHTML(recordID)}" aria-pressed="${isLiked}">${isLiked ? "♥ Liked" : "♡ Like"}</button><button type="button" data-action="share-book" data-id="${escapeHTML(recordID)}">Share link</button><span id="detailShareStatus" role="status" aria-live="polite"></span></div>`
+        : "";
+      const historyHTML = item.kind === "audiobook" ? readHistoryHTML(readingRecord) : "";
 
       $("#detailBody").innerHTML = `
         ${playerHTML}
@@ -3842,6 +4200,8 @@
         ${summaryBits}
         ${detailFacetHTML}
         ${partsHTML}
+        ${readingActions}
+        ${historyHTML}
         ${tags ? `<div class="tagrow">${tags}</div>` : ""}
         ${bookPartsForItem ? "" : editionsHTML(item)}
         <div class="actions">
@@ -3856,6 +4216,7 @@
     function closeDetail() {
       // Playback intentionally continues in the persistent controller.
       $("#detail").close();
+      detailItemID = null;
       render(); // refresh progress badges/bars
     }
     $("#detail").addEventListener("click", e => { if (e.target === $("#detail")) closeDetail(); });
@@ -3874,6 +4235,7 @@
       });
     }
 
+    restorePendingProgress();
     fetch(api("/api/library")).then(async response => {
       const etag = response.headers.get("ETag") || "";
       return { etag, data: await response.json() };
@@ -3883,6 +4245,7 @@
       applyTheme(data.theme?.preset || "earthy");
       items = data.items ?? [];
       (data.progress ?? []).forEach(pr => progressByID.set(pr.itemID, pr));
+      restorePendingProgress();
       if (!restoreCopyGroups(etag)) {
         rebuildCopyGroups();
         cacheCopyGroups(etag);
@@ -3890,8 +4253,19 @@
       applyEmptyLibraryTabs();
       renderFacets();
       applyHash(); // restore tab/show/page from the URL on load
+      const sharedBookID = new URLSearchParams(location.search).get("book");
+      const sharedBook = sharedBookID && items.find(item => item.id === sharedBookID);
+      if (sharedBook) {
+        activeTab = sharedBook.kind === "ebook" ? "books" : sharedBook.kind === "audiobook" ? "audiobooks" : activeTab;
+        for (const button of document.querySelectorAll("#tabs button[data-tab]")) {
+          button.classList.toggle("active", button.dataset.tab === activeTab);
+        }
+      }
       render();
+      if (sharedBook) openDetail(sharedBook.id);
+      replayPendingProgress(data.progress ?? []).catch(() => {});
       refreshLists().catch(() => { lists = []; });
+      refreshReadingState().catch(() => { readingState = { queue: [], records: [] }; });
       if (activeTab === "optimize") {
         refreshOptimizationQueue();
         refreshAudiobookJobs();

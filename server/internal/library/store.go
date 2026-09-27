@@ -145,13 +145,15 @@ func cloneIntPtr(p *int) *int {
 
 // Store is a concurrency-safe catalog guarded by an RWMutex.
 type Store struct {
-	mu          sync.RWMutex
-	items       map[string]*Item
-	progress    map[string]*api.ProgressRecord
-	lists       []BookList
-	directories []api.MediaDirectory
-	activity    []api.ActivityEvent
-	gen         int64
+	mu           sync.RWMutex
+	items        map[string]*Item
+	progress     map[string]*api.ProgressRecord
+	reading      map[string]*api.BookReadingRecord
+	readingQueue []string
+	lists        []BookList
+	directories  []api.MediaDirectory
+	activity     []api.ActivityEvent
+	gen          int64
 
 	saveMu        sync.Mutex
 	persistMu     sync.Mutex
@@ -165,6 +167,7 @@ func New() *Store {
 	return &Store{
 		items:    make(map[string]*Item),
 		progress: make(map[string]*api.ProgressRecord),
+		reading:  make(map[string]*api.BookReadingRecord),
 	}
 }
 

@@ -40,12 +40,16 @@ function catalog(items, progress = []) {
                      body: { classList: { add(){}, remove(){} } } },
     navigator: {}, setTimeout: () => 1, clearTimeout(){},
     localStorage: { getItem: () => null, setItem(){}, removeItem(){} } });
+  let fakeNow = 0;
+  context.performance = { now: () => fakeNow };
   context.fields = fields;
   vm.runInContext(source.slice(0, source.indexOf('    function seasonLabel')), context);
   context.input = items;
   context.progress = progress;
   vm.runInContext('items = input; for (const p of progress) progressByID.set(p.id, p); rebuildCopyGroups();', context);
-  return expression => JSON.parse(JSON.stringify(vm.runInContext(expression, context)));
+  const evaluate = expression => JSON.parse(JSON.stringify(vm.runInContext(expression, context)));
+  evaluate.setTime = value => { fakeNow = value; };
+  return evaluate;
 }
 
 const movie = (id, year, extra = {}) => ({ id, title: 'The Thing', kind: 'movie', year, format: 'mkv', ...extra });
@@ -95,6 +99,33 @@ test('playback plan plays audio inline and transcodes unsupported video', () => 
   assert.deepEqual(get("playbackPlan(items[3])"), { mode: 'video', url: '/stream/mkv?transcode=1' });
   // Books are not streamable.
   assert.equal(get("playbackPlan(items[4])"), null);
+});
+
+test('book history reports calendar span, active listening time, and effective speed', () => {
+  const get = catalog([{ id: 'audio', title: 'A Book', kind: 'audiobook', format: 'm4b' }]);
+  const html = get(`readHistoryHTML({reads:[{
+    startedAt:'2026-09-24T12:00:00.000Z', completedAt:'2026-09-27T15:00:00.000Z',
+    activeSeconds:3600, mediaSeconds:4500, sessions:[]
+  }]})`);
+  assert.match(html, /Finished in 3d 3h/);
+  assert.match(html, /1h listening/);
+  assert.match(html, /1\.25× average speed/);
+  assert.match(librarySource, /data-action="toggle-reading-queue"/);
+  assert.match(librarySource, /data-action="toggle-book-like"/);
+  assert.match(librarySource, /data-action="share-book"/);
+  assert.match(librarySource, /\/api\/reading\/queue\/reorder/);
+  assert.match(librarySource, /PENDING_PROGRESS_KEY/);
+  assert.equal(get(`serverCheckpointIsCurrent(null,{updatedAt:'2026-09-27T12:00:00Z'})`), false);
+  assert.equal(get(`serverCheckpointIsCurrent({updatedAt:'2026-09-27T12:00:01Z'},{updatedAt:'2026-09-27T12:00:00Z'})`), true);
+});
+
+test('listening time counts active playback and does not count seeks as heard media', () => {
+  const get = catalog([{ id: 'audio', title: 'A Book', kind: 'audiobook', format: 'm4b' }]);
+  get(`npReadSession={itemID:'audio',sessionID:'session',activeSeconds:0,mediaSeconds:0,lastWall:1000,lastPosition:10,closed:false}; const media=$("#npMedia"); media.paused=false; media.currentTime=12; media.playbackRate=1.5`);
+  get.setTime(3000);
+  assert.deepEqual(get(`(sampleReadTime(),[npReadSession.activeSeconds,npReadSession.mediaSeconds])`), [2, 2]);
+  get.setTime(4000);
+  assert.deepEqual(get(`($("#npMedia").currentTime=100,sampleReadTime(),[npReadSession.activeSeconds,npReadSession.mediaSeconds])`), [3, 2]);
 });
 
 test('empty media tabs are omitted from the populated navigation set', () => {

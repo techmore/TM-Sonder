@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sort"
 	"time"
 
 	"tm-sonder/server/internal/api"
@@ -12,7 +13,7 @@ import (
 
 // CurrentSnapshotVersion is bumped when the on-disk catalog shape changes.
 // Older snapshots are migrated in memory before they are installed.
-const CurrentSnapshotVersion = 2
+const CurrentSnapshotVersion = 3
 
 // Snapshot is the on-disk catalog format. Generation is persisted so
 // If-None-Match / 304 flows survive restarts.
@@ -21,6 +22,7 @@ type Snapshot struct {
 	Generation    int64                `json:"generation"`
 	Items         []*Item              `json:"items"`
 	Progress      []api.ProgressRecord `json:"progress"`
+	Reading       api.ReadingState     `json:"reading"`
 	Directories   []api.MediaDirectory `json:"mediaDirectories"`
 	Activity      []api.ActivityEvent  `json:"activity"`
 	Lists         []BookList           `json:"lists"`
@@ -35,9 +37,13 @@ func (s *Store) snapshot() *Snapshot {
 		Generation:    s.gen,
 		Items:         make([]*Item, 0, len(s.items)),
 		Progress:      make([]api.ProgressRecord, 0, len(s.progress)),
-		Directories:   append([]api.MediaDirectory(nil), s.directories...),
-		Activity:      make([]api.ActivityEvent, len(s.activity)),
-		Lists:         make([]BookList, len(s.lists)),
+		Reading: api.ReadingState{
+			Queue:   append([]string(nil), s.readingQueue...),
+			Records: make([]api.BookReadingRecord, 0, len(s.reading)),
+		},
+		Directories: append([]api.MediaDirectory(nil), s.directories...),
+		Activity:    make([]api.ActivityEvent, len(s.activity)),
+		Lists:       make([]BookList, len(s.lists)),
 	}
 	for _, it := range s.items {
 		snap.Items = append(snap.Items, it.clone())
@@ -45,6 +51,12 @@ func (s *Store) snapshot() *Snapshot {
 	for _, p := range s.progress {
 		snap.Progress = append(snap.Progress, *p)
 	}
+	for _, record := range s.reading {
+		snap.Reading.Records = append(snap.Reading.Records, cloneReadingRecord(*record))
+	}
+	sort.Slice(snap.Reading.Records, func(i, j int) bool {
+		return snap.Reading.Records[i].ItemID < snap.Reading.Records[j].ItemID
+	})
 	copy(snap.Activity, s.activity)
 	for i, list := range s.lists {
 		snap.Lists[i] = cloneBookList(list)
@@ -98,6 +110,14 @@ func (s *Store) Load(path string) error {
 	}
 	s.items = items
 	s.progress = progress
+	s.reading = make(map[string]*api.BookReadingRecord, len(snap.Reading.Records))
+	for i := range snap.Reading.Records {
+		record := cloneReadingRecord(snap.Reading.Records[i])
+		if record.ItemID != "" {
+			s.reading[record.ItemID] = &record
+		}
+	}
+	s.readingQueue = append([]string(nil), snap.Reading.Queue...)
 	s.directories = snap.Directories
 	s.activity = snap.Activity
 	s.lists = nil
@@ -111,7 +131,7 @@ func (s *Store) Load(path string) error {
 func migrateSnapshot(snap *Snapshot) error {
 	// Snapshots before schemaVersion existed are version 1. They already have
 	// the fields needed by the current runtime; v2 adds portable identity
-	// fields to items and normalizes list containers.
+	// fields to items and normalizes list containers; v3 adds reading state.
 	if snap.SchemaVersion == 0 {
 		snap.SchemaVersion = 1
 	}
@@ -130,6 +150,8 @@ func migrateSnapshot(snap *Snapshot) error {
 				}
 			}
 			snap.SchemaVersion = 2
+		case 2:
+			snap.SchemaVersion = 3
 		default:
 			return fmt.Errorf("no migration for schema version %d", snap.SchemaVersion)
 		}
@@ -142,6 +164,12 @@ func migrateSnapshot(snap *Snapshot) error {
 	}
 	if snap.Lists == nil {
 		snap.Lists = []BookList{}
+	}
+	if snap.Reading.Queue == nil {
+		snap.Reading.Queue = []string{}
+	}
+	if snap.Reading.Records == nil {
+		snap.Reading.Records = []api.BookReadingRecord{}
 	}
 	return nil
 }
@@ -208,6 +236,7 @@ func (s *Store) Save(path string) error {
 // so playback heartbeats do not rewrite the whole multi-megabyte catalog.
 type ProgressSnapshot struct {
 	Progress []api.ProgressRecord `json:"progress"`
+	Reading  api.ReadingState     `json:"reading,omitempty"`
 }
 
 // SaveProgress writes only the progress records, atomically.
@@ -216,9 +245,18 @@ func (s *Store) SaveProgress(path string) error {
 	defer s.progressMu.Unlock()
 
 	s.mu.RLock()
-	snap := ProgressSnapshot{Progress: make([]api.ProgressRecord, 0, len(s.progress))}
+	snap := ProgressSnapshot{
+		Progress: make([]api.ProgressRecord, 0, len(s.progress)),
+		Reading: api.ReadingState{
+			Queue:   append([]string(nil), s.readingQueue...),
+			Records: make([]api.BookReadingRecord, 0, len(s.reading)),
+		},
+	}
 	for _, p := range s.progress {
 		snap.Progress = append(snap.Progress, *p)
+	}
+	for _, record := range s.reading {
+		snap.Reading.Records = append(snap.Reading.Records, cloneReadingRecord(*record))
 	}
 	s.mu.RUnlock()
 
@@ -258,6 +296,16 @@ func (s *Store) LoadProgress(path string) error {
 				it.DurationSeconds = rec.Duration
 			}
 		}
+	}
+	if snap.Reading.Queue != nil || snap.Reading.Records != nil {
+		s.reading = make(map[string]*api.BookReadingRecord, len(snap.Reading.Records))
+		for i := range snap.Reading.Records {
+			record := cloneReadingRecord(snap.Reading.Records[i])
+			if record.ItemID != "" {
+				s.reading[record.ItemID] = &record
+			}
+		}
+		s.readingQueue = append([]string(nil), snap.Reading.Queue...)
 	}
 	return nil
 }
