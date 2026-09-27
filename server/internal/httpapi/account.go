@@ -3,6 +3,7 @@ package httpapi
 import (
 	"crypto/subtle"
 	"encoding/json"
+	"errors"
 	"html"
 	"io"
 	"net/http"
@@ -16,14 +17,15 @@ import (
 const sessionCookieName = "sonder_session"
 
 type accountCredentials struct {
-	Username string `json:"username"`
-	Password string `json:"password"`
-	Next     string `json:"next"`
+	Username   string `json:"username"`
+	Password   string `json:"password"`
+	Next       string `json:"next"`
+	InviteCode string `json:"inviteCode"`
 }
 
 func isAccountPath(path string) bool {
 	switch path {
-	case "/account/login", "/account/setup", "/api/auth/session", "/api/auth/login", "/api/auth/setup", "/api/auth/logout":
+	case "/account/login", "/account/setup", "/account/signup", "/api/auth/session", "/api/auth/login", "/api/auth/setup", "/api/auth/signup", "/api/auth/logout":
 		return true
 	default:
 		return false
@@ -142,6 +144,26 @@ func (s *Server) handleAccountSetupPage(w http.ResponseWriter, r *http.Request) 
 	renderAccountPage(w, true, next, message, r.URL.Query().Get("token"))
 }
 
+func (s *Server) handleAccountSignupPage(w http.ResponseWriter, r *http.Request) {
+	if !s.accountReady() {
+		http.Error(w, "Account store unavailable", http.StatusInternalServerError)
+		return
+	}
+	if _, ok := s.sessionUsername(r); ok {
+		http.Redirect(w, r, safeNext(r.URL.Query().Get("next")), http.StatusSeeOther)
+		return
+	}
+	next := safeNext(r.URL.Query().Get("next"))
+	inviteCode := r.URL.Query().Get("ref")
+	message := ""
+	if !s.accounts.HasAccount() {
+		message = "The server owner must create the first account before invite links can be used."
+	} else if !s.accounts.HasInviteCode(inviteCode) {
+		message = "This invite link is invalid or incomplete. Ask the person who invited you for a new link."
+	}
+	renderAccountSignupPage(w, next, message, inviteCode)
+}
+
 func (s *Server) handleAccountLogin(w http.ResponseWriter, r *http.Request) {
 	if !s.accountReady() {
 		writeError(w, http.StatusInternalServerError, "Account store unavailable")
@@ -220,6 +242,78 @@ func (s *Server) handleAccountSetup(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+func (s *Server) handleAccountSignup(w http.ResponseWriter, r *http.Request) {
+	if !s.accountReady() {
+		writeError(w, http.StatusInternalServerError, "Account store unavailable")
+		return
+	}
+	credentials, form, err := decodeAccountCredentials(r)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "Invalid account signup request")
+		return
+	}
+	if err := s.accounts.Signup(credentials.Username, credentials.Password, credentials.InviteCode); err != nil {
+		message := signupErrorMessage(err)
+		if form {
+			renderAccountSignupPage(w, safeNext(credentials.Next), message, credentials.InviteCode)
+			return
+		}
+		status := http.StatusBadRequest
+		if errors.Is(err, auth.ErrNoAccount) {
+			status = http.StatusConflict
+		}
+		writeError(w, status, message)
+		return
+	}
+	username := strings.TrimSpace(credentials.Username)
+	token, expires, err := s.accounts.CreateSession(username)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "Could not create session")
+		return
+	}
+	s.setSessionCookie(w, r, token, expires)
+	if form {
+		http.Redirect(w, r, safeNext(credentials.Next), http.StatusSeeOther)
+		return
+	}
+	writeJSON(w, http.StatusCreated, map[string]any{
+		"authenticated": true,
+		"username":      username,
+		"expiresAt":     expires,
+	})
+}
+
+func signupErrorMessage(err error) string {
+	switch {
+	case errors.Is(err, auth.ErrNoAccount):
+		return "The server owner must create the first account before invite links can be used."
+	case errors.Is(err, auth.ErrInvalidInvite):
+		return "This invite link is invalid or incomplete. Ask the person who invited you for a new link."
+	case errors.Is(err, auth.ErrUsernameExists):
+		return "That username is already in use."
+	default:
+		return strings.TrimPrefix(err.Error(), "auth: ")
+	}
+}
+
+func (s *Server) handleAccountInviteInfo(w http.ResponseWriter, r *http.Request) {
+	username, authenticated := s.sessionUsername(r)
+	if !authenticated {
+		writeError(w, http.StatusUnauthorized, "Sign in to view your invite link")
+		return
+	}
+	code, referralCount, ok := s.accounts.InviteInfo(username)
+	if !ok {
+		writeError(w, http.StatusUnauthorized, "Account not found")
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{
+		"username":      username,
+		"inviteCode":    code,
+		"referralCount": referralCount,
+	})
+}
+
 func (s *Server) handleAccountLogout(w http.ResponseWriter, r *http.Request) {
 	if cookie, err := r.Cookie(sessionCookieName); err == nil && s.accounts != nil {
 		s.accounts.Revoke(cookie.Value)
@@ -260,9 +354,10 @@ func decodeAccountCredentials(r *http.Request) (accountCredentials, bool, error)
 		return accountCredentials{}, true, err
 	}
 	return accountCredentials{
-		Username: r.FormValue("username"),
-		Password: r.FormValue("password"),
-		Next:     r.FormValue("next"),
+		Username:   r.FormValue("username"),
+		Password:   r.FormValue("password"),
+		Next:       r.FormValue("next"),
+		InviteCode: r.FormValue("inviteCode"),
 	}, true, nil
 }
 
@@ -284,33 +379,56 @@ func safeNext(next string) string {
 }
 
 func renderAccountPage(w http.ResponseWriter, setup bool, next, message, setupToken string) {
+	renderAccountForm(w, setup, false, next, message, setupToken, "")
+}
+
+func renderAccountSignupPage(w http.ResponseWriter, next, message, inviteCode string) {
+	renderAccountForm(w, false, true, next, message, "", inviteCode)
+}
+
+func renderAccountForm(w http.ResponseWriter, setup, signup bool, next, message, setupToken, inviteCode string) {
 	title := "Sign in to TM Sonder"
 	heading := "Welcome back"
 	button := "Sign in"
 	action := "/api/auth/login"
 	passwordHint := ""
+	passwordAutocomplete := "current-password"
 	if setup {
 		title = "Create your TM Sonder account"
 		heading = "Create your account"
 		button = "Create account"
 		action = "/api/auth/setup"
 		passwordHint = `<small>Use at least 12 characters. Your password is stored only as a salted hash.</small>`
+		passwordAutocomplete = "new-password"
 		if setupToken != "" {
 			action += "?token=" + url.QueryEscape(setupToken)
 		}
+	} else if signup {
+		title = "Join TM Sonder"
+		heading = "Create your account"
+		button = "Create account"
+		action = "/api/auth/signup"
+		passwordHint = `<small>Use at least 12 characters. Your password is stored only as a salted hash.</small>`
+		passwordAutocomplete = "new-password"
 	}
 	messageHTML := ""
 	if message != "" {
 		messageHTML = `<p class="message">` + html.EscapeString(message) + `</p>`
 	}
-	form := `<form method="post" action="` + html.EscapeString(action) + `">
+	inviteField := ""
+	if signup {
+		inviteField = `<input type="hidden" name="inviteCode" value="` + html.EscapeString(inviteCode) + `">`
+	}
+	form := `<form method="post" action="` + html.EscapeString(action) + `">` + inviteField + `
 <input type="hidden" name="next" value="` + html.EscapeString(safeNext(next)) + `">
 <label>Username<input name="username" autocomplete="username" required autofocus></label>
-<label>Password<input type="password" name="password" autocomplete="` + map[bool]string{true: "new-password", false: "current-password"}[setup] + `" minlength="12" required></label>` + passwordHint + `
+<label>Password<input type="password" name="password" autocomplete="` + passwordAutocomplete + `" minlength="12" required></label>` + passwordHint + `
 <button type="submit">` + html.EscapeString(button) + `</button>
 </form>`
-	if !setup {
-		form += `<p class="secondary">Need the first account? Use the one-time setup link from the server owner.</p>`
+	if signup {
+		form += `<p class="secondary">Already have an account? <a href="/account/login">Sign in</a>.</p>`
+	} else if !setup {
+		form += `<p class="secondary">Need an account? Use the one-time setup link from the server owner to create the first account. After that, ask an existing user for an invite link.</p>`
 	}
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	w.WriteHeader(http.StatusOK)

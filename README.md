@@ -72,8 +72,10 @@ The LAN-facing web listener is a pairing-protected frontend over the private
 API listener, so existing browser and Jellyfin-compatible routes keep working
 without binding the API process or catalog storage to the network. The first
 browser account is created once from `/account/setup?token=<pairing-token>`;
-after that, browsers use an HTTP-only session cookie and Jellyfin/Audiobookshelf
-clients authenticate with the same account and receive a session token.
+after that, signed-in users can share reusable invite links from Settings, and
+the server records which account referred each signup. Browsers use an
+HTTP-only session cookie and Jellyfin/Audiobookshelf clients can authenticate
+with any account and receive a session token.
 For a dedicated BookPlayer/Audiobookshelf login, the service may also set the
 environment-only `SONDER_COMPAT_USERNAME` and `SONDER_COMPAT_PASSWORD`; these
 are accepted only by the compatibility login endpoints and never written to

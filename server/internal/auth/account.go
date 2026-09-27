@@ -1,4 +1,4 @@
-// Package auth provides the local account and browser-session store.
+// Package auth provides local accounts and browser sessions.
 package auth
 
 import (
@@ -21,6 +21,7 @@ import (
 
 const (
 	passwordVersion = 1
+	storeVersion    = 2
 	passwordRounds  = 210_000
 	saltSize        = 16
 	keySize         = 32
@@ -32,9 +33,29 @@ var (
 	ErrAccountExists      = errors.New("auth: account already exists")
 	ErrNoAccount          = errors.New("auth: no account has been created")
 	ErrInvalidCredentials = errors.New("auth: invalid credentials")
+	ErrInvalidInvite      = errors.New("auth: invalid invite link")
+	ErrUsernameExists     = errors.New("auth: username already exists")
 )
 
+// accountFile is version 2 of the local account store. The first account is
+// retained as Owner for the legacy media-client compatibility login.
 type accountFile struct {
+	Version  int                      `json:"version"`
+	Owner    string                   `json:"owner"`
+	Accounts map[string]accountRecord `json:"accounts"`
+	Sessions map[string]sessionRecord `json:"sessions,omitempty"`
+}
+
+type accountRecord struct {
+	Salt         string    `json:"salt"`
+	PasswordHash string    `json:"passwordHash"`
+	CreatedAt    time.Time `json:"createdAt"`
+	InviteCode   string    `json:"inviteCode"`
+	ReferredBy   string    `json:"referredBy,omitempty"`
+}
+
+// legacyAccountFile is the original single-account on-disk format.
+type legacyAccountFile struct {
 	Version      int                      `json:"version"`
 	Username     string                   `json:"username"`
 	Salt         string                   `json:"salt"`
@@ -48,9 +69,8 @@ type sessionRecord struct {
 	ExpiresAt time.Time `json:"expiresAt"`
 }
 
-// Store keeps one local account on disk and short-lived sessions in memory.
-// Passwords are never retained after Setup or Authenticate returns; sessions
-// are intentionally invalidated when the server restarts.
+// Store keeps local accounts on disk and short-lived sessions in memory.
+// Passwords are never retained after Setup, Signup, or Authenticate returns.
 type Store struct {
 	path string
 
@@ -60,6 +80,8 @@ type Store struct {
 }
 
 // Open loads an account store. A missing file means first-run setup is needed.
+// Existing single-account stores are upgraded in place without changing their
+// password or valid sessions.
 func Open(path string) (*Store, error) {
 	s := &Store{path: path, sessions: make(map[string]sessionRecord)}
 	data, err := os.ReadFile(path)
@@ -69,39 +91,132 @@ func Open(path string) (*Store, error) {
 	if err != nil {
 		return nil, fmt.Errorf("read account store: %w", err)
 	}
-	var account accountFile
-	if err := json.Unmarshal(data, &account); err != nil {
+	var version struct {
+		Version int `json:"version"`
+	}
+	if err := json.Unmarshal(data, &version); err != nil {
 		return nil, fmt.Errorf("parse account store: %w", err)
 	}
-	if err := validateAccount(&account); err != nil {
-		return nil, err
-	}
-	s.account = &account
+
 	now := time.Now().UTC()
-	for token, item := range account.Sessions {
-		if len(token) != sessionSize*2 || item.Username != account.Username || !now.Before(item.ExpiresAt) {
-			continue
+	switch version.Version {
+	case passwordVersion:
+		var legacy legacyAccountFile
+		if err := json.Unmarshal(data, &legacy); err != nil {
+			return nil, fmt.Errorf("parse account store: %w", err)
 		}
-		if _, err := hex.DecodeString(token); err != nil {
-			continue
+		if err := validateLegacyAccount(&legacy); err != nil {
+			return nil, err
 		}
-		s.sessions[token] = item
+		inviteCode, err := newInviteCode()
+		if err != nil {
+			return nil, fmt.Errorf("auth: generate invite code: %w", err)
+		}
+		upgraded := &accountFile{
+			Version: storeVersion,
+			Owner:   legacy.Username,
+			Accounts: map[string]accountRecord{
+				legacy.Username: {
+					Salt: legacy.Salt, PasswordHash: legacy.PasswordHash,
+					CreatedAt: legacy.CreatedAt, InviteCode: inviteCode,
+				},
+			},
+			Sessions: make(map[string]sessionRecord),
+		}
+		for token, item := range legacy.Sessions {
+			if validStoredSession(token, item, upgraded.Accounts, now) {
+				upgraded.Sessions[token] = item
+				s.sessions[token] = item
+			}
+		}
+		if err := writeAccount(path, upgraded); err != nil {
+			return nil, fmt.Errorf("auth: upgrade account store: %w", err)
+		}
+		s.account = upgraded
+	case storeVersion:
+		var account accountFile
+		if err := json.Unmarshal(data, &account); err != nil {
+			return nil, fmt.Errorf("parse account store: %w", err)
+		}
+		if err := validateAccount(&account); err != nil {
+			return nil, err
+		}
+		s.account = &account
+		for token, item := range account.Sessions {
+			if validStoredSession(token, item, account.Accounts, now) {
+				s.sessions[token] = item
+			}
+		}
+	default:
+		return nil, fmt.Errorf("auth: unsupported account version %d", version.Version)
 	}
 	return s, nil
 }
 
-func validateAccount(account *accountFile) error {
+func validStoredSession(token string, item sessionRecord, accounts map[string]accountRecord, now time.Time) bool {
+	if len(token) != sessionSize*2 || accounts[item.Username].PasswordHash == "" || !now.Before(item.ExpiresAt) {
+		return false
+	}
+	_, err := hex.DecodeString(token)
+	return err == nil
+}
+
+func validateLegacyAccount(account *legacyAccountFile) error {
 	if account.Version != passwordVersion {
 		return fmt.Errorf("auth: unsupported account version %d", account.Version)
 	}
 	if !validUsername(account.Username) {
 		return errors.New("auth: invalid stored username")
 	}
-	salt, err := base64.RawStdEncoding.DecodeString(account.Salt)
+	return validatePasswordRecord(account.Salt, account.PasswordHash)
+}
+
+func validateAccount(account *accountFile) error {
+	if account.Version != storeVersion {
+		return fmt.Errorf("auth: unsupported account version %d", account.Version)
+	}
+	if len(account.Accounts) == 0 {
+		return errors.New("auth: account store has no accounts")
+	}
+	if !validUsername(account.Owner) {
+		return errors.New("auth: invalid stored owner")
+	}
+	if _, ok := account.Accounts[account.Owner]; !ok {
+		return errors.New("auth: stored owner account is missing")
+	}
+	inviteCodes := make(map[string]struct{}, len(account.Accounts))
+	for username, record := range account.Accounts {
+		if !validUsername(username) {
+			return errors.New("auth: invalid stored username")
+		}
+		if err := validatePasswordRecord(record.Salt, record.PasswordHash); err != nil {
+			return err
+		}
+		if len(record.InviteCode) < 24 || len(record.InviteCode) > 128 {
+			return errors.New("auth: invalid stored invite code")
+		}
+		if _, exists := inviteCodes[record.InviteCode]; exists {
+			return errors.New("auth: duplicate stored invite code")
+		}
+		inviteCodes[record.InviteCode] = struct{}{}
+		if record.ReferredBy != "" {
+			if record.ReferredBy == username {
+				return errors.New("auth: account cannot refer itself")
+			}
+			if _, ok := account.Accounts[record.ReferredBy]; !ok {
+				return errors.New("auth: stored referrer account is missing")
+			}
+		}
+	}
+	return nil
+}
+
+func validatePasswordRecord(saltText, hashText string) error {
+	salt, err := base64.RawStdEncoding.DecodeString(saltText)
 	if err != nil {
 		return fmt.Errorf("auth: invalid stored salt: %w", err)
 	}
-	hash, err := base64.RawStdEncoding.DecodeString(account.PasswordHash)
+	hash, err := base64.RawStdEncoding.DecodeString(hashText)
 	if err != nil || len(hash) != keySize {
 		return errors.New("auth: invalid stored password hash")
 	}
@@ -117,21 +232,47 @@ func validUsername(username string) bool {
 
 func validPassword(password string) bool { return len(password) >= 12 && len(password) <= 1024 }
 
+func makeAccountRecord(password string) (accountRecord, error) {
+	salt, err := randomBytes(saltSize)
+	if err != nil {
+		return accountRecord{}, fmt.Errorf("auth: generate password salt: %w", err)
+	}
+	inviteCode, err := newInviteCode()
+	if err != nil {
+		return accountRecord{}, fmt.Errorf("auth: generate invite code: %w", err)
+	}
+	return accountRecord{
+		Salt:         base64.RawStdEncoding.EncodeToString(salt),
+		PasswordHash: base64.RawStdEncoding.EncodeToString(deriveKey(password, salt)),
+		CreatedAt:    time.Now().UTC(),
+		InviteCode:   inviteCode,
+	}, nil
+}
+
+func newInviteCode() (string, error) {
+	raw, err := randomBytes(24)
+	if err != nil {
+		return "", err
+	}
+	return base64.RawURLEncoding.EncodeToString(raw), nil
+}
+
 // HasAccount reports whether first-run account setup has been completed.
 func (s *Store) HasAccount() bool {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
-	return s.account != nil
+	return s.account != nil && len(s.account.Accounts) > 0
 }
 
-// Username returns the configured account name, if setup is complete.
+// Username returns the first account name, which remains the owner identity
+// for the media-client compatibility login.
 func (s *Store) Username() string {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	if s.account == nil {
 		return ""
 	}
-	return s.account.Username
+	return s.account.Owner
 }
 
 // Setup creates the first account and persists only its salted password hash.
@@ -143,23 +284,22 @@ func (s *Store) Setup(username, password string) error {
 	if !validPassword(password) {
 		return errors.New("auth: password must be between 12 and 1024 characters")
 	}
-	salt, err := randomBytes(saltSize)
+	record, err := makeAccountRecord(password)
 	if err != nil {
-		return fmt.Errorf("auth: generate password salt: %w", err)
+		return err
 	}
-	account := &accountFile{
-		Version:      passwordVersion,
-		Username:     username,
-		Salt:         base64.RawStdEncoding.EncodeToString(salt),
-		PasswordHash: base64.RawStdEncoding.EncodeToString(deriveKey(password, salt)),
-		CreatedAt:    time.Now().UTC(),
-		Sessions:     make(map[string]sessionRecord),
-	}
-
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if s.account != nil {
+	if s.account != nil && len(s.account.Accounts) > 0 {
 		return ErrAccountExists
+	}
+	account := &accountFile{
+		Version: storeVersion,
+		Owner:   username,
+		Accounts: map[string]accountRecord{
+			username: record,
+		},
+		Sessions: make(map[string]sessionRecord),
 	}
 	if err := writeAccount(s.path, account); err != nil {
 		return err
@@ -168,21 +308,78 @@ func (s *Store) Setup(username, password string) error {
 	return nil
 }
 
+// Signup creates an account from a valid user's reusable invite link and
+// permanently records which account referred the new user.
+func (s *Store) Signup(username, password, inviteCode string) error {
+	username = strings.TrimSpace(username)
+	if !validUsername(username) {
+		return errors.New("auth: username must be 1-64 characters without whitespace")
+	}
+	if !validPassword(password) {
+		return errors.New("auth: password must be between 12 and 1024 characters")
+	}
+	if !s.HasAccount() {
+		return ErrNoAccount
+	}
+	if !s.HasInviteCode(inviteCode) {
+		return ErrInvalidInvite
+	}
+	record, err := makeAccountRecord(password)
+	if err != nil {
+		return err
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.account == nil || len(s.account.Accounts) == 0 {
+		return ErrNoAccount
+	}
+	referrer, ok := findReferrer(s.account.Accounts, inviteCode)
+	if !ok {
+		return ErrInvalidInvite
+	}
+	if _, exists := s.account.Accounts[username]; exists {
+		return ErrUsernameExists
+	}
+	record.ReferredBy = referrer
+	updated := cloneAccount(s.account)
+	updated.Accounts[username] = record
+	if err := writeAccount(s.path, updated); err != nil {
+		return err
+	}
+	s.account = updated
+	return nil
+}
+
+func findReferrer(accounts map[string]accountRecord, inviteCode string) (string, bool) {
+	if inviteCode == "" {
+		return "", false
+	}
+	referrer := ""
+	for username, record := range accounts {
+		if subtle.ConstantTimeCompare([]byte(record.InviteCode), []byte(inviteCode)) == 1 {
+			referrer = username
+		}
+	}
+	return referrer, referrer != ""
+}
+
 // Authenticate verifies credentials without exposing whether the username or
 // password was the incorrect part.
 func (s *Store) Authenticate(username, password string) error {
 	username = strings.TrimSpace(username)
 	s.mu.RLock()
-	account := s.account
-	if account == nil {
+	if s.account == nil {
 		s.mu.RUnlock()
 		return ErrNoAccount
 	}
-	salt, saltErr := base64.RawStdEncoding.DecodeString(account.Salt)
-	want, hashErr := base64.RawStdEncoding.DecodeString(account.PasswordHash)
-	storedUsername := account.Username
+	record, exists := s.account.Accounts[username]
 	s.mu.RUnlock()
-	if saltErr != nil || hashErr != nil || len(want) != keySize || username != storedUsername {
+	if !exists {
+		return ErrInvalidCredentials
+	}
+	salt, saltErr := base64.RawStdEncoding.DecodeString(record.Salt)
+	want, hashErr := base64.RawStdEncoding.DecodeString(record.PasswordHash)
+	if saltErr != nil || hashErr != nil || len(want) != keySize {
 		return ErrInvalidCredentials
 	}
 	got := deriveKey(password, salt)
@@ -204,7 +401,10 @@ func (s *Store) CreateSession(username string) (string, time.Time, error) {
 	item := sessionRecord{Username: username, ExpiresAt: expires}
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if s.account == nil || s.account.Username != username {
+	if s.account == nil {
+		return "", time.Time{}, ErrInvalidCredentials
+	}
+	if _, ok := s.account.Accounts[username]; !ok {
 		return "", time.Time{}, ErrInvalidCredentials
 	}
 	s.sessions[token] = item
@@ -235,6 +435,38 @@ func (s *Store) ValidSession(token string) (string, bool) {
 	return item.Username, true
 }
 
+// InviteInfo returns the user's invite code and the number of accounts
+// registered through it.
+func (s *Store) InviteInfo(username string) (string, int, bool) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	if s.account == nil {
+		return "", 0, false
+	}
+	owner, ok := s.account.Accounts[username]
+	if !ok {
+		return "", 0, false
+	}
+	count := 0
+	for _, record := range s.account.Accounts {
+		if record.ReferredBy == username {
+			count++
+		}
+	}
+	return owner.InviteCode, count, true
+}
+
+// HasInviteCode reports whether an invite code belongs to an existing account.
+func (s *Store) HasInviteCode(inviteCode string) bool {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	if s.account == nil {
+		return false
+	}
+	_, ok := findReferrer(s.account.Accounts, inviteCode)
+	return ok
+}
+
 // Revoke removes a session token.
 func (s *Store) Revoke(token string) {
 	if token == "" {
@@ -253,16 +485,29 @@ func (s *Store) persistSessionsLocked() error {
 	if s.account == nil {
 		return ErrNoAccount
 	}
-	updated := *s.account
+	updated := cloneAccount(s.account)
 	updated.Sessions = make(map[string]sessionRecord, len(s.sessions))
 	for token, item := range s.sessions {
 		updated.Sessions[token] = item
 	}
-	if err := writeAccount(s.path, &updated); err != nil {
+	if err := writeAccount(s.path, updated); err != nil {
 		return err
 	}
-	s.account = &updated
+	s.account = updated
 	return nil
+}
+
+func cloneAccount(account *accountFile) *accountFile {
+	updated := *account
+	updated.Accounts = make(map[string]accountRecord, len(account.Accounts))
+	for username, record := range account.Accounts {
+		updated.Accounts[username] = record
+	}
+	updated.Sessions = make(map[string]sessionRecord, len(account.Sessions))
+	for token, item := range account.Sessions {
+		updated.Sessions[token] = item
+	}
+	return &updated
 }
 
 func randomBytes(n int) ([]byte, error) {

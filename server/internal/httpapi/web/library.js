@@ -4279,8 +4279,12 @@
     let cacheStatusData = null;
     let networkStatusData = null;
     let networkExposureApplying = false;
+    let inviteReferralCount = 0;
     document.querySelector("#settingsBtn").addEventListener("click", openSettings);
     document.querySelector("#applyNetworkExposureBtn").addEventListener("click", applyNetworkExposure);
+    document.querySelector("#inviteHeaderBtn").addEventListener("click", openInviteDialog);
+    document.querySelector("#copyInviteLink").addEventListener("click", () => copyInviteLink("#inviteLink", "#inviteStatus"));
+    document.querySelector("#headerCopyInvite").addEventListener("click", () => copyInviteLink("#headerInviteLink", "#headerInviteStatus"));
     on("#networkMode", "change", event => {
       if (event.target.value !== "interface") document.querySelector("#networkInterface").value = "";
     });
@@ -4329,8 +4333,83 @@
       const dlg = document.querySelector("#settingsDlg");
       dlg.showModal();
       loadSettings();
-      loadNetworkExposure();
+      loadNetworkExposure().then(loadInviteInfo);
     }
+
+    function openInviteDialog() {
+      document.querySelector("#inviteDlg").showModal();
+      loadInviteInfo();
+    }
+
+    async function loadInviteInfo() {
+      const inputs = [document.querySelector("#inviteLink"), document.querySelector("#headerInviteLink")];
+      const statuses = [document.querySelector("#inviteStatus"), document.querySelector("#headerInviteStatus")];
+      statuses.forEach(status => { status.textContent = "Loading your invite link…"; });
+      try {
+        const sessionResponse = await fetch(api("/api/auth/session"), { cache: "no-store" });
+        const session = await sessionResponse.json().catch(() => ({}));
+        if (!sessionResponse.ok || !session.authenticated || !session.username) {
+          throw new Error("Sign in to view your invite link.");
+        }
+        const response = await fetch(api("/api/auth/invite"), { cache: "no-store" });
+        const payload = await response.json().catch(() => ({}));
+        if (!response.ok) throw new Error(payload.error || "Could not load invite link");
+        if (!networkStatusData) {
+          try {
+            const networkResponse = await fetch(api("/api/network/status"), { cache: "no-store" });
+            const networkPayload = await networkResponse.json();
+            if (networkResponse.ok) networkStatusData = networkPayload.status;
+          } catch { /* invite links can still use the current browser origin */ }
+        }
+        let inviteOrigin = window.location.origin;
+        const currentURL = new URL(window.location.href);
+        const selectedIPv4 = networkStatusData?.state?.selectedIPv4;
+        if (["localhost", "127.0.0.1", "::1"].includes(currentURL.hostname) && selectedIPv4) {
+          currentURL.hostname = selectedIPv4;
+          inviteOrigin = currentURL.origin;
+        }
+        const caddy = networkStatusData?.caddy;
+        if (caddy?.enabled && caddy.domain) {
+          const publicURL = caddy.domain.includes("://") ? caddy.domain : `https://${caddy.domain}`;
+          try { inviteOrigin = new URL(publicURL).origin; } catch { /* use the current browser origin */ }
+        }
+        const inviteURL = new URL("/account/signup", inviteOrigin);
+        inviteURL.searchParams.set("ref", payload.inviteCode);
+        inputs.forEach(input => { input.value = inviteURL.toString(); });
+        inviteReferralCount = Number(payload.referralCount) || 0;
+        const countMessage = `${inviteReferralCount.toLocaleString()} ${inviteReferralCount === 1 ? "account has" : "accounts have"} joined with your link.`;
+        statuses.forEach(status => { status.textContent = countMessage; });
+        document.querySelector("#inviteHeaderBtn").hidden = false;
+      } catch (error) {
+        inputs.forEach(input => { input.value = ""; });
+        statuses.forEach(status => { status.textContent = error.message || "Could not load invite link"; });
+        document.querySelector("#inviteHeaderBtn").hidden = true;
+      }
+    }
+
+    async function copyInviteLink(inputSelector, statusSelector) {
+      const input = document.querySelector(inputSelector);
+      const status = document.querySelector(statusSelector);
+      if (!input.value) {
+        status.textContent = "Sign in to load your invite link.";
+        return;
+      }
+      try {
+        if (navigator.clipboard?.writeText) {
+          await navigator.clipboard.writeText(input.value);
+        } else {
+          input.focus();
+          input.select();
+          if (!document.execCommand("copy")) throw new Error("Clipboard access is unavailable");
+          input.setSelectionRange(0, 0);
+        }
+        status.textContent = `Copied invite link · ${inviteReferralCount.toLocaleString()} ${inviteReferralCount === 1 ? "account" : "accounts"} joined.`;
+      } catch (error) {
+        status.textContent = error.message || "Could not copy invite link. Select the link and copy it manually.";
+      }
+    }
+
+    loadInviteInfo();
 
     async function loadSettings() {
       const status = document.querySelector("#settingsStatus");

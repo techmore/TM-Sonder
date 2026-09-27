@@ -275,9 +275,14 @@
    flex row exactly as before; the phone layout promotes it to a single
    swipeable row of its own. */
 .header-tools { display: contents; }
-#settingsBtn {
+#settingsBtn, #inviteHeaderBtn {
   background: var(--panel); border: 1px solid var(--line); color: var(--text);
   border-radius: 8px; padding: 9px 11px; cursor: pointer;
+}
+#inviteHeaderBtn { display:inline-flex; align-items:center; justify-content:center; }
+dialog#inviteDlg {
+  width:min(520px, 92vw); max-height:90vh; border:1px solid var(--line); border-radius:14px;
+  background:var(--panel); color:var(--text); padding:0;
 }
 body[data-theme="techmore"] {
   color-scheme: light;
@@ -1032,7 +1037,7 @@ body[data-theme="bunny"] .actions button.primary:disabled { opacity:.55; }
   }
   .header-tools::-webkit-scrollbar { display: none; }
   .header-tools > * { flex: 0 0 auto; min-height: 40px; }
-  #settingsBtn { padding: 8px 12px; }
+  #settingsBtn, #inviteHeaderBtn { padding: 8px 12px; }
 
   /* Bottom tab bar. */
   nav.tabs {
@@ -1133,7 +1138,7 @@ body[data-theme="bunny"] .actions button.primary:disabled { opacity:.55; }
   .catalog-detail-cover { width: 104px; }
 
   /* Dialogs get the full sheet treatment. */
-  dialog#detail, dialog#settingsDlg {
+  dialog#detail, dialog#settingsDlg, dialog#inviteDlg {
     width: 100%; max-width: 100%; max-height: 92vh;
     margin: auto auto 0; border-radius: 18px 18px 0 0; border-bottom: 0;
   }

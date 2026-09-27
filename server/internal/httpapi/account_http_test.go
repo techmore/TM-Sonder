@@ -130,6 +130,70 @@ func TestAccountSetupLoginAndCompatibilitySessions(t *testing.T) {
 	}
 }
 
+func TestInviteSignupCreatesAccountAndSession(t *testing.T) {
+	f := newFixture(t, func(cfg *config.Config) {
+		cfg.AllowLAN = true
+		cfg.PairingToken = "pair-me"
+	})
+	if err := f.s.accounts.Setup("owner", "a-long-test-password"); err != nil {
+		t.Fatal(err)
+	}
+	inviteCode, _, ok := f.s.accounts.InviteInfo("owner")
+	if !ok {
+		t.Fatal("owner invite code was not created")
+	}
+
+	form := url.Values{
+		"username":   {"reader"},
+		"password":   {"another-long-password"},
+		"inviteCode": {inviteCode},
+		"next":       {"/"},
+	}
+	req := httptest.NewRequest(http.MethodPost, "/api/auth/signup", strings.NewReader(form.Encode()))
+	req.RemoteAddr = "192.168.3.50:50123"
+	req.Host = "sonder.example:8096"
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	rec := httptest.NewRecorder()
+	f.s.Handler().ServeHTTP(rec, req)
+	if rec.Code != http.StatusSeeOther {
+		t.Fatalf("signup status = %d, body=%s", rec.Code, rec.Body.String())
+	}
+	if got := rec.Header().Get("Location"); got != "/" {
+		t.Fatalf("signup redirect = %q, want /", got)
+	}
+	cookies := rec.Result().Cookies()
+	if len(cookies) != 1 || cookies[0].Name != sessionCookieName || cookies[0].Value == "" {
+		t.Fatalf("signup did not issue a session cookie: %#v", cookies)
+	}
+	if err := f.s.accounts.Authenticate("reader", "another-long-password"); err != nil {
+		t.Fatalf("new account cannot authenticate: %v", err)
+	}
+	if _, count, ok := f.s.accounts.InviteInfo("owner"); !ok || count != 1 {
+		t.Fatalf("owner referral count = %d, exists=%v; want 1", count, ok)
+	}
+
+	inviteReq := httptest.NewRequest(http.MethodGet, "/api/auth/invite", nil)
+	inviteReq.RemoteAddr = req.RemoteAddr
+	inviteReq.Host = req.Host
+	inviteReq.AddCookie(cookies[0])
+	inviteRec := httptest.NewRecorder()
+	f.s.Handler().ServeHTTP(inviteRec, inviteReq)
+	if inviteRec.Code != http.StatusOK {
+		t.Fatalf("signed-in invite lookup status = %d, body=%s", inviteRec.Code, inviteRec.Body.String())
+	}
+	var inviteResponse struct {
+		Username      string `json:"username"`
+		InviteCode    string `json:"inviteCode"`
+		ReferralCount int    `json:"referralCount"`
+	}
+	if err := json.Unmarshal(inviteRec.Body.Bytes(), &inviteResponse); err != nil {
+		t.Fatal(err)
+	}
+	if inviteResponse.Username != "reader" || inviteResponse.InviteCode == "" || inviteResponse.ReferralCount != 0 {
+		t.Fatalf("new account invite response = %#v", inviteResponse)
+	}
+}
+
 func TestCompatibilityCredentialAliasOnlyAppliesToMediaServerLogin(t *testing.T) {
 	f := newFixture(t, func(cfg *config.Config) {
 		cfg.AllowLAN = true

@@ -228,9 +228,12 @@ func (s *Server) routes() {
 	m := s.mux
 	m.HandleFunc("GET /account/login", s.handleAccountLoginPage)
 	m.HandleFunc("GET /account/setup", s.handleAccountSetupPage)
+	m.HandleFunc("GET /account/signup", s.handleAccountSignupPage)
 	m.HandleFunc("GET /api/auth/session", s.handleAuthSession)
+	m.HandleFunc("GET /api/auth/invite", s.handleAccountInviteInfo)
 	m.HandleFunc("POST /api/auth/login", s.handleAccountLogin)
 	m.HandleFunc("POST /api/auth/setup", s.handleAccountSetup)
+	m.HandleFunc("POST /api/auth/signup", s.handleAccountSignup)
 	m.HandleFunc("POST /api/auth/logout", s.handleAccountLogout)
 	m.HandleFunc("GET /ping", s.handleAudiobookshelfPing)
 	m.HandleFunc("GET /status", s.handleAudiobookshelfStatus)

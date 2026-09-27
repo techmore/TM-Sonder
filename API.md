@@ -26,11 +26,16 @@ Base URL comes from `/api/discovery` as `localURL` or `lanURL`.
   - query `?token=<token>` (discouraged; may appear in logs)
 - Auth is based on the **connection peer address**, not the client-controlled `Host` header.
 - Product default: server enabled, **LAN off**. Enabling LAN auto-generates a pairing token.
-- The first local account can be created through `GET /account/setup?token=<pairing-token>` and `POST /api/auth/setup`.
-  Setup is one-time and requires a 12-character minimum password. The account file is stored with mode `0600`.
+- The first account can be created through `GET /account/setup?token=<pairing-token>` and `POST /api/auth/setup`.
+  This owner setup is one-time and requires a 12-character minimum password. The account file is stored with mode `0600`.
+- Signed-in users can share the reusable invite link shown in Settings. It opens `GET /account/signup?ref=<invite-code>`;
+  submitting the form calls `POST /api/auth/signup` with `username`, `password`, and `inviteCode`. Each new account stores
+  the username of the inviter, and each invite owner can read their signup count from `GET /api/auth/invite` using their
+  browser session. The response includes `username`, `inviteCode`, and `referralCount`. Invite links do not expire or
+  limit the number of signups.
 - Browser login uses `GET /account/login`, `POST /api/auth/login`, and the HTTP-only `sonder_session` cookie.
   `GET /api/auth/session` reports setup/authentication state and `POST /api/auth/logout` revokes the browser session.
-- Compatibility logins validate the same account: Jellyfin `POST /Users/AuthenticateByName` returns an `AccessToken`, and
+- Compatibility logins validate an account: Jellyfin `POST /Users/AuthenticateByName` returns an `AccessToken`, and
   Audiobookshelf `POST /login` returns `user.token`. Those tokens are accepted as a Bearer token, Jellyfin
   `Authorization: MediaBrowser ... Token="..."`, or Audiobookshelf `?api_key=...`. Compatibility discovery endpoints
   (`/System/Info/Public`, `/QuickConnect/Enabled`, `/ping`, and `/status`) remain reachable so clients can begin login.
