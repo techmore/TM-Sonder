@@ -403,6 +403,9 @@
     let npSleepDeadline = 0;
     let npSleepAtPartEnd = false;
     let npSleepTimeout = null;
+    let npAirPlayMedia = null;
+    let npAirPlayAvailabilityHandler = null;
+    let npAirPlayWirelessHandler = null;
     let nowPlayingChapters = null; // null while loading; [] when unavailable or absent.
     let nowPlayingChaptersAvailable = false;
     let npChapterRequest = 0;
@@ -423,6 +426,69 @@
     }
 
     function npMedia() { return $("#npMedia"); }
+
+    function renderAirPlayWirelessState() {
+      const media = npMedia();
+      const button = $("#npAirPlay");
+      if (!button) return;
+      const wireless = !!(media && media.webkitCurrentPlaybackTargetIsWireless);
+      setClassEnabled(button, "np-wireless-output", wireless);
+      button.setAttribute("aria-pressed", wireless ? "true" : "false");
+      button.setAttribute("aria-label", wireless ? "AirPlay output connected" : "Choose AirPlay output");
+      button.title = wireless ? "AirPlay output connected" : "Choose AirPlay output";
+    }
+
+    function stopAirPlayAvailabilityListener() {
+      if (npAirPlayMedia) {
+        if (npAirPlayAvailabilityHandler) {
+          npAirPlayMedia.removeEventListener("webkitplaybacktargetavailabilitychanged", npAirPlayAvailabilityHandler);
+        }
+        if (npAirPlayWirelessHandler) {
+          npAirPlayMedia.removeEventListener("webkitcurrentplaybacktargetiswirelesschanged", npAirPlayWirelessHandler);
+        }
+      }
+      npAirPlayMedia = null;
+      npAirPlayAvailabilityHandler = null;
+      npAirPlayWirelessHandler = null;
+      const button = $("#npAirPlay");
+      if (button) {
+        button.hidden = true;
+        button.disabled = true;
+        setClassEnabled(button, "np-wireless-output", false);
+        button.setAttribute("aria-pressed", "false");
+        button.setAttribute("aria-label", "Choose AirPlay output");
+        button.title = "Choose AirPlay output";
+      }
+    }
+
+    function syncAirPlayAvailabilityListener() {
+      const media = npMedia();
+      const button = $("#npAirPlay");
+      if (!media || !button || typeof media.webkitShowPlaybackTargetPicker !== "function") {
+        stopAirPlayAvailabilityListener();
+        return;
+      }
+      if (npAirPlayMedia === media) {
+        renderAirPlayWirelessState();
+        return;
+      }
+      stopAirPlayAvailabilityListener();
+      npAirPlayAvailabilityHandler = event => {
+        const available = event && event.availability === "available";
+        button.hidden = !available;
+        button.disabled = !available;
+        if (!available) {
+          setClassEnabled(button, "np-wireless-output", false);
+          button.setAttribute("aria-pressed", "false");
+          button.setAttribute("aria-label", "Choose AirPlay output");
+        } else renderAirPlayWirelessState();
+      };
+      npAirPlayWirelessHandler = () => renderAirPlayWirelessState();
+      media.addEventListener("webkitplaybacktargetavailabilitychanged", npAirPlayAvailabilityHandler);
+      media.addEventListener("webkitcurrentplaybacktargetiswirelesschanged", npAirPlayWirelessHandler);
+      npAirPlayMedia = media;
+      renderAirPlayWirelessState();
+    }
 
     function syncPlaybackRate(media) {
       if (!media) return;
@@ -931,6 +997,7 @@
       // dedicated surface immediately; the compact dock remains available
       // after the listener taps Minimize.
       setPlayerExpanded(mode === "audio" && isMobileViewport());
+      syncAirPlayAvailabilityListener();
       updateMediaSession(item);
     }
 
@@ -999,6 +1066,7 @@
     function stopPlayback() {
       const media = npMedia();
       saveProgress(true);
+      stopAirPlayAvailabilityListener();
       npChapterRequest++;
       if (media) {
         media.pause();
@@ -1315,6 +1383,14 @@
       if (option) setSleepTimer(option.dataset.npSleep);
     });
     on("#npDetails", "click", () => { if (nowPlayingItem) openDetail(nowPlayingItem.id, true); });
+    on("#npAirPlay", "click", () => {
+      const media = npMedia();
+      // Keep this call synchronous with the tap: Safari requires a direct user
+      // gesture to open its native AirPlay destination picker.
+      if (media && typeof media.webkitShowPlaybackTargetPicker === "function") {
+        media.webkitShowPlaybackTargetPicker();
+      }
+    });
     on("#npQueueToggle", "click", () => {
       npQueueOpen = !npQueueOpen;
       renderPartQueue();

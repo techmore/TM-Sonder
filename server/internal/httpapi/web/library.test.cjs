@@ -14,8 +14,11 @@ function catalog(items, progress = []) {
     if (nodes.has(key)) return nodes.get(key);
     const node = { dataset: {}, hidden: false, style: {},
              classList: { toggle(){}, add(){}, remove(){}, contains(){ return false; } },
-             addEventListener(){}, removeEventListener(){}, querySelector(){ return null; },
-             querySelectorAll(){ return []; }, setAttribute(){}, getAttribute(){ return null; },
+             listeners: {}, attributes: {},
+             addEventListener(event, handler){ this.listeners[event] = handler; },
+             removeEventListener(event, handler){ if (this.listeners[event] === handler) delete this.listeners[event]; }, querySelector(){ return null; },
+             querySelectorAll(){ return []; }, setAttribute(name, value){ this.attributes[name] = String(value); },
+             getAttribute(name){ return this.attributes[name] ?? null; },
              appendChild(){}, remove(){}, focus(){}, closest(){ return null; },
              textContent: '', innerHTML: '', load(){ this.playbackRate = 1; },
              play(){ this.paused = false; return Promise.resolve(); },
@@ -890,6 +893,33 @@ test('the mobile player has readable contrast and listening controls', () => {
   assert.match(src, /on\("#npMobileToggle"/);
   assert.match(src, /on\("#npQueueList"/);
   assert.match(src, /if \(\!\(tl\.total > 0\) \|\| \(!tl\.multi && nowPlayingMode !== "audio"\)\)/);
+});
+
+test('AirPlay output appears only when available and opens the native picker', () => {
+  assert.match(libraryHTML, /id="npAirPlay"[^>]*aria-label="Choose AirPlay output"[^>]*hidden disabled/);
+  assert.match(libraryHTML, /class="np-airplay-icon"/);
+  assert.match(librarySource, /webkitplaybacktargetavailabilitychanged/);
+  assert.match(librarySource, /webkitShowPlaybackTargetPicker\(\)/);
+  assert.match(librarySource, /webkitcurrentplaybacktargetiswirelesschanged/);
+  const get = catalog([{ id:'book', title:'Book', kind:'audiobook', format:'m4b' }]);
+  assert.deepEqual(get(`(() => {
+    const media = $("#npMedia"), button = $("#npAirPlay");
+    media.pickerCalls = 0;
+    media.webkitShowPlaybackTargetPicker = () => { media.pickerCalls++; };
+    syncAirPlayAvailabilityListener();
+    media.listeners.webkitplaybacktargetavailabilitychanged({ availability: "available" });
+    const visible = !button.hidden && !button.disabled;
+    button.listeners.click();
+    media.webkitCurrentPlaybackTargetIsWireless = true;
+    media.listeners.webkitcurrentplaybacktargetiswirelesschanged();
+    const connected = [button.getAttribute("aria-pressed"), button.getAttribute("aria-label"), button.title];
+    media.listeners.webkitplaybacktargetavailabilitychanged({ availability: "not-available" });
+    const hidden = button.hidden && button.disabled;
+    stopAirPlayAvailabilityListener();
+    return [visible, media.pickerCalls, connected, hidden,
+      media.listeners.webkitplaybacktargetavailabilitychanged === undefined,
+      media.listeners.webkitcurrentplaybacktargetiswirelesschanged === undefined];
+  })()`), [true, 1, ['true', 'AirPlay output connected', 'AirPlay output connected'], true, true, true]);
 });
 
 test('sleep timer choices replace one another and can be turned off', () => {
