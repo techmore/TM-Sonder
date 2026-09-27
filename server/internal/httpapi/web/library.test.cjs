@@ -770,39 +770,53 @@ test('switching parts immediately shows the new book position before metadata lo
   );
 });
 
-test('audiobook progress switches between whole book and chapter time', () => {
+test('the centered timeline switches book/chapter scope and cycles three time modes', () => {
   const get = catalog([part('p1', 'bk', 1, 100), part('p2', 'bk', 2, 200)]);
   const result = get(`(() => {
     nowPlayingItem=items[0]; nowPlayingMode="audio";
     nowPlayingParts=partsOf(items[0]); nowPlayingPartIndex=1;
     $("#npMedia").currentTime=30; $("#npMedia").duration=200;
+    $("#npMedia").playbackRate=2;
     nowPlayingChaptersAvailable=true;
     nowPlayingChapters=[
       {index:1,title:"Opening",partID:"p1",partIndex:1,startSeconds:0,endSeconds:100},
       {index:2,title:"The Crossing",partID:"p2",partIndex:2,startSeconds:100,endSeconds:160},
       {index:3,title:"Arrival",partID:"p2",partIndex:2,startSeconds:160,endSeconds:300},
     ];
-    npProgressScope="book"; npTimeDisplay="remaining";
+    npProgressScope="book"; npTimeDisplay="total";
     renderPlaybackProgress(bookTimeline());
     const bookLabel=$("#npScopeLabel").textContent;
+    const bookTime={mode:$("#npTimeModeLabel").textContent,value:$("#npTimeValue").textContent};
     togglePlaybackScope();
     const section=playbackProgressTimeline(bookTimeline());
     const chapterLabel=$("#npScopeLabel").textContent;
-    const chapterRemaining=$("#npTimeToggle").textContent;
+    const chapterElapsed=$("#npProgressElapsed").textContent;
+    const chapterTotal={mode:$("#npTimeModeLabel").textContent,value:$("#npTimeValue").textContent};
     togglePlaybackTimeDisplay();
-    const chapterElapsed=$("#npTimeToggle").textContent;
-    return {bookLabel,chapterLabel,chapterRemaining,chapterElapsed,
+    const chapterRemaining={mode:$("#npTimeModeLabel").textContent,value:$("#npTimeValue").textContent};
+    togglePlaybackTimeDisplay();
+    const chapterETA={mode:$("#npTimeModeLabel").textContent,value:$("#npTimeValue").textContent};
+    const finishAt=playbackFinishAt(section,10000);
+    togglePlaybackTimeDisplay();
+    const cycledBack=$("#npTimeModeLabel").textContent;
+    return {bookLabel,bookTime,chapterLabel,chapterElapsed,chapterTotal,chapterRemaining,chapterETA,finishAt,cycledBack,
       scope:section.scope,start:section.start,position:section.position,total:section.total,
       chapterContext:$("#npPartLabel").textContent};
   })()`);
   assert.deepEqual(result, {
-    bookLabel: 'Whole book · 3 chapters',
+    bookLabel: 'Book · 3 chapters',
+    bookTime: {mode:'Total',value:'300'},
     chapterLabel: 'Chapter 2 of 3',
-    chapterRemaining: '30 left',
-    chapterElapsed: '30 / 60',
+    chapterElapsed: '30',
+    chapterTotal: {mode:'Total',value:'60'},
+    chapterRemaining: {mode:'Left',value:'30'},
+    chapterETA: {mode:'ETA',value:result.chapterETA.value},
+    finishAt: 25000,
+    cycledBack: 'Total',
     scope: 'chapter', start: 100, position: 30, total: 60,
     chapterContext: 'Chapter 2 of 3 · Part 2 of 2 · 2003',
   });
+  assert.notEqual(result.chapterETA.value, '—');
 });
 
 test('switching parts preserves the selected playback speed after media load', () => {
@@ -847,6 +861,9 @@ test('the mobile player has readable contrast and listening controls', () => {
   assert.match(libraryHTML, /id="npEta"/);
   assert.match(libraryHTML, /id="npScopeToggle"/);
   assert.match(libraryHTML, /id="npTimeToggle"/);
+  assert.match(libraryHTML, /id="npProgressElapsed"/);
+  assert.match(libraryHTML, /id="npTimeModeLabel"/);
+  assert.match(libraryHTML, /id="npTimeValue"/);
   assert.match(libraryHTML, /id="npBookProgressControls"/);
   assert.match(libraryHTML, /id="npMobileToggle"/);
   assert.match(libraryHTML, /id="npMobileKind"/);

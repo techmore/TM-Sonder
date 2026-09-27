@@ -416,7 +416,7 @@
     }
 
     let npProgressScope = readPlayerPreference("sonder.player.progressScope", "book", ["book", "section"]);
-    let npTimeDisplay = readPlayerPreference("sonder.player.timeDisplay", "remaining", ["remaining", "elapsed"]);
+    let npTimeDisplay = readPlayerPreference("sonder.player.timeDisplayMode", "total", ["total", "remaining", "eta"]);
 
     function savePlayerPreference(key, value) {
       try { localStorage.setItem(key, value); } catch { /* storage may be disabled */ }
@@ -617,12 +617,42 @@
       return nowPlayingChapters.length ? "Finding current chapter…" : "No embedded chapters";
     }
 
-    function playbackTimeLabel(view) {
-      if (!(view.total > 0)) return "Time unavailable";
+    function playbackFinishAt(view, now = Date.now()) {
+      if (!(view.total > 0)) return null;
       const remaining = Math.max(0, view.total - view.position);
-      return npTimeDisplay === "remaining"
-        ? (remaining <= 0 ? "Finished" : `${formatTime(remaining)} left`)
-        : `${formatTime(view.position)} / ${formatTime(view.total)}`;
+      const rate = Math.max(0.1, Number(npMedia()?.playbackRate) || 1);
+      return now + remaining / rate * 1000;
+    }
+
+    function formatPlaybackFinish(view, now = Date.now()) {
+      const finishAt = playbackFinishAt(view, now);
+      if (finishAt === null) return "—";
+      if (finishAt <= now) return "Finished";
+      const startDate = new Date(now);
+      const finishDate = new Date(finishAt);
+      const options = { hour: "numeric", minute: "2-digit" };
+      if (startDate.toDateString() !== finishDate.toDateString()) {
+        options.weekday = "short";
+        options.month = "short";
+        options.day = "numeric";
+      }
+      return new Intl.DateTimeFormat(undefined, options).format(finishDate);
+    }
+
+    function playbackTimeModeLabel() {
+      return ({ total: "Total", remaining: "Left", eta: "ETA" })[npTimeDisplay] || "Total";
+    }
+
+    function playbackTimeValue(view) {
+      if (!(view.total > 0)) return "—";
+      const remaining = Math.max(0, view.total - view.position);
+      if (npTimeDisplay === "remaining") return formatTime(remaining);
+      if (npTimeDisplay === "eta") return formatPlaybackFinish(view);
+      return formatTime(view.total);
+    }
+
+    function playbackTimeModeName() {
+      return ({ total: "Total time", remaining: "Time remaining", eta: "ETA finish" })[npTimeDisplay] || "Total time";
     }
 
     function togglePlaybackScope() {
@@ -633,8 +663,9 @@
     }
 
     function togglePlaybackTimeDisplay() {
-      npTimeDisplay = npTimeDisplay === "remaining" ? "elapsed" : "remaining";
-      savePlayerPreference("sonder.player.timeDisplay", npTimeDisplay);
+      const modes = ["total", "remaining", "eta"];
+      npTimeDisplay = modes[(modes.indexOf(npTimeDisplay) + 1) % modes.length];
+      savePlayerPreference("sonder.player.timeDisplayMode", npTimeDisplay);
       renderPlaybackProgress(bookTimeline());
     }
 
@@ -645,6 +676,9 @@
       const scopeButton = $("#npScopeToggle");
       const scopeLabel = $("#npScopeLabel");
       const timeButton = $("#npTimeToggle");
+      const timeModeLabel = $("#npTimeModeLabel");
+      const timeValue = $("#npTimeValue");
+      const seek = $("#npSeek");
       const isAudiobook = !!item && item.kind === "audiobook" && nowPlayingMode === "audio";
       if (controls) controls.hidden = !isAudiobook;
       if (legacy) legacy.hidden = isAudiobook;
@@ -657,7 +691,7 @@
         scopeLabel.textContent = selectedSection
           ? section.label
           : nowPlayingChaptersAvailable && nowPlayingChapters.length
-            ? `Whole book · ${nowPlayingChapters.length} chapters`
+            ? `Book · ${nowPlayingChapters.length} chapters`
             : "Whole book";
         scopeButton.setAttribute("aria-pressed", selectedSection ? "true" : "false");
         scopeButton.setAttribute("aria-label", selectedSection
@@ -667,13 +701,23 @@
             : nowPlayingChapters === null
               ? "Whole-book progress. Chapter markers are loading."
               : "Whole-book progress. No chapter or part section is available.");
+        if (seek) {
+          seek.setAttribute("aria-label", selectedSection
+            ? `Seek within ${section.label.toLowerCase()}`
+            : "Seek through the whole book");
+        }
       }
-      if (timeButton) {
-        timeButton.textContent = playbackTimeLabel(view);
+      if (timeButton && timeModeLabel && timeValue) {
+        timeModeLabel.textContent = playbackTimeModeLabel();
+        timeValue.textContent = playbackTimeValue(view);
         const scopeName = selectedSection ? section.label.toLowerCase() : "whole book";
-        const nextMode = npTimeDisplay === "remaining" ? "elapsed and total time" : "time remaining";
-        timeButton.setAttribute("aria-label", `${playbackTimeLabel(view)} for the ${scopeName}. Tap to show ${nextMode}.`);
-        timeButton.title = `Tap to switch to ${nextMode}`;
+        const modes = ["total", "remaining", "eta"];
+        const nextMode = modes[(modes.indexOf(npTimeDisplay) + 1) % modes.length];
+        const nextName = ({ total: "Total time", remaining: "Time remaining", eta: "ETA finish" })[nextMode];
+        const currentName = playbackTimeModeName();
+        const currentValue = playbackTimeValue(view);
+        timeButton.setAttribute("aria-label", `${currentName}: ${currentValue} for the ${scopeName}. Tap to show ${nextName}.`);
+        timeButton.title = `${currentName} · tap to show ${nextName}`;
       }
     }
 
@@ -1118,6 +1162,7 @@
       }
       const cur = $("#npCur"); if (cur) cur.textContent = formatTime(view.position);
       const dur = $("#npDur"); if (dur) dur.textContent = formatTime(view.total);
+      const elapsed = $("#npProgressElapsed"); if (elapsed) elapsed.textContent = formatTime(view.position);
       renderEta(tl);
       renderAudiobookProgressControls(tl, view);
       const partLabel = $("#npPartLabel");
