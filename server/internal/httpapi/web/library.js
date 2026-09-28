@@ -1,6 +1,8 @@
     let items = [];
     let lists = [];
     let selectedListID = null;
+    let listsPageOpen = false;
+    let listFollowInProgress = false;
     let readingState = { queue: [], records: [] };
     const readingByID = new Map();
     let detailItemID = null;
@@ -26,56 +28,8 @@
       "On the Origin of Species", "Silent Spring", "The Diary of a Young Girl", "Night", "The Autobiography of Malcolm X", "Long Walk to Freedom", "The Power Broker", "Steve Jobs", "Educated", "The Year of Magical Thinking"
     ].slice(0, 100);
 
-    const SOURCE_RECOMMENDATIONS = [
-      ["The Guardian · 100 Best Novels of All Time (2026)", "Author, critic, and academic poll with Middlemarch at the top."],
-      ["The Guardian · 100 Best Novels in English (2015)", "Robert McCrum's chronological English-language canon."],
-      ["The New York Times · 100 Best Books of the 21st Century (2024)", "Critic and author-voted contemporary reading."],
-      ["The New York Times · Readers' 100 Best Books of the 21st Century", "The public-vote companion to the NYT century list."],
-      ["TIME · All-TIME 100 Novels", "TIME critics' English-language novel canon."],
-      ["Modern Library · 100 Best Novels", "The Modern Library editorial board's twentieth-century canon."],
-      ["Modern Library · Readers' 100 Best Novels", "The reader-voted companion to the Modern Library list."],
-      ["Le Monde / Fnac · 100 Books of the Century", "A French poll of memorable twentieth-century books."],
-      ["Bokklubben · World Library", "A global canon of authors from 54 countries."],
-      ["The Greatest Books · Aggregated Top 100", "A consensus ranking built from many major best-of lists."],
-      ["OCLC WorldCat · The Library 100", "Library-holdings-based cultural staying power."],
-      ["PBS · The Great American Read", "America's 100 most-loved books, reader-voted."],
-      ["BBC Big Read", "The UK's best-loved novels, reader-voted."],
-      ["ABC Radio National · Top 100 Books of the 21st Century", "An Australian listener countdown."],
-      ["Will Durant · 100 Best Books for an Education", "A classic self-education reading plan."],
-      ["Världsbiblioteket · 100 Best Books", "A Swedish literary poll and world-library canon."],
-      ["BBC · 100 Novels That Shaped Our World", "Panel-selected books with broad cultural influence."],
-      ["Goodreads · Best Books of All Time", "Reader-generated favorites with enormous participation."],
-      ["Goodreads · Most Shelved Classics", "The classics readers return to and shelve most."],
-      ["Bookshop.org · 100 Epic Reads of a Lifetime", "A popular and classic lifetime-reading mix."],
-      ["Penguin Random House · Books Everyone Should Read", "Reader-driven recommendations from a major publisher."],
-      ["100 Books to Read Before You Die", "A definitive-style classic reading challenge."],
-      ["Harvard Classics · Five-Foot Shelf", "The influential educational bookshelf."],
-      ["Great Books of the Western World", "The Adler and Hutchins Western canon."],
-      ["Most Assigned Novels", "Books that appear most often on academic syllabi."],
-      ["Most Popular Library Classics", "Long-running library favorites and staples."],
-      ["National Reader Favorites", "A cross-national public-library and reader shelf."],
-      ["Oprah's Book Club · Essential Reads", "Culturally significant selections from Oprah's club."],
-      ["Amazon · Most Popular Books", "A sales and popularity-driven reading queue."],
-      ["Locus · Science Fiction Canon", "A genre-focused science-fiction essentials shelf."],
-      ["NPR · Top Science Fiction & Fantasy", "Reader-recommended speculative fiction."],
-      ["Modern Library · 100 Best Nonfiction", "The nonfiction counterpart to the Modern Library novels."],
-      ["Top 100 Historical Fiction", "A long queue of historical novels and period stories."],
-      ["Top 100 Western Books", "Classic and modern Western reading."],
-      ["Top 100 Mystery & Detective Books", "The most influential puzzles and investigations."],
-      ["Top 100 Horror Books", "A broad literary and popular horror canon."],
-      ["Top 100 Romance Books", "Enduring love stories and relationship novels."],
-      ["Top 100 Biographies & Memoirs", "The lives and testimony that shaped readers."],
-      ["Top 100 Philosophy Books", "Foundational works for a lifetime of thought."],
-      ["Top 100 Children's Books", "Beloved books that reward rereading at every age."]
-    ].map(([name, description], index) => [name, description, TOP_100_BOOKS, `source-${index}`]);
-
     const RECOMMENDED_LISTS = [
-      ["TIME-Style Top 100 Books", "A deep all-time reading shelf—not a five-book sample.", TOP_100_BOOKS],
-      ["Top 100 Novels of All Time", "A century-spanning novel queue for serious readers.", TOP_100_BOOKS],
-      ["Top 100 Historical Reads", "The foundational novels, histories, memoirs, and biographies.", TOP_100_BOOKS],
-      ["Top 100 Western Books", "A long-form Western reading shelf across classic and modern works.", TOP_100_BOOKS],
-      ["Top 100 Science Fiction Books", "A full science-fiction reading queue from Wells to today.", TOP_100_BOOKS],
-      ...SOURCE_RECOMMENDATIONS,
+      ["Sonder Top 100 Books to Read or Listen To", "A cross-genre 100-title queue. Follow it to keep the audiobooks you own in ranked order and see what is still missing.", TOP_100_BOOKS],
       ["Best Books of All Time", "A broad canon of enduring fiction and nonfiction.", ["Middlemarch", "The Great Gatsby", "Beloved", "War and Peace", "The Republic"]],
       ["Best Novels of All Time", "The essential novel canon across centuries.", ["Don Quixote", "Anna Karenina", "Middlemarch", "Ulysses", "One Hundred Years of Solitude"]],
       ["Best Nonfiction of All Time", "Landmark ideas, history, science, and memoir.", ["The Republic", "The Histories", "On the Origin of Species", "Silent Spring", "The Diary of a Young Girl"]],
@@ -343,6 +297,35 @@
     function curatedListsForKinds(kinds) {
       if (!kinds || !kinds.length) return [];
       return CURATED_LISTS.filter(list => list.kinds.some(kind => kinds.includes(kind)));
+    }
+
+    function curatedKindsInPool(list, pool = listPoolKinds()) {
+      const matching = (pool || []).filter(kind => list.kinds.includes(kind));
+      return matching.length ? matching : list.kinds;
+    }
+
+    function isLegacyTop100List(list) {
+      const tags = new Set(list?.tags || []);
+      if (tags.has("sonder-top-100")) return true;
+      const bookCount = (list?.items || []).filter(entry => ["audiobook", "ebook"].includes(entry.item?.kind)).length;
+      return tags.has("recommended") && tags.has("curated") && bookCount >= 20;
+    }
+
+    function savedListForRecommendation(recommendation) {
+      return lists.find(list => list.name === recommendation.name ||
+        (recommendation.entries.length === 100 && isLegacyTop100List(list)));
+    }
+
+    function setListActionStatus(message) {
+      const status = $("#listActionStatus");
+      if (!status) return;
+      status.textContent = message;
+      status.hidden = !message;
+    }
+
+    function recommendationForSavedList(list) {
+      return CURATED_LISTS.find(candidate => candidate.name === list?.name) ||
+        (isLegacyTop100List(list) ? CURATED_LISTS.find(candidate => candidate.entries.length === 100 && candidate.kinds.includes("audiobook")) : null);
     }
 
     const { api, escapeHTML, formatTime } = window.Sonder;
@@ -3034,8 +3017,9 @@
     // --- URL state (#tab[/show/<name>|/page/<n>]) so refresh and Back work ---
     function syncHash(push) {
       const parts = [activeTab];
-      if (["audiobooks", "books"].includes(activeTab) && selectedListID) {
-        parts.push("list", selectedListID);
+      if (["audiobooks", "books"].includes(activeTab)) {
+        if (selectedListID) parts.push("list", selectedListID);
+        else if (listsPageOpen) parts.push("lists");
       }
       if (selectedBookID) {
         parts.push("book", selectedBookID);
@@ -3055,9 +3039,11 @@
       if (seg.length === 0) return false;
       const tabs = ["all", "movies", "tvshows", "documentaries", "audiobooks", "books", "storage", "optimize"];
       // Keep old #lists links useful after Lists moved into the reading tabs.
-      const requestedTab = seg[0] === "lists" ? "books" : seg[0];
+      const legacyListsTab = tabIsHidden("books") && !tabIsHidden("audiobooks") ? "audiobooks" : "books";
+      const requestedTab = seg[0] === "lists" ? legacyListsTab : seg[0];
       const tab = tabs.includes(requestedTab) && !tabIsHidden(requestedTab) ? requestedTab : "all";
       activeTab = tab;
+      listsPageOpen = seg[0] === "lists" || (["audiobooks", "books"].includes(tab) && ["lists", "list"].includes(seg[1]));
       for (const b of document.querySelectorAll("#tabs button"))
         b.classList.toggle("active", b.dataset.tab === tab);
       openShow = null;
@@ -3082,6 +3068,7 @@
         $("#seasonList").innerHTML = "";
         if (!selectedBookID && document.title !== "TM Sonder") document.title = "TM Sonder";
       }
+      renderFacets();
       render();
       if (activeTab === "optimize") {
         refreshOptimizationQueue();
@@ -3097,7 +3084,10 @@
       activeTab = tab;
       document.body.classList.remove("mobile-filters-open");
       libraryShelfLimit = 96;
-      if (tab !== previousTab) selectedListID = null;
+      if (tab !== previousTab) {
+        selectedListID = null;
+        listsPageOpen = false;
+      }
       if (!keepShow) { openSeason = null; leaveShow(); }
       for (const b of document.querySelectorAll("#tabs button")) {
         b.classList.toggle("active", b.dataset.tab === tab);
@@ -3131,6 +3121,19 @@
         window.scrollTo({ top:0 });
       });
     }
+
+    on("#bookAreaNav", "click", event => {
+      const button = event.target.closest("[data-book-view]");
+      if (!button || !["audiobooks", "books"].includes(activeTab)) return;
+      const nextListsPage = button.dataset.bookView === "lists";
+      if (listsPageOpen === nextListsPage && !selectedListID) return;
+      listsPageOpen = nextListsPage;
+      selectedListID = null;
+      if (!listsPageOpen) renderFacets();
+      render();
+      syncHash(true);
+      window.scrollTo({ top: 0, behavior: "smooth" });
+    });
 
     async function refreshLists() {
       const response = await fetch(api("/api/lists"));
@@ -3444,8 +3447,8 @@
     }
 
     function curatedShelfControl(shelf) {
-      const saved = lists.some(list => list.name === shelf.list.name);
-      return `<button type="button" class="rail-browse" data-action="use-recommended-list" data-recommended-id="${escapeHTML(shelf.list.id)}">${saved ? "Saved · open" : "Save shelf"}</button>`;
+      const saved = !!savedListForRecommendation(shelf.list);
+      return `<button type="button" class="rail-browse" data-action="use-recommended-list" data-recommended-id="${escapeHTML(shelf.list.id)}" ${listFollowInProgress ? "disabled" : ""}>${saved ? "Followed · open" : "Follow list"}</button>`;
     }
 
     function curatedShelfCards(shelf, limit = 18) {
@@ -3459,21 +3462,36 @@
     // coverage count is measured against movies alone.
     function curatedListsForTab() {
       const kinds = tabCatalogKinds();
-      return kinds.length ? curatedListsForKinds(kinds) : CURATED_LISTS;
+      const candidates = kinds.length ? curatedListsForKinds(kinds) : CURATED_LISTS;
+      const seen = new Set();
+      return candidates.filter(list => {
+        if (seen.has(list.signature)) return false;
+        seen.add(list.signature);
+        return true;
+      });
     }
 
     function renderLists() {
       const host = $("#listsView");
       if (!host) return;
+      const title = $("#listsTitle");
+      if (title) title.textContent = listsPageOpen
+        ? activeTab === "audiobooks" ? "Audiobook lists" : "Ebook lists"
+        : "Lists and curated shelves";
+      const intro = $("#listsIntro");
+      if (intro) intro.textContent = listsPageOpen
+        ? "Follow an ordered list to add the titles you own to your Sonder queue. Missing books stay listed so you can see what to find next."
+        : "A title can appear in many lists. Each list keeps its own order and tags. Curated shelves below match the catalog you are browsing.";
       const kinds = listPoolKinds();
       const candidates = listCandidates(kinds);
       const poolLabel = listPoolLabel(kinds);
       const curated = curatedListsForTab();
       const selectedList = selectedListID ? lists.find(list => list.id === selectedListID) : null;
-      const recommended = selectedList ? "" : `<section class="recommended-lists"><div class="recommended-lists-head"><div><h3>Curated shelves for ${escapeHTML(poolLabel)}</h3><p class="muted">Click any card to add that ordered shelf to Sonder, ordered as the list ranks it.</p></div><span class="muted">${curated.length} lists</span></div><div class="recommended-list-grid">${curated.map(list => {
+      const recommended = selectedList ? "" : `<section class="recommended-lists"><div class="recommended-lists-head"><div><h3>Lists to follow for ${escapeHTML(poolLabel)}</h3><p class="muted">Following saves an ordered queue in Sonder. Owned titles are added; missing ones stay visible as a checklist. These curated lists are built in, not live publisher feeds.</p></div><span class="muted">${curated.length} lists</span></div><div class="recommended-list-grid">${curated.map(list => {
         const present = list.entries.filter(entry => candidateForEntry(entry, kinds)).length;
-        const alreadyAdded = lists.some(existing => existing.name === list.name);
-        return `<button class="recommended-list-card" data-action="use-recommended-list" data-recommended-id="${escapeHTML(list.id)}"><span class="recommended-list-icon">▦</span><strong>${escapeHTML(list.name)}</strong><span class="muted">${escapeHTML(list.description)}</span><span class="recommended-list-meta">${present}/${list.entries.length} in library · ${alreadyAdded ? "Added" : "Add list"}</span></button>`;
+        const missing = list.entries.length - present;
+        const alreadyAdded = !!savedListForRecommendation(list);
+        return `<button class="recommended-list-card" data-action="use-recommended-list" data-recommended-id="${escapeHTML(list.id)}" ${listFollowInProgress ? "disabled" : ""}><span class="recommended-list-icon">▦</span><strong>${escapeHTML(list.name)}</strong><span class="muted">${escapeHTML(list.description)}</span><span class="recommended-list-meta">${present} owned · ${missing} to find · ${alreadyAdded ? "Followed · open" : "Follow list"}</span></button>`;
       }).join("")}</div></section>`;
       const savedLists = selectedList ? [selectedList] : lists;
       const saved = savedLists.map(list => {
@@ -3486,10 +3504,11 @@
         const addRow = selectedList
           ? `<div class="list-add-row"><input class="list-book-search" data-list-book-search placeholder="Search ${escapeHTML(poolLabel.toLowerCase())} to add…" aria-label="Search titles to add"><select data-list-select aria-label="Title to add" disabled><option value="">Type to search for a title…</option></select><input data-list-tags placeholder="Entry tags, comma separated" aria-label="Entry tags"><button class="primary" data-action="add-list-item" data-list-id="${escapeHTML(list.id)}">Add</button></div>`
           : "";
-        const listTags = (list.tags || []).map(tag => `<span class="tag">${escapeHTML(tag)}</span>`).join("");
-        const recommendation = CURATED_LISTS.find(candidate => candidate.name === list.name);
-        const missing = recommendation ? recommendation.entries.filter(entry => !candidateForEntry(entry, recommendation.kinds)) : [];
-        const missingHTML = missing.length ? `<section class="list-missing"><div><strong>${missing.length} missing titles</strong><p class="muted">Not currently anywhere in your ${escapeHTML(listPoolLabel(recommendation.kinds).toLowerCase())}.</p></div><button data-action="export-missing" data-list-id="${escapeHTML(list.id)}">Export missing .txt</button><ol>${missing.map(entry => `<li>${escapeHTML(entry.year ? `${entry.title} (${entry.year})` : entry.title)}</li>`).join("")}</ol></section>` : "";
+        const listTags = (list.tags || []).filter(tag => tag !== "sonder-top-100").map(tag => `<span class="tag">${escapeHTML(tag)}</span>`).join("");
+        const recommendation = recommendationForSavedList(list);
+        const recommendationKinds = recommendation ? curatedKindsInPool(recommendation, kinds) : [];
+        const missing = recommendation ? recommendation.entries.filter(entry => !candidateForEntry(entry, recommendationKinds)) : [];
+        const missingHTML = missing.length ? `<section class="list-missing"><div><strong>${missing.length} missing titles</strong><p class="muted">Not currently anywhere in your ${escapeHTML(listPoolLabel(recommendationKinds).toLowerCase())}.</p></div><button data-action="export-missing" data-list-id="${escapeHTML(list.id)}">Export missing .txt</button><ol>${missing.map(entry => `<li>${escapeHTML(entry.year ? `${entry.title} (${entry.year})` : entry.title)}</li>`).join("")}</ol></section>` : "";
         const title = selectedList
           ? `<h3>${escapeHTML(list.name)}</h3>`
           : `<h3><button class="list-open-title" data-action="open-reading-list" data-list-id="${escapeHTML(list.id)}">${escapeHTML(list.name)}</button></h3>`;
@@ -3510,9 +3529,10 @@
 
     function exportMissingList(listID) {
       const list = lists.find(candidate => candidate.id === listID);
-      const recommendation = list && CURATED_LISTS.find(candidate => candidate.name === list.name);
+      const recommendation = recommendationForSavedList(list);
       if (!recommendation) return;
-      const missing = recommendation.entries.filter(entry => !candidateForEntry(entry, recommendation.kinds));
+      const kinds = curatedKindsInPool(recommendation);
+      const missing = recommendation.entries.filter(entry => !candidateForEntry(entry, kinds));
       const label = (entry) => (entry.year ? `${entry.title} (${entry.year})` : entry.title);
       const body = [`${recommendation.name} — missing titles`, "", ...missing.map((entry, index) => `${index + 1}. ${label(entry)}`), ""].join("\n");
       const link = document.createElement("a");
@@ -3525,30 +3545,53 @@
     // Materializing a curated shelf keeps the list's own ranking, so a saved
     // shelf is a queue rather than an alphabetical dump.
     async function useRecommendedList(recommendedID) {
+      if (listFollowInProgress) return;
       const recommendation = CURATED_LISTS.find(list => list.id === recommendedID);
       if (!recommendation) return;
-      const existing = lists.find(list => list.name === recommendation.name);
+      const existing = savedListForRecommendation(recommendation);
       if (existing) {
+        setListActionStatus("");
+        listsPageOpen = ["audiobooks", "books"].includes(activeTab);
         selectedListID = existing.id;
         syncHash(true);
-        renderLists();
+        render();
         return;
       }
+      let added = 0;
+      let totalOwned = 0;
       try {
-        const created = await fetch(api("/api/lists"), { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ name: recommendation.name, description: recommendation.description, tags: ["recommended", "curated"] }) });
+        listFollowInProgress = true;
+        const kinds = curatedKindsInPool(recommendation);
+        const owned = recommendation.entries.map(entry => candidateForEntry(entry, kinds)).filter(Boolean);
+        totalOwned = owned.length;
+        setListActionStatus(`Following “${recommendation.name}”… adding ${totalOwned} books from your library.`);
+        document.querySelectorAll('[data-action="use-recommended-list"]').forEach(button => { button.disabled = true; });
+        const tags = ["recommended", "curated"];
+        if (recommendation.entries.length === 100) tags.push("sonder-top-100");
+        const created = await fetch(api("/api/lists"), { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ name: recommendation.name, description: recommendation.description, tags }) });
         if (!created.ok) throw new Error((await created.text()) || "Could not create recommendation list");
         const list = await created.json();
-        let position = 0;
-        for (const entry of recommendation.entries) {
-          const record = candidateForEntry(entry, recommendation.kinds);
-          if (!record) continue;
+        for (const [position, record] of owned.entries()) {
           const response = await fetch(api(`/api/lists/${encodeURIComponent(list.id)}/items`), { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ itemID: record.item.id, position, tags: ["recommended"] }) });
-          if (response.ok) position++;
+          if (!response.ok) throw new Error((await response.text()) || `Could not add ${record.item.title || "a book"} to the list`);
+          added++;
+          setListActionStatus(`Following “${recommendation.name}”… added ${added} of ${totalOwned} owned books.`);
         }
+        listsPageOpen = ["audiobooks", "books"].includes(activeTab);
         selectedListID = list.id;
         syncHash(true);
         await refreshLists();
-      } catch (error) { alert(error.message || "Could not add recommendation list"); }
+        setListActionStatus(`Following complete: ${added} titles added in order; ${recommendation.entries.length - added} still to find.`);
+        render();
+      } catch (error) {
+        setListActionStatus(added
+          ? `List follow stopped after ${added} of ${totalOwned} owned titles. You can retry after checking the partial list.`
+          : "Could not follow this list. Please try again.");
+        alert(error.message || "Could not add recommendation list");
+      } finally {
+        listFollowInProgress = false;
+        document.querySelectorAll('[data-action="use-recommended-list"]').forEach(button => { button.disabled = false; });
+      }
     }
 
     on("#listCreateForm", "submit", async e => {
@@ -3743,7 +3786,7 @@
     function renderReadingLists() {
       const panel = $("#listsPanel");
       if (!panel) return;
-      const visible = !["storage", "optimize"].includes(activeTab);
+      const visible = listsPageOpen || !["storage", "optimize"].includes(activeTab);
       panel.hidden = !visible;
       if (visible) renderLists();
     }
@@ -3751,8 +3794,25 @@
     function render() {
       const storage = activeTab === "storage";
       const optimize = activeTab === "optimize";
+      const bookTab = ["audiobooks", "books"].includes(activeTab);
+      const listsPage = listsPageOpen && bookTab;
       const coverFilter = $("#coverFilter");
-      if (coverFilter) coverFilter.hidden = activeTab !== "audiobooks";
+      if (coverFilter) coverFilter.hidden = activeTab !== "audiobooks" || listsPage;
+      for (const selector of ["#q", "#watched", "#sort"]) {
+        const control = $(selector);
+        if (control) control.hidden = listsPage;
+      }
+      if (listsPage) $("#mobileFilterToggle").hidden = true;
+      const bookAreaNav = $("#bookAreaNav");
+      if (bookAreaNav) {
+        bookAreaNav.hidden = !bookTab;
+        for (const button of bookAreaNav.querySelectorAll("[data-book-view]")) {
+          const active = (listsPageOpen ? "lists" : "library") === button.dataset.bookView;
+          button.classList.toggle("active", active);
+          if (active) button.setAttribute("aria-current", "page");
+          else button.removeAttribute("aria-current");
+        }
+      }
       let bookPage = selectedBookID
         ? items.find(item => item.id === selectedBookID && item.kind === "audiobook" && !item.isPlaceholder)
         : null;
@@ -3764,6 +3824,7 @@
       document.body.classList.toggle("book-detail-mode", !!bookPage);
       $("#bookDetailPage").hidden = !bookPage;
       if (bookPage) {
+        if (bookAreaNav) bookAreaNav.hidden = true;
         document.body.classList.remove("storage-mode", "optimize-mode", "mobile-filters-open");
         $("#storagePanel").hidden = true;
         $("#optimizationPage").hidden = true;
@@ -3783,6 +3844,21 @@
       $("#storagePanel").hidden = !storage;
       renderReadingLists();
       $("#optimizationPage").hidden = !optimize;
+      if (listsPage) {
+        $("#filterRow").hidden = true;
+        updateMobileFilterToggle();
+        $("#continueRow").hidden = true;
+        $("#railsRow").hidden = true;
+        $("#movieCatalog").hidden = true;
+        $("#backRow").hidden = true;
+        $("#grid").hidden = true;
+        $("#seasonList").hidden = true;
+        $("#pager").hidden = true;
+        $("#storagePanel").hidden = true;
+        $("#optimizationPage").hidden = true;
+        $("#listsPanel").hidden = false;
+        return;
+      }
       $("#grid").hidden = storage || optimize;
       $("#pager").hidden = storage || optimize;
       $("#seasonList").hidden = storage || optimize;
@@ -4153,15 +4229,17 @@
         exportMissingList(btn.dataset.listId);
       }
       else if (act === "open-reading-list" && btn.dataset.listId) {
+        listsPageOpen = ["audiobooks", "books"].includes(activeTab);
         selectedListID = btn.dataset.listId;
         syncHash(true);
-        renderLists();
+        render();
         window.scrollTo({ top: 0, behavior: "smooth" });
       }
       else if (act === "back-to-lists") {
         selectedListID = null;
         syncHash(true);
-        renderLists();
+        listsPageOpen = ["audiobooks", "books"].includes(activeTab);
+        render();
         window.scrollTo({ top: 0, behavior: "smooth" });
       }
       else if (act === "add-list-item") {

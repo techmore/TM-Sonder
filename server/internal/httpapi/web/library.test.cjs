@@ -71,9 +71,30 @@ test('library shows its version and keeps audiobook layout in Settings', () => {
   assert.doesNotMatch(libraryHTML, /data-tab="lists"/);
   assert.match(libraryHTML, /id="movieCatalog" class="catalog-layout detail-collapsed"/);
   assert.match(libraryHTML, /id="movieDetailToggle"[^>]+aria-expanded="false">Expand/);
+  assert.match(libraryHTML, /id="bookAreaNav"[^>]*aria-label="Book library views"[\s\S]*?data-book-view="library"[\s\S]*?data-book-view="lists"/);
+  assert.match(libraryHTML, /id="listActionStatus"[^>]*role="status"[^>]*aria-live="polite"/);
   assert.match(libraryHTML, /id="pager"[\s\S]*id="listsPanel"/);
   assert.doesNotMatch(libraryHTML, /id="audiobookPlayerLink"/);
   assert.match(librarySource, /body\.audiobookLayout = document\.querySelector\("#audiobookLayoutSel"\)\.value/);
+  assert.match(librarySource, /activeTab === "audiobooks" \? "Audiobook lists"/);
+  assert.match(librarySource, /else if \(listsPageOpen\) parts\.push\("lists"\)/);
+});
+
+test('the book lists page offers one honest 100-title follow queue', () => {
+  const get = catalog([]);
+  assert.equal(get('TOP_100_BOOKS.length'), 100);
+  assert.deepEqual(
+    get('RECOMMENDED_LISTS.filter(list => list.titles.length === 100).map(list => list.name)'),
+    ['Sonder Top 100 Books to Read or Listen To'],
+  );
+  assert.match(librarySource, /Following saves an ordered queue in Sonder/);
+  assert.match(librarySource, /curatedKindsInPool\(recommendation\)/);
+  assert.deepEqual(get('curatedKindsInPool(CURATED_LISTS.find(list => list.entries.length === 100), ["audiobook"])'), ['audiobook']);
+  assert.equal(
+    get('recommendationForSavedList({ name: "legacy list", tags: ["recommended", "curated"], items: Array.from({ length: 67 }, (_, i) => ({ id: String(i), item: { kind: "audiobook" } })) }).name'),
+    'Sonder Top 100 Books to Read or Listen To',
+  );
+  assert.equal(get('isLegacyTop100List({ tags: ["recommended", "curated"], items: Array.from({ length: 25 }, () => ({ item: { kind: "movie" } })) })'), false);
 });
 
 test('TM Sonder brand copies the signed-in personal invite link on hold', () => {
@@ -561,12 +582,12 @@ test('a saved shelf offers to reopen itself instead of adding a duplicate', () =
   const get = shelfHarness([film('The Departed', 2006)], 'lists = [{ id: "l1", name: "Recent Award Winners" }];');
   // Nothing in this library is covered, so reach for the shelf object directly.
   const control = get('curatedShelfControl({ list: { id: "curated-0", name: "Recent Award Winners" } })');
-  assert.match(control, /Saved · open/);
+  assert.match(control, /Followed · open/);
   assert.match(control, /data-action="use-recommended-list"/);
   get('lists = []');
   assert.match(
     get('curatedShelfControl({ list: { id: "curated-0", name: "Recent Award Winners" } })'),
-    /Save shelf/,
+    /Follow list/,
   );
 });
 

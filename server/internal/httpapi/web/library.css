@@ -48,6 +48,11 @@
     }
     section.row { padding:6px 22px 0; }
     section.row h2 { font-size:15px; color:var(--muted); margin:10px 0 10px; text-transform:uppercase; letter-spacing:1px; }
+    .book-area-nav { display:flex; align-items:center; gap:6px; margin:10px 22px 0; padding:4px; width:max-content; max-width:calc(100% - 28px); border:1px solid var(--line); border-radius:10px; background:var(--panel); }
+    .book-area-nav button { min-height:36px; padding:7px 14px; border:0; border-radius:7px; background:transparent; color:var(--muted); cursor:pointer; font-weight:600; }
+    .book-area-nav button:hover { color:var(--text); }
+    .book-area-nav button.active { background:var(--accent); color:var(--accent-dark); }
+    .book-area-nav button:focus-visible { outline:2px solid var(--accent); outline-offset:2px; }
     .rail { display:flex; gap:14px; overflow-x:auto; padding-bottom:8px; scrollbar-width:thin; }
     main.grid {
       display:grid; grid-template-columns:repeat(auto-fill,minmax(165px,1fr));
@@ -312,6 +317,8 @@
       .catalog-layout.detail-collapsed .catalog-detail-head button { writing-mode:initial; padding:6px 9px; }
     }
     @media (max-width: 640px) {
+      .book-area-nav { margin:8px 14px 0; }
+      .book-area-nav button { min-height:38px; padding:8px 16px; }
       header { gap:8px; padding:12px 14px; }
       input[type="search"] { flex:1; }
       main.grid { grid-template-columns:repeat(auto-fill,minmax(128px,1fr)); gap:12px; padding:14px; }
@@ -564,6 +571,8 @@ body.optimize-mode #backRow { display:none !important; }
 .detail-link:hover { border-color:var(--accent); background:rgba(182,213,109,.1); }
 .lists-panel { padding:18px; }
 .lists-panel h2 { margin:0 0 5px; }
+.list-action-status { margin:10px 0; padding:10px 12px; border:1px solid var(--accent); border-radius:9px; background:var(--panel2); color:var(--text); }
+.list-action-status[hidden] { display:none; }
 .muted { color:var(--muted); }
 .reading-queue { margin:14px 0 24px; padding:16px; border:1px solid var(--accent); border-radius:13px; background:linear-gradient(145deg,var(--panel),var(--panel2)); }
 .reading-queue-head { display:flex; justify-content:space-between; align-items:center; gap:12px; }

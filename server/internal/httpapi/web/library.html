@@ -78,6 +78,11 @@
   </header>
   <main id="bookDetailPage" class="book-detail-page" aria-live="polite" aria-labelledby="bookDetailTitle" hidden></main>
 
+  <nav id="bookAreaNav" class="book-area-nav" aria-label="Book library views" hidden>
+    <button type="button" data-book-view="library" aria-current="page">Library</button>
+    <button type="button" data-book-view="lists">Lists</button>
+  </nav>
+
   <section class="row filter-row" id="filterRow" aria-label="Metadata filters" hidden>
     <div class="filter-head">
       <div id="filterModes" class="filter-modes" role="group" aria-label="Filter by"></div>
@@ -182,8 +187,9 @@
   <nav id="pager" class="pager" aria-label="Library pages"></nav>
 
   <section id="listsPanel" class="row lists-panel" hidden aria-live="polite">
-    <h2>Lists and curated shelves</h2>
-    <p class="muted">A title can appear in many lists. Each list keeps its own order and tags. Curated shelves below match the catalog you are browsing.</p>
+    <h2 id="listsTitle">Lists and curated shelves</h2>
+    <p id="listsIntro" class="muted">A title can appear in many lists. Each list keeps its own order and tags. Curated shelves below match the catalog you are browsing.</p>
+    <p id="listActionStatus" class="list-action-status" role="status" aria-live="polite" hidden></p>
     <form id="listCreateForm" class="list-create-form">
       <input id="newListName" required placeholder="New list name" aria-label="New list name">
       <input id="newListDescription" placeholder="Description" aria-label="List description">
