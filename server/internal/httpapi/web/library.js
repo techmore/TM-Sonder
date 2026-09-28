@@ -4,6 +4,8 @@
     let readingState = { queue: [], records: [] };
     const readingByID = new Map();
     let detailItemID = null;
+    let selectedBookID = null;
+    let bookPageReturnHash = "";
     // Curated-shelf candidate pools, keyed by sorted media kinds. Rebuilt when
     // the catalog or the copy grouping changes.
     const listCandidateState = new Map();
@@ -506,6 +508,7 @@
       clearPendingReadingSession(payload);
       renderReadingLists();
       if (detailItemID === record.itemID && $("#detail")?.open) openDetail(detailItemID, true);
+      if (selectedBookID) renderBookDetailByID(selectedBookID);
     }
     async function replayPendingReadingSessions() {
       for (const payload of pendingReadingSessions()) {
@@ -1326,6 +1329,7 @@
         updatedAt: new Date().toISOString(),
       };
       progressByID.set(targetID, checkpoint);
+      if (selectedBookID === item.id) renderBookProgress(item);
       savePendingProgress(checkpoint);
       fetch(api("/api/progress/" + targetID), {
         method: "POST", headers: { "Content-Type": "application/json" },
@@ -1395,6 +1399,7 @@
       if (typeof navigator !== "undefined" && "mediaSession" in navigator) {
         navigator.mediaSession.playbackState = playing ? "playing" : "paused";
       }
+      if (selectedBookID) updateBookDetailPlaybackButton();
     }
 
     // Position within the whole book, in seconds, and the book's total runtime.
@@ -3031,6 +3036,9 @@
       const parts = [activeTab];
       if (["audiobooks", "books"].includes(activeTab) && selectedListID) {
         parts.push("list", selectedListID);
+      }
+      if (selectedBookID) {
+        parts.push("book", selectedBookID);
       } else if (openShow) {
         parts.push("show", openShow);
         if (openSeason != null) parts.push("season", String(openSeason));
@@ -3055,9 +3063,14 @@
       openShow = null;
       openSeason = null;
       selectedListID = null;
+      selectedBookID = null;
+      bookPageReturnHash = "";
       currentPage = 1;
+      let tail = 1;
+      if (seg[1] === "list" && seg[2]) { selectedListID = seg[2]; tail = 3; }
+      if (seg[0] === "lists" && seg[1] === "list" && seg[2]) { selectedListID = seg[2]; tail = 3; }
+      if (seg[tail] === "book" && seg[tail + 1]) selectedBookID = seg[tail + 1];
       if (seg[1] === "show" && seg[2]) openShow = seg[2];
-      if (seg[0] === "lists" && seg[1] === "list" && seg[2]) selectedListID = seg[2];
       if (openShow && seg[3] === "season" && /^\d+$/.test(seg[4] || "")) openSeason = Number(seg[4]);
       else if (seg[1] === "page") currentPage = Math.max(1, parseInt(seg[2], 10) || 1);
       return true;
@@ -3067,7 +3080,7 @@
       if (!openShow) {
         $("#backRow").hidden = true;
         $("#seasonList").innerHTML = "";
-        if (document.title !== "TM Sonder") document.title = "TM Sonder";
+        if (!selectedBookID && document.title !== "TM Sonder") document.title = "TM Sonder";
       }
       render();
       if (activeTab === "optimize") {
@@ -3097,6 +3110,8 @@
 
     for (const b of document.querySelectorAll("#tabs button")) {
       b.addEventListener("click", () => {
+        selectedBookID = null;
+        bookPageReturnHash = "";
         currentPage = 1;
         setTab(b.dataset.tab);
         // Facets are tab-scoped, so a selection from another tab is stale.
@@ -3134,6 +3149,7 @@
       for (const record of readingState.records) readingByID.set(record.itemID, record);
       renderReadingLists();
       if (detailItemID && $("#detail")?.open) openDetail(detailItemID, true);
+      if (selectedBookID) renderBookDetailByID(selectedBookID);
       await replayPendingReadingSessions();
     }
 
@@ -3152,6 +3168,7 @@
       }
       renderReadingLists();
       if (detailItemID && $("#detail")?.open) openDetail(detailItemID, true);
+      if (selectedBookID) renderBookDetailByID(selectedBookID);
     }
 
     async function moveReadingQueue(index, direction) {
@@ -3176,7 +3193,7 @@
       shareURL.hash = "";
       shareURL.searchParams.set("book", canonicalID);
       const data = { title: item?.title || "TM Sonder book", text: item?.author ? `By ${item.author}` : "Open this book in TM Sonder", url: shareURL.toString() };
-      const status = $("#detailShareStatus");
+      const status = $("#bookDetailShareStatus") || $("#detailShareStatus");
       try {
         if (navigator.share) {
           if (status) status.textContent = "Opening share sheet…";
@@ -3736,6 +3753,31 @@
       const optimize = activeTab === "optimize";
       const coverFilter = $("#coverFilter");
       if (coverFilter) coverFilter.hidden = activeTab !== "audiobooks";
+      let bookPage = selectedBookID
+        ? items.find(item => item.id === selectedBookID && item.kind === "audiobook" && !item.isPlaceholder)
+        : null;
+      if (selectedBookID && !bookPage) {
+        selectedBookID = null;
+        bookPageReturnHash = "";
+        syncHash(false);
+      }
+      document.body.classList.toggle("book-detail-mode", !!bookPage);
+      $("#bookDetailPage").hidden = !bookPage;
+      if (bookPage) {
+        document.body.classList.remove("storage-mode", "optimize-mode", "mobile-filters-open");
+        $("#storagePanel").hidden = true;
+        $("#optimizationPage").hidden = true;
+        $("#continueRow").hidden = true;
+        $("#railsRow").hidden = true;
+        $("#movieCatalog").hidden = true;
+        $("#backRow").hidden = true;
+        $("#grid").hidden = true;
+        $("#seasonList").hidden = true;
+        $("#pager").hidden = true;
+        $("#listsPanel").hidden = true;
+        renderBookDetail(bookPage);
+        return;
+      }
       document.body.classList.toggle("storage-mode", storage);
       document.body.classList.toggle("optimize-mode", optimize);
       $("#storagePanel").hidden = !storage;
@@ -4062,6 +4104,7 @@
       const act = btn.dataset.action;
       if (act === "scan-storage") scanStorageNow();
       else if (act === "toggle-movie-detail") toggleMovieDetail();
+      else if (act === "back-book-page") closeBookPage();
       else if (act === "play-item" && btn.dataset.id) startPlaybackById(btn.dataset.id);
       else if (act === "expand-movie-shelf") { movieShelfExpanded = true; renderMovieCatalog(visibleItems()); }
       else if (act === "collapse-movie-shelf") { movieShelfExpanded = false; renderMovieCatalog(visibleItems()); }
@@ -4072,13 +4115,17 @@
         target?.click();
       }
       else if (act === "open-detail" && btn.dataset.id) openDetail(btn.dataset.id);
+      else if (act === "browse-author-books" && btn.dataset.id) {
+        const item = items.find(candidate => candidate.id === btn.dataset.id);
+        if (item) browseAuthorBooks(item);
+      }
       else if (act === "toggle-reading-queue" && btn.dataset.id) {
         setBookReadingFlag(btn.dataset.id, "queued", !readingState.queue.includes(btn.dataset.id))
-          .catch(error => { const status = $("#detailShareStatus"); if (status) status.textContent = error.message || "Could not update queue"; });
+          .catch(error => { const status = $("#bookDetailShareStatus") || $("#detailShareStatus"); if (status) status.textContent = error.message || "Could not update queue"; });
       }
       else if (act === "toggle-book-like" && btn.dataset.id) {
         setBookReadingFlag(btn.dataset.id, "liked", !readingByID.get(btn.dataset.id)?.likedAt)
-          .catch(error => { const status = $("#detailShareStatus"); if (status) status.textContent = error.message || "Could not update like"; });
+          .catch(error => { const status = $("#bookDetailShareStatus") || $("#detailShareStatus"); if (status) status.textContent = error.message || "Could not update like"; });
       }
       else if (act === "share-book" && btn.dataset.id) shareBook(btn.dataset.id);
       else if (act === "move-reading-queue") {
@@ -4185,6 +4232,8 @@
     }
 
     function applyFacetFilter(key, value) {
+      selectedBookID = null;
+      bookPageReturnHash = "";
       activeFacet = key;
       selectedFacetValues.clear();
       selectedFacetValues.add(String(value).toLowerCase());
@@ -4196,12 +4245,241 @@
       closeDetail();
       renderFacets();
       render();
+      syncHash(true);
+      window.scrollTo({ top: 0, behavior: "smooth" });
+    }
+
+    function booksInSameSeries(item) {
+      const series = foldDiacritics(String(item?.series || "").trim()).toLowerCase();
+      if (!series) return [];
+      const ownKey = itemGroupKey.get(item.id) || copyKey(item);
+      const seen = new Set([ownKey]);
+      const orderOf = book => {
+        const position = Number(book.seriesNumber ?? book.seriesPosition);
+        return Number.isFinite(position) ? position : Number.POSITIVE_INFINITY;
+      };
+      return items.filter(book => book.kind === "audiobook" && !book.isPlaceholder &&
+          foldDiacritics(String(book.series || "").trim()).toLowerCase() === series)
+        .sort((a, b) => orderOf(a) - orderOf(b) || (a.title || "").localeCompare(b.title || ""))
+        .filter(book => {
+          const key = itemGroupKey.get(book.id) || copyKey(book);
+          if (seen.has(key)) return false;
+          seen.add(key);
+          return true;
+        }).slice(0, 12);
+    }
+
+    function bookProgressMarkup(item) {
+      const progress = progressForItem(item);
+      const parts = partsOf(item);
+      const total = Number(progress?.duration) || (parts
+        ? parts.reduce((sum, part) => sum + (Number(part.durationSeconds) || 0), 0)
+        : Number(item.durationSeconds) || 0);
+      const heard = Number(progress?.seconds) || 0;
+      const position = total > 0 ? Math.min(heard, total) : heard;
+      const percent = total > 0 ? Math.min(100, Math.round(position / total * 100)) : 0;
+      const finished = isWatched(progress, item);
+      const state = finished ? "Finished" : heard > 5 ? "In progress" : "Not started";
+      const left = heard > 5 ? `${formatTime(position)} listened` : "No listening progress yet";
+      const right = total > 0 ? `of ${formatTime(total)}` : "Total length unavailable";
+      const updated = progress?.updatedAt ? new Date(progress.updatedAt) : null;
+      const updatedLabel = updated && !Number.isNaN(updated.getTime())
+        ? `Last listened ${updated.toLocaleDateString(undefined, { month: "short", day: "numeric", year: "numeric" })}`
+        : "Progress syncs with your account";
+      return `<section id="bookDetailProgress" class="book-detail-progress" aria-label="Your listening progress">
+        <div class="book-detail-progress-head"><span>Your progress</span><strong>${escapeHTML(state)}${total > 0 ? ` · ${percent}%` : ""}</strong></div>
+        <div class="book-detail-progress-track" role="progressbar" aria-label="Book progress" aria-valuemin="0" aria-valuemax="100" aria-valuenow="${percent}"><span style="width:${percent}%"></span></div>
+        <p class="book-detail-progress-note"><span>${escapeHTML(left)}</span><span>${escapeHTML(right)}</span></p>
+        <p class="book-detail-progress-note"><span>${escapeHTML(updatedLabel)}</span><span>${parts ? `${parts.length} parts` : ""}</span></p>
+      </section>`;
+    }
+
+    function bookPlaybackState(item) {
+      const progress = progressForItem(item);
+      const parts = partsOf(item);
+      const active = nowPlayingItem?.id === item.id;
+      const media = active ? npMedia() : null;
+      const playing = !!(media && !media.paused && !media.ended);
+      let partIndex = 0;
+      let position = 0;
+      if (parts) {
+        partIndex = active && nowPlayingParts ? nowPlayingPartIndex : resumePartIndex(parts);
+        const record = progressByID.get(parts[partIndex]?.id);
+        position = Number(record?.seconds) || 0;
+        if (active && nowPlayingParts && media && Number.isFinite(media.currentTime)) position = media.currentTime;
+      } else {
+        position = Number(progressByID.get(item.id)?.seconds) || 0;
+        if (active && media && Number.isFinite(media.currentTime)) position = media.currentTime;
+      }
+      const note = parts && parts.length > 1
+        ? `Part ${partIndex + 1} of ${parts.length}${position > 5 ? ` · ${formatTime(position)}` : ""}`
+        : position > 5 ? `At ${formatTime(position)}` : "";
+      const label = playing ? "Pause listening"
+        : isWatched(progress, item) ? "Listen again"
+          : Number(progress?.seconds) > 5 ? "Resume listening" : "Start listening";
+      return { label, note, playing };
+    }
+
+    function renderBookProgress(item) {
+      const host = $("#bookDetailProgress");
+      if (host) host.outerHTML = bookProgressMarkup(item);
+    }
+
+    function updateBookDetailPlaybackButton() {
+      const item = items.find(candidate => candidate.id === selectedBookID);
+      const button = $("#bookDetailResume");
+      if (!item || !button) return;
+      const state = bookPlaybackState(item);
+      button.textContent = state.label;
+      button.setAttribute("aria-label", `${state.label}: ${item.title}`);
+      const note = $("#bookDetailResumeNote");
+      if (note) note.textContent = state.note;
+    }
+
+    function renderBookDetailByID(id) {
+      const item = items.find(candidate => candidate.id === id && candidate.kind === "audiobook");
+      if (item) renderBookDetail(item);
+    }
+
+    function renderBookDetail(item) {
+      const host = $("#bookDetailPage");
+      if (!host || !item) return;
+      const title = item.title || "Untitled audiobook";
+      const poster = item.posterURL
+        ? `<img src="${escapeHTML(api(item.posterURL))}" alt="Cover of ${escapeHTML(title)}">`
+        : `<span class="book-detail-cover-empty" aria-hidden="true">${escapeHTML(title.slice(0, 1).toUpperCase() || "B")}</span>`;
+      const facts = [
+        item.year ? `<span class="book-detail-fact">${escapeHTML(String(item.year))}</span>` : "",
+        runtimeLabel(item) ? `<span class="book-detail-fact">${escapeHTML(runtimeLabel(item))}</span>` : "",
+        item.seriesNumber ? `<span class="book-detail-fact">Book ${escapeHTML(String(item.seriesNumber))} in series</span>` : "",
+        partsOf(item) ? `<span class="book-detail-fact">${partsOf(item).length} audio parts</span>` : "",
+      ].filter(Boolean).join("");
+      const series = String(item.series || "").trim();
+      const related = booksInSameSeries(item);
+      const seriesHTML = series ? `<section class="book-series-section" aria-label="Books in ${escapeHTML(series)}">
+        <h3>More in ${escapeHTML(series)}</h3>
+        <p>${related.length ? "Continue the series in order, or choose another book from the shelf." : "No other books from this series are indexed yet."}</p>
+        ${related.length ? `<div class="book-series-grid catalog-shelf">${related.map(book => cardHTML(book)).join("")}</div>` : ""}
+      </section>` : "";
+      const genres = (Array.isArray(item.genres) ? item.genres : []).filter(Boolean).slice(0, 8);
+      const tags = (Array.isArray(item.tags) ? item.tags : []).filter(Boolean).slice(0, 12);
+      const genreTags = genres.map(genre => `<span class="tag">${escapeHTML(genre)}</span>`).join("");
+      const regularTags = tags.map(tag => `<span class="tag">${escapeHTML(tag)}</span>`).join("");
+      const recordID = readingRecordID(item);
+      const readingRecord = readingByID.get(recordID);
+      const queued = readingState.queue.includes(recordID);
+      const liked = !!readingRecord?.likedAt;
+      const plan = playbackPlan(item);
+      const playState = bookPlaybackState(item);
+      const details = [
+        item.author ? `<div><strong>Author</strong><span>${escapeHTML(item.author)}</span></div>` : "",
+        item.narrator ? `<div><strong>Narrated by</strong><span>${escapeHTML(item.narrator)}</span></div>` : "",
+        series ? `<div><strong>Series</strong><span>${escapeHTML(series)}${item.seriesNumber ? ` · Book ${escapeHTML(String(item.seriesNumber))}` : ""}</span></div>` : "",
+        item.year ? `<div><strong>Published</strong><span>${escapeHTML(String(item.year))}</span></div>` : "",
+        item.format ? `<div><strong>Audio format</strong><span>.${escapeHTML(String(item.format).toUpperCase())}</span></div>` : "",
+      ].filter(Boolean).join("");
+
+      host.innerHTML = `
+        <div class="book-detail-nav"><button type="button" data-action="back-book-page" aria-label="Back to library">← Library</button><span>${escapeHTML(kindLabel(item.kind))}</span></div>
+        <section class="book-detail-hero" aria-labelledby="bookDetailTitle">
+          <div class="book-detail-cover">${poster}</div>
+          <div class="book-detail-copy">
+            <p class="book-detail-kicker">Your audiobook</p>
+            <h2 id="bookDetailTitle">${escapeHTML(title)}</h2>
+            ${item.subtitle ? `<p class="book-detail-subtitle">${escapeHTML(item.subtitle)}</p>` : ""}
+            ${item.author ? `<p class="book-detail-byline">By <button class="book-author-tag" type="button" data-action="browse-author-books" data-id="${escapeHTML(item.id)}" aria-label="See more books by ${escapeHTML(item.author)}">${escapeHTML(item.author)}</button></p>` : ""}
+            ${facts ? `<div class="book-detail-facts" aria-label="Book details">${facts}</div>` : ""}
+            ${bookProgressMarkup(item)}
+            <div class="book-detail-actions">
+              ${plan ? `<button id="bookDetailResume" type="button" class="book-resume-button" data-action="play-item" data-id="${escapeHTML(item.id)}" aria-label="${escapeHTML(playState.label)}: ${escapeHTML(title)}">${escapeHTML(playState.label)}</button><span id="bookDetailResumeNote" class="muted">${escapeHTML(playState.note)}</span>` : `<a class="book-resume-button" href="${api("/stream/" + item.id)}" target="_blank" rel="noopener">Open in a player</a>`}
+            </div>
+            <div class="book-actions" aria-label="Book actions">
+              <button type="button" data-action="toggle-reading-queue" data-id="${escapeHTML(recordID)}" aria-pressed="${queued}">${queued ? "✓ In reading queue" : "+ Add to reading queue"}</button>
+              <button type="button" data-action="toggle-book-like" data-id="${escapeHTML(recordID)}" aria-pressed="${liked}">${liked ? "♥ Liked" : "♡ Like"}</button>
+              <button type="button" data-action="share-book" data-id="${escapeHTML(recordID)}">Share link</button>
+              <span id="bookDetailShareStatus" class="book-detail-status" role="status" aria-live="polite"></span>
+            </div>
+          </div>
+        </section>
+        ${details ? `<section class="book-detail-meta" aria-label="About this book">${details}</section>` : ""}
+        ${item.summary ? `<section class="book-detail-description"><h3>About this book</h3><p class="summary">${escapeHTML(item.summary)}</p></section>` : ""}
+        ${genreTags || regularTags ? `<div class="book-detail-tags" aria-label="Book tags">${genreTags}${regularTags}</div>` : ""}
+        ${readHistoryHTML(readingRecord) ? `<div class="book-detail-history">${readHistoryHTML(readingRecord)}</div>` : ""}
+        ${seriesHTML}`;
+      document.title = `${title} · TM Sonder`;
+    }
+
+    function openBookPage(item) {
+      if (!item || item.kind !== "audiobook") return;
+      const url = new URL(location.href);
+      if (url.searchParams.has("book")) {
+        url.searchParams.delete("book");
+        history.replaceState(null, "", `${url.pathname}${url.search}${url.hash}`);
+      }
+      if (!location.hash) {
+        history.replaceState(null, "", `${location.pathname}${location.search}#${activeTab}`);
+      }
+      bookPageReturnHash = location.hash || `#${activeTab}`;
+      if ($("#detail")?.open) $("#detail").close();
+      detailItemID = null;
+      selectedBookID = item.id;
+      render();
+      syncHash(true);
+      window.scrollTo({ top: 0 });
+    }
+
+    function closeBookPage() {
+      if (!selectedBookID) return;
+      const returnHash = bookPageReturnHash;
+      bookPageReturnHash = "";
+      if (returnHash && location.hash !== returnHash) {
+        history.back();
+        return;
+      }
+      selectedBookID = null;
+      document.title = "TM Sonder";
+      syncHash(false);
+      render();
+      window.scrollTo({ top: 0 });
+    }
+
+    function browseAuthorBooks(item) {
+      if (!item?.author) return;
+      const tab = item.kind === "ebook" ? "books" : "audiobooks";
+      selectedBookID = null;
+      bookPageReturnHash = "";
+      detailItemID = null;
+      selectedListID = null;
+      openShow = null;
+      openSeason = null;
+      currentPage = 1;
+      activeTab = tab;
+      activeFacet = "authors";
+      selectedFacetValues.clear();
+      selectedFacetValues.add(String(item.author).trim().toLowerCase());
+      facetQuery = "";
+      chipsExpanded = false;
+      genreCategory = null;
+      const query = $("#q"); if (query) query.value = "";
+      const watched = $("#watched"); if (watched) watched.value = "all";
+      const coverFilter = $("#coverFilter"); if (coverFilter) coverFilter.value = "all";
+      const facetSearch = $("#facetSearch"); if (facetSearch) facetSearch.value = "";
+      for (const button of document.querySelectorAll("#tabs button[data-tab]")) {
+        button.classList.toggle("active", button.dataset.tab === tab);
+      }
+      renderFacets();
+      render();
+      syncHash(true);
       window.scrollTo({ top: 0, behavior: "smooth" });
     }
 
     function openDetail(id, keepVideo) {
       const item = items.find(i => i.id === id);
       if (!item) return;
+      if (item.kind === "audiobook") {
+        openBookPage(item);
+        return;
+      }
       detailItemID = id;
       if (activeTab === "movies" && libraryLayout === "rails" && !$("#movieCatalog")?.hidden) {
         openMovieDetail(id);
