@@ -236,9 +236,9 @@
             <span class="np-progress-elapsed" id="npProgressElapsed">0:00</span>
           </span>
           <button type="button" class="np-scope-toggle" id="npScopeToggle" aria-pressed="false" aria-label="Switch progress scope" title="Switch between whole-book and chapter progress">
-            <span id="npScopeLabel">Whole book</span><span class="np-scope-chevron" aria-hidden="true">↔</span>
+            <span id="npScopeLabel">Book</span>
           </button>
-          <button type="button" class="np-time-toggle" id="npTimeToggle" aria-label="Cycle audiobook time display" title="Total time · tap to show time remaining">
+          <button type="button" class="np-time-toggle np-time-plain" id="npTimeToggle" aria-label="Cycle audiobook time display" title="Total time · tap to show time remaining">
             <span class="np-time-mode" id="npTimeModeLabel">TOTAL</span><span class="np-time-value" id="npTimeValue">0:00</span>
           </button>
         </div>
@@ -348,6 +348,19 @@
           <option value="rails">Rails (shelves + resume)</option><option value="classic">Classic (list)</option>
         </select>
       </label>
+      <label style="display:flex;gap:8px;align-items:center;margin-bottom:6px">
+        Time readout style:
+        <select id="playerTimeStyleSel" aria-label="Right-side audiobook time readout style" style="background:var(--panel2);border:1px solid var(--line);color:var(--text);border-radius:8px;padding:6px 10px">
+          <option value="plain">Plain text</option><option value="pill">Pill</option>
+        </select>
+      </label>
+      <label style="display:flex;gap:8px;align-items:center;margin-bottom:6px">
+        Chapter numbering:
+        <select id="chapterNumeralsSel" aria-label="Audiobook chapter numbering" style="background:var(--panel2);border:1px solid var(--line);color:var(--text);border-radius:8px;padding:6px 10px">
+          <option value="arabic">Arabic · 1, 2, 3</option><option value="roman">Roman · I, II, III</option>
+        </select>
+      </label>
+      <p style="color:var(--muted);font-size:11.5px;margin:2px 0 10px">Player display choices save in this browser. Tap the right-side time readout to cycle Total, Left, and ETA.</p>
       <label style="display:flex;gap:8px;align-items:center;margin-bottom:6px">
         <input type="checkbox" id="hideEmptyLibraries" checked>
         Hide empty library tabs

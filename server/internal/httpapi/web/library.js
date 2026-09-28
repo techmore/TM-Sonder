@@ -587,9 +587,45 @@
 
     let npProgressScope = readPlayerPreference("sonder.player.progressScope", "book", ["book", "section"]);
     let npTimeDisplay = readPlayerPreference("sonder.player.timeDisplayMode", "total", ["total", "remaining", "eta"]);
+    let npTimeReadoutStyle = readPlayerPreference("sonder.player.timeReadoutStyle", "plain", ["plain", "pill"]);
+    let npChapterNumerals = readPlayerPreference("sonder.player.chapterNumerals", "arabic", ["arabic", "roman"]);
 
     function savePlayerPreference(key, value) {
       try { localStorage.setItem(key, value); } catch { /* storage may be disabled */ }
+    }
+
+    function setPlayerTimeReadoutStyle(style) {
+      npTimeReadoutStyle = style === "pill" ? "pill" : "plain";
+      savePlayerPreference("sonder.player.timeReadoutStyle", npTimeReadoutStyle);
+      renderPlaybackProgress(bookTimeline());
+    }
+
+    function setPlayerChapterNumerals(style) {
+      npChapterNumerals = style === "roman" ? "roman" : "arabic";
+      savePlayerPreference("sonder.player.chapterNumerals", npChapterNumerals);
+      renderPlaybackProgress(bookTimeline());
+    }
+
+    function formatChapterNumber(value) {
+      const number = Math.trunc(Number(value));
+      if (!Number.isSafeInteger(number) || number < 1) return String(value);
+      if (npChapterNumerals !== "roman" || number > 3999) return String(number);
+      const digits = [[1000,"M"],[900,"CM"],[500,"D"],[400,"CD"],[100,"C"],[90,"XC"],[50,"L"],[40,"XL"],[10,"X"],[9,"IX"],[5,"V"],[4,"IV"],[1,"I"]];
+      let remaining = number, numeral = "";
+      for (const [value, symbol] of digits) {
+        while (remaining >= value) { numeral += symbol; remaining -= value; }
+      }
+      return numeral;
+    }
+
+    function playbackScopeValue(section) {
+      if (section?.kind === "chapter") {
+        return `${formatChapterNumber(section.chapter.index)} of ${formatChapterNumber(nowPlayingChapters.length)}`;
+      }
+      if (section?.kind === "part") return `${nowPlayingPartIndex + 1} of ${nowPlayingParts.length}`;
+      if (nowPlayingChaptersAvailable && nowPlayingChapters.length) return formatChapterNumber(nowPlayingChapters.length);
+      if (nowPlayingParts?.length > 1) return String(nowPlayingParts.length);
+      return "Book";
     }
 
     function npMedia() { return $("#npMedia"); }
@@ -811,7 +847,7 @@
       const chapter = currentBookChapter(tl);
       if (chapter) {
         return {
-          kind: "chapter", label: `Chapter ${chapter.index} of ${nowPlayingChapters.length}`,
+          kind: "chapter", label: `Chapter ${formatChapterNumber(chapter.index)} of ${formatChapterNumber(nowPlayingChapters.length)}`,
           start: chapter.startSeconds, end: chapter.endSeconds, chapter,
         };
       }
@@ -844,7 +880,7 @@
       const chapter = currentBookChapter(tl);
       if (chapter) {
         const part = nowPlayingParts?.length > 1 ? ` · Part ${chapter.partIndex} of ${nowPlayingParts.length}` : "";
-        return `Chapter ${chapter.index} of ${nowPlayingChapters.length}${part}`;
+        return `Chapter ${formatChapterNumber(chapter.index)} of ${formatChapterNumber(nowPlayingChapters.length)}${part}`;
       }
       if (bookPartLabel()) return bookPartLabel();
       if (nowPlayingChapters === null) return "Loading chapters…";
@@ -924,10 +960,8 @@
       if (scopeButton && scopeLabel) {
         scopeButton.disabled = !section;
         scopeLabel.textContent = selectedSection
-          ? section.label
-          : nowPlayingChaptersAvailable && nowPlayingChapters.length
-            ? `Book · ${nowPlayingChapters.length} chapters`
-            : "Whole book";
+          ? playbackScopeValue(section)
+          : playbackScopeValue(null);
         scopeButton.setAttribute("aria-pressed", selectedSection ? "true" : "false");
         scopeButton.setAttribute("aria-label", selectedSection
           ? `Showing ${section.label.toLowerCase()} progress. Switch to whole-book progress.`
@@ -943,6 +977,9 @@
         }
       }
       if (timeButton && timeModeLabel && timeValue) {
+        timeButton.dataset.displayStyle = npTimeReadoutStyle;
+        timeButton.classList.toggle("np-time-plain", npTimeReadoutStyle === "plain");
+        timeButton.classList.toggle("np-time-pill", npTimeReadoutStyle === "pill");
         timeModeLabel.textContent = playbackTimeModeLabel();
         timeValue.textContent = playbackTimeValue(view);
         const scopeName = selectedSection ? section.label.toLowerCase() : "whole book";
@@ -1097,7 +1134,7 @@
       queue.hidden = false;
       if (title) {
         const chapterCount = nowPlayingChaptersAvailable ? nowPlayingChapters.length : 0;
-        title.textContent = `${nowPlayingParts.length} parts${chapterCount ? ` · ${chapterCount} chapters` : ""}`;
+        title.textContent = `${nowPlayingParts.length} parts${chapterCount ? ` · ${formatChapterNumber(chapterCount)} chapters` : ""}`;
       }
       if (toggle) {
         toggle.textContent = npQueueOpen ? "Hide list" : "Show list";
@@ -4323,6 +4360,8 @@
       if (event.target.value !== "interface") document.querySelector("#networkInterface").value = "";
     });
     on("#themeSel", "change", event => applyTheme(event.target.value));
+    on("#playerTimeStyleSel", "change", event => setPlayerTimeReadoutStyle(event.target.value));
+    on("#chapterNumeralsSel", "change", event => setPlayerChapterNumerals(event.target.value));
     on("#libraryLayoutSel", "change", event => {
       applyLibraryLayout(event.target.value);
       render();
@@ -4487,6 +4526,8 @@
       document.querySelector("#themeSel").value = settingsData.themePreset || "earthy";
       document.querySelector("#libraryLayoutSel").value = settingsData.libraryLayout || "rails";
       document.querySelector("#audiobookLayoutSel").value = settingsData.audiobookLayout || "rails";
+      document.querySelector("#playerTimeStyleSel").value = npTimeReadoutStyle;
+      document.querySelector("#chapterNumeralsSel").value = npChapterNumerals;
       document.querySelector("#hideEmptyLibraries").checked = settingsData.hideEmptyLibraries !== false;
       const cache = settingsData.mediaCache || {};
       document.querySelector("#mediaCacheEnabled").checked = cache.enabled !== false;

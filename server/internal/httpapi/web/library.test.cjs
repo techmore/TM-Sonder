@@ -9,6 +9,7 @@ function catalog(items, progress = []) {
   // book-part tests need to drive them ("watched" / "unwatched").
   const fields = { q: '', watched: 'all', sort: 'title', coverFilter: 'all' };
   const nodes = new Map();
+  const preferences = new Map();
   const $ = sel => {
     const key = String(sel).replace(/^[#.]/, '');
     if (nodes.has(key)) return nodes.get(key);
@@ -37,9 +38,13 @@ function catalog(items, progress = []) {
     formatTime: value => String(value),
   } }, $, document: { createElement: () => ({ canPlayType: () => 'probably' }),
                      addEventListener(){}, querySelector: $, querySelectorAll(){ return []; },
-                     body: { classList: { add(){}, remove(){} } } },
+                     body: { classList: { add(){}, remove(){}, contains(){ return false; } } } },
     navigator: {}, setTimeout: () => 1, clearTimeout(){},
-    localStorage: { getItem: () => null, setItem(){}, removeItem(){} } });
+    localStorage: {
+      getItem: key => preferences.get(key) ?? null,
+      setItem: (key, value) => preferences.set(key, String(value)),
+      removeItem: key => preferences.delete(key),
+    } });
   let fakeNow = 0;
   context.performance = { now: () => fakeNow };
   context.fields = fields;
@@ -49,6 +54,7 @@ function catalog(items, progress = []) {
   vm.runInContext('items = input; for (const p of progress) progressByID.set(p.id, p); rebuildCopyGroups();', context);
   const evaluate = expression => JSON.parse(JSON.stringify(vm.runInContext(expression, context)));
   evaluate.setTime = value => { fakeNow = value; };
+  evaluate.preference = key => preferences.get(key) ?? null;
   return evaluate;
 }
 
@@ -272,14 +278,14 @@ function facetHarness(items, state = '') {
       nodes.set(key, {
         innerHTML: '', textContent: '', hidden: false, value: '', placeholder: '',
         classList: { toggle() {}, remove() {}, add() {}, contains: () => false },
-        querySelector: () => null, focus() {},
+        querySelector: () => null, focus() {}, setAttribute() {},
       });
     }
     return nodes.get(key);
   };
   const context = vm.createContext({ window: { Sonder: { escapeHTML: s => String(s) } } });
   vm.runInContext(source.slice(0, source.indexOf('    function seasonLabel')), context);
-  context.document = { querySelector: node };
+  context.document = { querySelector: node, body: { classList: { contains: () => false } } };
   context.input = items;
   vm.runInContext(`items = input; activeTab = "all"; ${state} renderFacets();`, context);
   const html = () => node('#metadataChips').innerHTML;
@@ -823,6 +829,7 @@ test('the centered timeline switches book/chapter scope and cycles three time mo
     const bookTime={mode:$("#npTimeModeLabel").textContent,value:$("#npTimeValue").textContent};
     const progressControlsVisible=!$("#npBookProgressControls").hidden;
     const legacyReadoutsHidden=$("#npLegacySeekReadouts").hidden;
+    const timeStyle=$("#npTimeToggle").dataset.displayStyle;
     togglePlaybackScope();
     const section=playbackProgressTimeline(bookTimeline());
     const chapterLabel=$("#npScopeLabel").textContent;
@@ -835,15 +842,15 @@ test('the centered timeline switches book/chapter scope and cycles three time mo
     const finishAt=playbackFinishAt(section,10000);
     togglePlaybackTimeDisplay();
     const cycledBack=$("#npTimeModeLabel").textContent;
-    return {bookLabel,bookTime,progressControlsVisible,legacyReadoutsHidden,chapterLabel,chapterElapsed,chapterTotal,chapterRemaining,chapterETA,finishAt,cycledBack,
+    return {bookLabel,bookTime,progressControlsVisible,legacyReadoutsHidden,timeStyle,chapterLabel,chapterElapsed,chapterTotal,chapterRemaining,chapterETA,finishAt,cycledBack,
       scope:section.scope,start:section.start,position:section.position,total:section.total,
       chapterContext:$("#npPartLabel").textContent};
   })()`);
   assert.deepEqual(result, {
-    bookLabel: 'Book · 3 chapters',
+    bookLabel: '3',
     bookTime: {mode:'Total',value:'300'},
-    progressControlsVisible: true, legacyReadoutsHidden: true,
-    chapterLabel: 'Chapter 2 of 3',
+    progressControlsVisible: true, legacyReadoutsHidden: true, timeStyle: 'plain',
+    chapterLabel: '2 of 3',
     chapterElapsed: '30',
     chapterTotal: {mode:'Total',value:'60'},
     chapterRemaining: {mode:'Left',value:'30'},
@@ -902,6 +909,10 @@ test('the audiobook player has readable timeline contrast and listening controls
   assert.match(libraryHTML, /id="npTimeModeLabel"/);
   assert.match(libraryHTML, /id="npTimeValue"/);
   assert.match(libraryHTML, /id="npBookProgressControls"/);
+  assert.match(libraryHTML, /id="playerTimeStyleSel"[\s\S]*?option value="pill"/);
+  assert.match(libraryHTML, /id="chapterNumeralsSel"[\s\S]*?option value="roman"/);
+  assert.match(libraryHTML, /class="np-time-toggle np-time-plain"/);
+  assert.doesNotMatch(libraryHTML, /class="np-scope-chevron"/);
   assert.match(libraryHTML, /class="np-progress-caption">ELAPSED<\/span>/);
   assert.match(libraryHTML, /aria-label="Elapsed time in the selected progress scope"/);
   assert.match(libraryHTML, /id="npMobileToggle"/);
@@ -912,6 +923,8 @@ test('the audiobook player has readable timeline contrast and listening controls
   assert.match(libraryHTML, /id="npSleepOverlay"/);
   const css = fs.readFileSync(`${__dirname}/library.css`, 'utf8');
   assert.match(css, /\.np-progress-position\s*\{[^}]*display:inline-flex/);
+  assert.match(css, /\.np-scope-toggle\s*\{[^}]*border:0;[^}]*background:transparent/);
+  assert.match(css, /\.np-time-toggle\.np-time-plain\s*\{[^}]*border:0;[^}]*background:transparent/);
   const techmoreAudioPlayer = css.match(/body\[data-theme="techmore"\] \.nowplaying\.np-audio-mode\s*\{[^}]*\}/)?.[0] || '';
   assert.match(techmoreAudioPlayer, /--text:#f7f5ee/);
   assert.match(techmoreAudioPlayer, /--muted:#c1cab9/);
@@ -934,6 +947,40 @@ test('the audiobook player has readable timeline contrast and listening controls
   assert.match(src, /on\("#npMobileToggle"/);
   assert.match(src, /on\("#npQueueList"/);
   assert.match(src, /if \(\!\(tl\.total > 0\) \|\| \(!tl\.multi && nowPlayingMode !== "audio"\)\)/);
+});
+
+test('audiobook chapter scope supports compact Arabic and Roman numeral labels', () => {
+  const get = catalog([part('p1', 'bk', 1, 100), part('p2', 'bk', 2, 200)]);
+  const result = get(`(() => {
+    nowPlayingItem=items[0]; nowPlayingMode="audio";
+    nowPlayingParts=partsOf(items[0]); nowPlayingPartIndex=1;
+    $("#npMedia").currentTime=30; $("#npMedia").duration=200;
+    nowPlayingChaptersAvailable=true;
+    nowPlayingChapters=[
+      {index:1,title:"Opening",partID:"p1",partIndex:1,startSeconds:0,endSeconds:100},
+      {index:2,title:"The Crossing",partID:"p2",partIndex:2,startSeconds:100,endSeconds:160},
+      {index:3,title:"Arrival",partID:"p2",partIndex:2,startSeconds:160,endSeconds:300},
+    ];
+    npProgressScope="section"; renderPlaybackProgress(bookTimeline());
+    const arabic=$("#npScopeLabel").textContent;
+    setPlayerTimeReadoutStyle("pill");
+    const pillStyle=$("#npTimeToggle").dataset.displayStyle;
+    setPlayerTimeReadoutStyle("plain");
+    const plainStyle=$("#npTimeToggle").dataset.displayStyle;
+    setPlayerChapterNumerals("roman");
+    const roman=$("#npScopeLabel").textContent;
+    const romanContext=$("#npPartLabel").textContent;
+    togglePlaybackScope();
+    const romanBook=$("#npScopeLabel").textContent;
+    return {arabic,pillStyle,plainStyle,roman,romanContext,romanBook,examples:[1,4,9,14,40,944,3999,4000].map(formatChapterNumber)};
+  })()`);
+  assert.deepEqual(result, {
+    arabic: '2 of 3', pillStyle: 'pill', plainStyle: 'plain',
+    roman: 'II of III', romanContext: 'Chapter II of III · Part 2 of 2 · 2003', romanBook: 'III',
+    examples: ['I','IV','IX','XIV','XL','CMXLIV','MMMCMXCIX','4000'],
+  });
+  assert.equal(get.preference('sonder.player.timeReadoutStyle'), 'plain');
+  assert.equal(get.preference('sonder.player.chapterNumerals'), 'roman');
 });
 
 test('AirPlay output appears only when available and opens the native picker', () => {
