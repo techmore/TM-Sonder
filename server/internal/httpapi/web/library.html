@@ -34,14 +34,12 @@
         aria-label, and .tab-label is hidden on small screens rather than the
         text being removed from the markup.
       -->
-      <button data-tab="all" class="active" aria-label="All"><span class="tab-ico" aria-hidden="true">✦</span><span class="tab-label">All</span></button>
+      <button data-tab="all" aria-label="All" hidden><span class="tab-ico" aria-hidden="true">✦</span><span class="tab-label">All</span></button>
       <button data-tab="movies" aria-label="Movies"><span class="tab-ico" aria-hidden="true">🎬</span><span class="tab-label">Movies</span></button>
       <button data-tab="tvshows" aria-label="TV Shows"><span class="tab-ico" aria-hidden="true">📺</span><span class="tab-label">TV Shows</span></button>
       <button data-tab="documentaries" aria-label="Documentaries"><span class="tab-ico" aria-hidden="true">🎥</span><span class="tab-label">Documentaries</span></button>
       <button data-tab="audiobooks" aria-label="Audiobooks"><span class="tab-ico" aria-hidden="true">🎧</span><span class="tab-label">Audiobooks</span></button>
       <button data-tab="books" aria-label="Books"><span class="tab-ico" aria-hidden="true">📚</span><span class="tab-label">Books</span></button>
-      <button data-tab="storage" aria-label="Storage"><span class="tab-ico" aria-hidden="true">💾</span><span class="tab-label">Storage</span></button>
-      <button data-tab="optimize" aria-label="Optimize"><span class="tab-ico" aria-hidden="true">⚡</span><span class="tab-label">Optimize</span></button>
     </nav>
     <input type="search" id="q" placeholder="Search titles and summaries…" aria-label="Search library">
     <div class="header-tools">
@@ -73,7 +71,12 @@
           <path stroke-linecap="round" stroke-linejoin="round" d="M7.217 10.907a2.25 2.25 0 1 0 0 2.186m0-2.186c.18.324.283.696.283 1.093s-.103.77-.283 1.093m0-2.186 9.566-5.314m-9.566 7.5 9.566 5.314m0 0a2.25 2.25 0 1 0 3.935 2.186 2.25 2.25 0 0 0-3.935-2.186Zm0-12.814a2.25 2.25 0 1 0 3.933-2.185 2.25 2.25 0 0 0-3.933 2.185Z" />
         </svg>
       </button>
-      <button id="settingsBtn" aria-label="Settings" title="Settings">⚙︎</button>
+      <button id="settingsBtn" aria-label="Settings" title="Settings">
+        <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.6" stroke="currentColor" aria-hidden="true" width="20" height="20">
+          <path stroke-linecap="round" stroke-linejoin="round" d="M10.5 3.75h3l.52 2.07a6.9 6.9 0 0 1 1.58.91l2.03-.66 1.5 2.6-1.51 1.53c.17.67.17 1.38 0 2.05l1.51 1.53-1.5 2.6-2.03-.66a6.9 6.9 0 0 1-1.58.91l-.52 2.07h-3l-.52-2.07a6.9 6.9 0 0 1-1.58-.91l-2.03.66-1.5-2.6 1.51-1.53a4.2 4.2 0 0 1 0-2.05L4.87 8.67l1.5-2.6 2.03.66a6.9 6.9 0 0 1 1.58-.91l.52-2.07Z" />
+          <circle cx="12" cy="11.22" r="2.35" />
+        </svg>
+      </button>
     </div>
   </header>
   <main id="bookDetailPage" class="book-detail-page" aria-live="polite" aria-labelledby="bookDetailTitle" hidden></main>
@@ -311,6 +314,17 @@
     <div class="modal-head"><strong id="settingsTitle">Settings</strong>
       <button onclick="document.getElementById('settingsDlg').close()" aria-label="Close">✕</button></div>
     <div class="modal-body">
+      <h3 style="margin:0 0 8px">Navigation &amp; tools</h3>
+      <label style="display:flex;gap:8px;align-items:center;margin-bottom:6px">
+        <input type="checkbox" id="showAllLibraryTab">
+        Show the combined All view in the main navigation
+      </label>
+      <p style="color:var(--muted);font-size:12px;margin:4px 0 10px">All is off by default. Turn it on to browse every media type together.</p>
+      <div class="actions" aria-label="Storage tools">
+        <button type="button" data-settings-tab="storage">Storage</button>
+        <button type="button" data-settings-tab="optimize">Optimize media</button>
+      </div>
+
       <h3 style="margin:0 0 8px">Libraries</h3>
       <div id="libRows"></div>
       <details style="margin:10px 0 16px" id="addLibDetails">

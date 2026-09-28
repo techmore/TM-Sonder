@@ -277,6 +277,7 @@
       border-radius:8px; padding:8px 14px; font-size:13px; cursor:pointer;
       display:flex; align-items:center; gap:7px;
     }
+    nav.tabs button[hidden] { display:none !important; }
     nav.tabs button.active { background:var(--accent); border-color:var(--accent); color:var(--accent-dark); font-weight:700; }
     section.season { margin:0 22px 18px; background:var(--panel); border:1px solid var(--line); border-radius:var(--radius); overflow:hidden; }
     section.season h2 { margin:0; padding:12px 16px; font-size:14px; letter-spacing:.6px; text-transform:uppercase; color:var(--muted); border-bottom:1px solid var(--line); }
@@ -371,6 +372,9 @@ body.book-detail-mode #listsPanel { display:none !important; }
   background: var(--panel); border: 1px solid var(--line); color: var(--text);
   border-radius: 8px; padding: 9px 11px; cursor: pointer;
 }
+#settingsBtn { display:inline-flex; align-items:center; justify-content:center; box-sizing:border-box; width:40px; height:40px; }
+#settingsBtn:hover { border-color:var(--accent); color:var(--accent); }
+#settingsBtn:focus-visible { outline:2px solid var(--accent); outline-offset:2px; }
 #inviteHeaderBtn { display:inline-flex; align-items:center; justify-content:center; }
 dialog#inviteDlg {
   width:min(520px, 92vw); max-height:90vh; border:1px solid var(--line); border-radius:14px;
@@ -1175,7 +1179,8 @@ body[data-theme="bunny"] .actions button.primary:disabled { opacity:.55; }
   }
   .header-tools::-webkit-scrollbar { display: none; }
   .header-tools > * { flex: 0 0 auto; min-height: 40px; }
-  #settingsBtn, #inviteHeaderBtn { padding: 8px 12px; }
+  #settingsBtn { padding:8px; }
+  #inviteHeaderBtn { padding:8px 12px; }
   .mobile-filter-toggle { display:inline-flex; min-height:40px; }
   body.storage-mode #mobileFilterToggle, body.optimize-mode #mobileFilterToggle,
   body.storage-mode #mobileSearchBtn, body.optimize-mode #mobileSearchBtn { display:none; }
@@ -1194,12 +1199,8 @@ body[data-theme="bunny"] .actions button.primary:disabled { opacity:.55; }
     scrollbar-width: none; -webkit-overflow-scrolling: touch;
   }
   nav.tabs::-webkit-scrollbar { display: none; }
-  /* Icons only, evenly divided across the full width.
-     With eight labelled tabs the bar was 567px wide inside a 393px viewport, so
-     it scrolled sideways and two sections were simply off-screen with no
-     affordance saying so. Equal flex shares fit all eight without scrolling,
-     which is also why the labels can go: the icon alone carries the meaning and
-     the accessible name stays on the button's aria-label. */
+  /* Icons only, evenly divided across the width; accessible names stay on each
+     button, and the optional All view can join without making the bar scroll. */
   nav.tabs { gap: 0; padding-left: 4px; padding-right: 4px; }
   nav.tabs button {
     flex: 1 1 0; min-width: 0; min-height: 48px; padding: 6px 2px;

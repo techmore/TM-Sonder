@@ -97,6 +97,7 @@ type Config struct {
 	ThemePreset           string     `json:"themePreset"`
 	LibraryLayout         string     `json:"libraryLayout"`
 	HideEmptyLibraries    bool       `json:"hideEmptyLibraries"`
+	ShowAllLibraryTab     bool       `json:"showAllLibraryTab"`
 	AudiobookLayout       string     `json:"audiobookLayout"`
 	MoviesLayout          string     `json:"moviesLayout"`
 	TVLayout              string     `json:"tvLayout"`
@@ -486,6 +487,7 @@ var templateBytes = []byte(`// TM Sonder Go server configuration.
   "themePreset": "earthy",
   "libraryLayout": "rails",
   "hideEmptyLibraries": true,
+  "showAllLibraryTab": false,
   "ffmpegPath": "ffmpeg",
   "ffprobePath": "ffprobe",
   "probeWorkers": 0,

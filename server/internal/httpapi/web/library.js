@@ -332,6 +332,7 @@
 
     let libraryLayout = "rails";
     let hideEmptyLibraries = true;
+    let showAllLibraryTab = false;
     function applyLibraryLayout(value) {
       libraryLayout = String(value || "rails").toLowerCase() === "classic" ? "classic" : "rails";
       if (typeof document === "undefined") return;
@@ -1722,6 +1723,7 @@
                         documentaries:"documentary", audiobooks:"audiobook",
                         books:"ebook" };
     const EMPTY_HIDABLE_TABS = ["movies", "tvshows", "documentaries", "audiobooks", "books"];
+    const MEDIA_LIBRARY_TABS = ["movies", "tvshows", "documentaries", "audiobooks", "books"];
 
     function populatedLibraryTabs(catalog = items) {
       const populated = new Set(["all", "storage", "optimize"]);
@@ -1739,6 +1741,13 @@
       return !!button?.hidden;
     }
 
+    function defaultLibraryTab() {
+      const populated = populatedLibraryTabs();
+      return MEDIA_LIBRARY_TABS.find(tab => populated.has(tab) && !tabIsHidden(tab)) ||
+        MEDIA_LIBRARY_TABS.find(tab => !tabIsHidden(tab)) ||
+        (showAllLibraryTab ? "all" : MEDIA_LIBRARY_TABS[0]);
+    }
+
     // Empty media kinds stay configured and available in Settings, but do not
     // occupy the primary navigation by default. Turning the preference off
     // restores every tab so an empty kind can still be opened while it is
@@ -1749,7 +1758,8 @@
       let activeTabReset = false;
       for (const button of document.querySelectorAll("#tabs button[data-tab]")) {
         const tab = button.dataset.tab;
-        const hide = hideEmptyLibraries && EMPTY_HIDABLE_TABS.includes(tab) && !populated.has(tab);
+        const hide = (tab === "all" && !showAllLibraryTab) ||
+          (hideEmptyLibraries && EMPTY_HIDABLE_TABS.includes(tab) && !populated.has(tab));
         button.hidden = hide;
         if (hide) {
           button.setAttribute("aria-hidden", "true");
@@ -1761,7 +1771,7 @@
         }
       }
       if (activeTabReset) {
-        activeTab = "all";
+        activeTab = defaultLibraryTab();
         openShow = null;
         openSeason = null;
         selectedListID = null;
@@ -3041,7 +3051,7 @@
       // Keep old #lists links useful after Lists moved into the reading tabs.
       const legacyListsTab = tabIsHidden("books") && !tabIsHidden("audiobooks") ? "audiobooks" : "books";
       const requestedTab = seg[0] === "lists" ? legacyListsTab : seg[0];
-      const tab = tabs.includes(requestedTab) && !tabIsHidden(requestedTab) ? requestedTab : "all";
+      const tab = tabs.includes(requestedTab) && !tabIsHidden(requestedTab) ? requestedTab : defaultLibraryTab();
       activeTab = tab;
       listsPageOpen = seg[0] === "lists" || (["audiobooks", "books"].includes(tab) && ["lists", "list"].includes(seg[1]));
       for (const b of document.querySelectorAll("#tabs button"))
@@ -3059,6 +3069,7 @@
       if (seg[1] === "show" && seg[2]) openShow = seg[2];
       if (openShow && seg[3] === "season" && /^\d+$/.test(seg[4] || "")) openSeason = Number(seg[4]);
       else if (seg[1] === "page") currentPage = Math.max(1, parseInt(seg[2], 10) || 1);
+      if (tab !== requestedTab) syncHash(false);
       return true;
     }
     window.addEventListener("popstate", () => {
@@ -3080,6 +3091,7 @@
     });
 
     function setTab(tab, keepShow=false) {
+      if (tab === "all" && !showAllLibraryTab) return;
       const previousTab = activeTab;
       activeTab = tab;
       document.body.classList.remove("mobile-filters-open");
@@ -3098,27 +3110,36 @@
       }
     }
 
+    function selectLibraryTab(tab) {
+      if (tab === "all" && !showAllLibraryTab) return;
+      selectedBookID = null;
+      bookPageReturnHash = "";
+      currentPage = 1;
+      setTab(tab);
+      // Facets are tab-scoped, so a selection from another tab is stale.
+      selectedFacetValues.clear();
+      facetQuery = "";
+      chipsExpanded = false;
+      genreCategory = null;
+      const search = $("#facetSearch");
+      if (search) search.value = "";
+      renderFacets();
+      render();
+      if (tab === "optimize") {
+        refreshOptimizationQueue();
+        refreshAudiobookJobs();
+      }
+      syncHash(true);
+      window.scrollTo({ top:0 });
+    }
+
     for (const b of document.querySelectorAll("#tabs button")) {
-      b.addEventListener("click", () => {
-        selectedBookID = null;
-        bookPageReturnHash = "";
-        currentPage = 1;
-        setTab(b.dataset.tab);
-        // Facets are tab-scoped, so a selection from another tab is stale.
-        selectedFacetValues.clear();
-        facetQuery = "";
-        chipsExpanded = false;
-        genreCategory = null;
-        const search = $("#facetSearch");
-        if (search) search.value = "";
-        renderFacets();
-        render();
-        if (b.dataset.tab === "optimize") {
-          refreshOptimizationQueue();
-          refreshAudiobookJobs();
-        }
-        syncHash(true);
-        window.scrollTo({ top:0 });
+      b.addEventListener("click", () => selectLibraryTab(b.dataset.tab));
+    }
+    for (const button of document.querySelectorAll("[data-settings-tab]")) {
+      button.addEventListener("click", () => {
+        document.querySelector("#settingsDlg").close();
+        selectLibraryTab(button.dataset.settingsTab);
       });
     }
 
@@ -4669,6 +4690,7 @@
     }).then(({ etag, data }) => {
       applyLibraryLayout(data.serverSettings?.libraryLayout || "rails");
       hideEmptyLibraries = data.serverSettings?.hideEmptyLibraries !== false;
+      showAllLibraryTab = data.serverSettings?.showAllLibraryTab === true;
       applyTheme(data.theme?.preset || "earthy");
       items = data.items ?? [];
       (data.progress ?? []).forEach(pr => progressByID.set(pr.itemID, pr));
@@ -4766,6 +4788,12 @@
       hideEmptyLibraries = event.target.checked;
       applyEmptyLibraryTabs();
       render();
+    });
+    on("#showAllLibraryTab", "change", event => {
+      showAllLibraryTab = event.target.checked;
+      applyEmptyLibraryTabs();
+      render();
+      syncHash(false);
     });
     on("#dataImportBtn", "click", () => $("#dataImportFile")?.click());
     on("#dataImportFile", "change", async e => {
@@ -4943,6 +4971,7 @@
         await loadCacheStatus();
         applyLibraryLayout(settingsData.libraryLayout || "rails");
         hideEmptyLibraries = settingsData.hideEmptyLibraries !== false;
+        showAllLibraryTab = settingsData.showAllLibraryTab === true;
         applyEmptyLibraryTabs();
         applyTheme(settingsData.themePreset || "earthy");
         pendingLibs = null; // fresh server state wins over stale edits
@@ -4980,6 +5009,7 @@
       document.querySelector("#playerTimeStyleSel").value = npTimeReadoutStyle;
       document.querySelector("#chapterNumeralsSel").value = npChapterNumerals;
       document.querySelector("#hideEmptyLibraries").checked = settingsData.hideEmptyLibraries !== false;
+      document.querySelector("#showAllLibraryTab").checked = settingsData.showAllLibraryTab === true;
       const cache = settingsData.mediaCache || {};
       document.querySelector("#mediaCacheEnabled").checked = cache.enabled !== false;
       document.querySelector("#mediaCacheMaxGiB").value = (Number(cache.maxBytes || 0) / (1024 ** 3)).toFixed(2);
@@ -5166,6 +5196,7 @@
       body.libraryLayout = document.querySelector("#libraryLayoutSel").value;
       body.audiobookLayout = document.querySelector("#audiobookLayoutSel").value;
       body.hideEmptyLibraries = document.querySelector("#hideEmptyLibraries").checked;
+      body.showAllLibraryTab = document.querySelector("#showAllLibraryTab").checked;
       const maxGiB = Number(document.querySelector("#mediaCacheMaxGiB").value);
       const minFreeGiB = Number(document.querySelector("#mediaCacheMinFreeGiB").value);
       if (!Number.isFinite(maxGiB) || maxGiB <= 0 || !Number.isFinite(minFreeGiB) || minFreeGiB < 0) {
@@ -5222,6 +5253,7 @@
       const data = await response.json();
       items = data.items ?? [];
       hideEmptyLibraries = data.serverSettings?.hideEmptyLibraries !== false;
+      showAllLibraryTab = data.serverSettings?.showAllLibraryTab === true;
       applyEmptyLibraryTabs();
       storageData = null;
       progressByID.clear();
@@ -5700,6 +5732,7 @@
         await loadCacheStatus();
         applyLibraryLayout(settingsData.libraryLayout || "rails");
         hideEmptyLibraries = settingsData.hideEmptyLibraries !== false;
+        showAllLibraryTab = settingsData.showAllLibraryTab === true;
         applyEmptyLibraryTabs();
         applyTheme(settingsData.themePreset || "earthy");
         renderSettings();

@@ -79,6 +79,7 @@ func (s *Server) serverSettings() api.ServerSettings {
 		ThemePreset:        s.cfg().ThemePreset,
 		LibraryLayout:      config.NormalizeLibraryLayout(s.cfg().LibraryLayout),
 		HideEmptyLibraries: s.cfg().HideEmptyLibraries,
+		ShowAllLibraryTab:  s.cfg().ShowAllLibraryTab,
 		RequiresPairing:    s.requiresPairing(),
 	}
 }

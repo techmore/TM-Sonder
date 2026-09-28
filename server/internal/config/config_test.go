@@ -24,6 +24,9 @@ func TestDefaults(t *testing.T) {
 	if !cfg.HideEmptyLibraries {
 		t.Errorf("hideEmptyLibraries = false, want true")
 	}
+	if cfg.ShowAllLibraryTab {
+		t.Errorf("showAllLibraryTab = true, want false by default")
+	}
 	if cfg.AudiobookLayout != DefaultAudiobookLayout {
 		t.Errorf("audiobookLayout = %q, want %q", cfg.AudiobookLayout, DefaultAudiobookLayout)
 	}

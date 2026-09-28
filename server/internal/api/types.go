@@ -172,6 +172,7 @@ type ServerSettings struct {
 	ThemePreset        string `json:"themePreset"`
 	LibraryLayout      string `json:"libraryLayout"`
 	HideEmptyLibraries bool   `json:"hideEmptyLibraries"`
+	ShowAllLibraryTab  bool   `json:"showAllLibraryTab"`
 	RequiresPairing    bool   `json:"requiresPairing"`
 }
 

@@ -80,6 +80,18 @@ test('library shows its version and keeps audiobook layout in Settings', () => {
   assert.match(librarySource, /else if \(listsPageOpen\) parts\.push\("lists"\)/);
 });
 
+test('All is optional in Settings and Storage/Optimize are Settings destinations', () => {
+  assert.match(libraryHTML, /data-tab="all"[^>]*hidden/);
+  assert.doesNotMatch(libraryHTML.slice(0, libraryHTML.indexOf('<input type="search" id="q"')), /data-tab="storage"|data-tab="optimize"/);
+  assert.match(libraryHTML, /id="settingsBtn"[^>]*>[\s\S]*?<svg/);
+  assert.match(libraryHTML, /id="showAllLibraryTab"/);
+  assert.match(libraryHTML, /data-settings-tab="storage"/);
+  assert.match(libraryHTML, /data-settings-tab="optimize"/);
+  assert.match(librarySource, /let showAllLibraryTab = false/);
+  assert.match(librarySource, /body\.showAllLibraryTab = document\.querySelector\("#showAllLibraryTab"\)\.checked/);
+  assert.match(librarySource, /showAllLibraryTab = data\.serverSettings\?\.showAllLibraryTab === true/);
+});
+
 test('the book lists page offers one honest 100-title follow queue', () => {
   const get = catalog([]);
   assert.equal(get('TOP_100_BOOKS.length'), 100);
@@ -830,8 +842,7 @@ test('a single-file book is not part-labelled', () => {
 test('the tab bar is icon-only on a phone but keeps its accessible names', () => {
   // Hiding the labels must not take the accessible name with them, so the text
   // lives in a .tab-label span and each button carries an aria-label.
-  for (const tab of ['all', 'movies', 'tvshows', 'documentaries', 'audiobooks',
-                     'books', 'storage', 'optimize']) {
+  for (const tab of ['all', 'movies', 'tvshows', 'documentaries', 'audiobooks', 'books']) {
     const re = new RegExp(`<button data-tab="${tab}"[^>]*aria-label="[^"]+"[^>]*>` +
                           `<span class="tab-ico" aria-hidden="true">`);
     assert.match(libraryHTML, re, `tab ${tab} needs an aria-label and an icon span`);
@@ -841,8 +852,7 @@ test('the tab bar is icon-only on a phone but keeps its accessible names', () =>
   const css = fs.readFileSync(`${__dirname}/library.css`, 'utf8');
   const phone = css.slice(css.indexOf('@media (max-width: 700px)'));
   assert.match(phone, /nav\.tabs \.tab-label \{ display: none; \}/);
-  // Equal shares, so all eight fit without the bar scrolling sideways. Two
-  // sections being off-screen with no affordance was the original complaint.
+  // Equal shares let the optional All tab join without the bar scrolling sideways.
   assert.match(phone, /nav\.tabs button \{\s*flex: 1 1 0;/);
 });
 

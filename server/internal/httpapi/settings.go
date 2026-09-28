@@ -33,6 +33,7 @@ type SettingsPayload struct {
 	ThemePreset        string            `json:"themePreset"`
 	LibraryLayout      string            `json:"libraryLayout"`
 	HideEmptyLibraries bool              `json:"hideEmptyLibraries"`
+	ShowAllLibraryTab  bool              `json:"showAllLibraryTab"`
 	AudiobookLayout    string            `json:"audiobookLayout"`
 	MoviesLayout       string            `json:"moviesLayout"`
 	TVLayout           string            `json:"tvLayout"`
@@ -73,6 +74,7 @@ func (s *Server) settingsPayload(includeToken bool) SettingsPayload {
 		ThemePreset:        s.cfg().ThemePreset,
 		LibraryLayout:      config.NormalizeLibraryLayout(s.cfg().LibraryLayout),
 		HideEmptyLibraries: s.cfg().HideEmptyLibraries,
+		ShowAllLibraryTab:  s.cfg().ShowAllLibraryTab,
 		AudiobookLayout:    config.NormalizeAudiobookLayout(s.cfg().AudiobookLayout),
 		MoviesLayout:       config.NormalizeMediaLayout(s.cfg().MoviesLayout),
 		TVLayout:           config.NormalizeMediaLayout(s.cfg().TVLayout),
@@ -144,6 +146,7 @@ type settingsUpdate struct {
 	ThemePreset        *string           `json:"themePreset"`
 	LibraryLayout      *string           `json:"libraryLayout"`
 	HideEmptyLibraries *bool             `json:"hideEmptyLibraries"`
+	ShowAllLibraryTab  *bool             `json:"showAllLibraryTab"`
 	AudiobookLayout    *string           `json:"audiobookLayout"`
 	MoviesLayout       *string           `json:"moviesLayout"`
 	TVLayout           *string           `json:"tvLayout"`
@@ -261,6 +264,9 @@ func (s *Server) handleSettingsPut(w http.ResponseWriter, r *http.Request) {
 		}
 		if upd.HideEmptyLibraries != nil {
 			next.HideEmptyLibraries = *upd.HideEmptyLibraries
+		}
+		if upd.ShowAllLibraryTab != nil {
+			next.ShowAllLibraryTab = *upd.ShowAllLibraryTab
 		}
 		if upd.AudiobookLayout != nil {
 			next.AudiobookLayout = config.NormalizeAudiobookLayout(*upd.AudiobookLayout)

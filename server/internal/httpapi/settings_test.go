@@ -49,6 +49,9 @@ func TestSettingsGetLoopbackIncludesToken(t *testing.T) {
 	if p["hideEmptyLibraries"] != true {
 		t.Errorf("default hide empty libraries = %v, want true", p["hideEmptyLibraries"])
 	}
+	if p["showAllLibraryTab"] != false {
+		t.Errorf("default show all library tab = %v, want false", p["showAllLibraryTab"])
+	}
 }
 
 func TestSettingsPutAddsLibraryAndRescans(t *testing.T) {
@@ -169,6 +172,36 @@ func TestSettingsPutPersistsHideEmptyLibraries(t *testing.T) {
 	}
 	if payload["hideEmptyLibraries"] != false {
 		t.Errorf("response hide empty libraries = %v, want false", payload["hideEmptyLibraries"])
+	}
+}
+
+func TestSettingsPutPersistsShowAllLibraryTab(t *testing.T) {
+	f := newFixture(t, nil)
+	path := filepath.Join(t.TempDir(), "server.json")
+	f.s.SetConfigPath(path)
+
+	req := httptest.NewRequest("PUT", "/api/settings", strings.NewReader(`{"showAllLibraryTab":true}`))
+	req.RemoteAddr = "127.0.0.1:1111"
+	req.Host = "127.0.0.1:8797"
+	rec := httptest.NewRecorder()
+	f.s.Handler().ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status %d: %s", rec.Code, rec.Body.String())
+	}
+	if !f.s.cfg().ShowAllLibraryTab {
+		t.Fatal("in-memory show all library tab remained disabled")
+	}
+	data, err := os.ReadFile(path)
+	if err != nil || !strings.Contains(string(data), `"showAllLibraryTab": true`) {
+		t.Fatalf("show all library tab not persisted: %v %s", err, data)
+	}
+
+	var payload map[string]any
+	if err := json.Unmarshal(rec.Body.Bytes(), &payload); err != nil {
+		t.Fatal(err)
+	}
+	if payload["showAllLibraryTab"] != true {
+		t.Errorf("response show all library tab = %v, want true", payload["showAllLibraryTab"])
 	}
 }
 
