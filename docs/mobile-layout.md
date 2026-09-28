@@ -31,13 +31,19 @@ state, click handling, and the hidden-empty-tab logic are untouched.
 > would have trapped the fixed tab bar inside the sticky header. The header gets
 > an opaque `--panel` background instead.
 
-**`.header-tools` wrapper.** The search field and the filter selects are wrapped
-in a `div.header-tools` that is `display: contents` on desktop — so the desktop
-header is byte-for-byte the same single flex row — and a single swipeable row on
-a phone.
+**Compact mobile header.** The title and version share a short top row with a
+search icon. Tapping the icon opens the full search field. Watched and sort
+controls stay in a swipeable tools row.
 
-**Facets as one swipeable row.** The chip wall becomes a horizontal scroller,
-with the same edge-fade affordance as the shelves.
+**Filters on demand.** A compact control shows the current facet (Genres by
+default) and its selection count. It opens the existing facet and genre
+category controls only when needed; chip values remain horizontally scrollable.
+
+**Books first.** On a phone, the Books tab puts the full book catalog before
+resume and curated shelves so titles appear near the top of the page.
+
+**Library consistency in Settings.** The read-only source-folder report lives
+under Settings with the library configuration.
 
 **Shelves snap.** `scroll-snap-type: x proximity` plus a mask that fades the
 trailing 34px, so a rail reads as "there is more this way" rather than a hard

@@ -13,8 +13,15 @@
 </head>
 <body data-theme="earthy" data-library-layout="rails">
   <header>
-    <h1 class="brand-lockup"><img src="/favicon.png?v=asset" alt="" aria-hidden="true"> TM <span>Sonder</span></h1>
-    <span class="app-version" id="appVersion" aria-label="TM Sonder version">v__SONDER_VERSION__</span>
+    <div class="mobile-brand-row">
+      <h1 class="brand-lockup"><img src="/favicon.png?v=asset" alt="" aria-hidden="true"> TM <span>Sonder</span></h1>
+      <span class="app-version" id="appVersion" aria-label="TM Sonder version">v__SONDER_VERSION__</span>
+      <button type="button" id="mobileSearchBtn" aria-label="Search library" aria-controls="q" aria-expanded="false" title="Search library">
+        <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" aria-hidden="true" width="22" height="22">
+          <path stroke-linecap="round" stroke-linejoin="round" d="m21 21-5.197-5.197m0 0A7.5 7.5 0 1 0 5.196 5.196a7.5 7.5 0 0 0 10.607 10.607Z" />
+        </svg>
+      </button>
+    </div>
     <nav class="tabs" id="tabs" aria-label="Library sections">
       <!--
         The label is a separate element so the phone layout can drop to icons
@@ -51,6 +58,11 @@
         <option value="series">Series order</option>
         <option value="recent">Recently watched</option>
       </select>
+      <button type="button" id="mobileFilterToggle" class="mobile-filter-toggle" aria-controls="filterRow" aria-expanded="false" hidden>
+        <span id="mobileFilterLabel">Genres</span>
+        <span id="mobileFilterCount" class="mobile-filter-count">All</span>
+        <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.7" aria-hidden="true" width="16" height="16"><path stroke-linecap="round" stroke-linejoin="round" d="m5 7.5 5 5 5-5"/></svg>
+      </button>
       <button id="inviteHeaderBtn" type="button" aria-label="Invite people" title="Invite people" hidden>
         <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" aria-hidden="true" width="20" height="20">
           <path stroke-linecap="round" stroke-linejoin="round" d="M7.217 10.907a2.25 2.25 0 1 0 0 2.186m0-2.186c.18.324.283.696.283 1.093s-.103.77-.283 1.093m0-2.186 9.566-5.314m-9.566 7.5 9.566 5.314m0 0a2.25 2.25 0 1 0 3.935 2.186 2.25 2.25 0 0 0-3.935-2.186Zm0-12.814a2.25 2.25 0 1 0 3.933-2.185 2.25 2.25 0 0 0-3.933 2.185Z" />
@@ -74,12 +86,6 @@
   </section>
 
   <section id="storagePanel" class="storage-panel" hidden aria-live="polite"></section>
-
-  <details class="row" id="libraryHealth" hidden>
-    <summary id="libraryHealthSummary">Library consistency</summary>
-    <p>Read-only checks of catalog source folders, not a complete disk inventory. Warnings need review, not automatic merging.</p>
-    <div id="libraryHealthIssues"></div>
-  </details>
 
   <section class="optimization-page" id="optimizationPage" hidden aria-labelledby="optimizationTitle">
     <div class="optimization-hero">
@@ -314,6 +320,12 @@
           </div>
           <datalist id="mounts"></datalist>
         </div>
+      </details>
+
+      <details class="library-health" id="libraryHealth" hidden>
+        <summary id="libraryHealthSummary">Library consistency</summary>
+        <p>Read-only checks of catalog source folders, not a complete disk inventory. Warnings need review, not automatic merging.</p>
+        <div id="libraryHealthIssues"></div>
       </details>
 
       <h3 style="margin:18px 0 8px">Appearance</h3>

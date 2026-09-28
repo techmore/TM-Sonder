@@ -268,6 +268,20 @@
     }
 
 [hidden] { display:none !important; }
+.mobile-brand-row { display: contents; }
+#mobileSearchBtn, .mobile-filter-toggle {
+  display:none; align-items:center; justify-content:center; gap:7px;
+  background:var(--panel); border:1px solid var(--line); color:var(--text);
+  border-radius:8px; padding:8px 10px; cursor:pointer; white-space:nowrap;
+}
+#mobileSearchBtn { width:40px; height:40px; padding:7px; }
+.mobile-filter-count { color:var(--muted); font-size:11px; }
+.mobile-filter-toggle.has-selection { border-color:var(--accent); color:var(--accent); }
+.library-health { margin:12px 0 18px; padding:12px; border:1px solid var(--line); border-radius:9px; background:var(--panel); }
+.library-health > summary { cursor:pointer; color:var(--text); font-weight:600; }
+.library-health > p, #libraryHealthIssues { color:var(--muted); font-size:12.5px; line-height:1.5; }
+.library-health > p { margin:9px 0; }
+.library-health #libraryHealthIssues p { margin:7px 0; }
 /* Header control cluster. `display: contents` keeps the desktop header one
    flex row exactly as before; the phone layout promotes it to a single
    swipeable row of its own. */
@@ -1036,9 +1050,12 @@ body[data-theme="bunny"] .actions button.primary:disabled { opacity:.55; }
     backdrop-filter: none; -webkit-backdrop-filter: none;
     background: var(--panel);
   }
-  h1 { font-size: 18px; letter-spacing: 0; }
-  .app-version { display: inline; margin-left: auto; font-size: 10px; }
-  input[type="search"] { flex: 1 1 auto; width: auto; width: 100%; min-height: 40px; }
+  .mobile-brand-row { display:flex; flex:1 1 100%; width:100%; align-items:center; gap:8px; min-width:0; }
+  .mobile-brand-row h1 { flex:1 1 auto; min-width:0; margin:0; font-size:16px; letter-spacing:0; }
+  .app-version { display:inline; margin-left:0; font-size:10px; }
+  #mobileSearchBtn { display:inline-flex; flex:0 0 40px; min-height:40px; }
+  header > #q { display:none; }
+  header.mobile-search-open > #q { display:block; flex:1 1 100%; width:100%; min-height:40px; }
   .header-tools {
     display: flex; flex: 1 1 100%; gap: 8px; align-items: center;
     overflow-x: auto; overflow-y: hidden; scrollbar-width: none;
@@ -1047,6 +1064,13 @@ body[data-theme="bunny"] .actions button.primary:disabled { opacity:.55; }
   .header-tools::-webkit-scrollbar { display: none; }
   .header-tools > * { flex: 0 0 auto; min-height: 40px; }
   #settingsBtn, #inviteHeaderBtn { padding: 8px 12px; }
+  .mobile-filter-toggle { display:inline-flex; min-height:40px; }
+  body.storage-mode #mobileFilterToggle, body.optimize-mode #mobileFilterToggle,
+  body.storage-mode #mobileSearchBtn, body.optimize-mode #mobileSearchBtn { display:none; }
+  body:not(.mobile-filters-open) #filterRow { display:none !important; }
+  body.mobile-filters-open #filterRow:not([hidden]) { display:flex !important; }
+  #railsBlocks { display:flex; flex-direction:column; }
+  #railsBlocks .book-catalog-rail { order:-1; }
 
   /* Bottom tab bar. */
   nav.tabs {

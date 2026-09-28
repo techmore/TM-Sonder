@@ -1929,6 +1929,19 @@
     // Open super-category in the Genres facet, or null for the category list.
     let genreCategory = null;
 
+    function updateMobileFilterToggle() {
+      const button = $("#mobileFilterToggle");
+      if (!button) return;
+      button.hidden = $("#filterRow")?.hidden !== false;
+      const label = FACET_LABEL[activeFacet] || "Filters";
+      const count = selectedFacetValues.size;
+      $("#mobileFilterLabel").textContent = label;
+      $("#mobileFilterCount").textContent = count ? String(count) : "All";
+      button.classList.toggle("has-selection", count > 0);
+      button.setAttribute("aria-expanded", String(document.body.classList.contains("mobile-filters-open")));
+      button.setAttribute("aria-label", `${label} filters, ${count ? `${count} selected` : "all values"}`);
+    }
+
     function facetValues(item, key) {
       switch (key) {
         case "genres": {
@@ -1996,6 +2009,7 @@
         modesHost.innerHTML = "";
         if ($("#chipsFooter")) { $("#chipsFooter").innerHTML = ""; $("#chipsFooter").hidden = true; }
         facetModesSignature = "";
+        updateMobileFilterToggle();
         return;
       }
 
@@ -2013,6 +2027,7 @@
       for (const key of [...selectedFacetValues]) {
         if (!values.has(key)) selectedFacetValues.delete(key);
       }
+      updateMobileFilterToggle();
       const label = (FACET_LABEL[activeFacet] || "values").toLowerCase();
       const search = $("#facetSearch"), clear = $("#facetClear");
       if (search) {
@@ -2176,6 +2191,20 @@
       selectedFacetValues.clear();
       renderFacets();
       render();
+    });
+
+    on("#mobileFilterToggle", "click", () => {
+      document.body.classList.toggle("mobile-filters-open");
+      updateMobileFilterToggle();
+    });
+    on("#mobileSearchBtn", "click", event => {
+      const header = event.currentTarget.closest("header");
+      const opened = header.classList.toggle("mobile-search-open");
+      event.currentTarget.setAttribute("aria-expanded", String(opened));
+      event.currentTarget.setAttribute("aria-label", opened ? "Hide library search" : "Search library");
+      event.currentTarget.title = opened ? "Hide library search" : "Search library";
+      if (opened) requestAnimationFrame(() => $("#q").focus());
+      else event.currentTarget.focus();
     });
 
     on("#coverFilter", "change", () => {
@@ -3016,6 +3045,7 @@
     function setTab(tab, keepShow=false) {
       const previousTab = activeTab;
       activeTab = tab;
+      document.body.classList.remove("mobile-filters-open");
       libraryShelfLimit = 96;
       if (tab !== previousTab) selectedListID = null;
       if (!keepShow) { openSeason = null; leaveShow(); }
@@ -3727,7 +3757,7 @@
         const curatedRails = (kinds, count = 2) => curatedShelves(kinds, count)
           .map(shelf => railStrip(shelf.list.name, curatedShelfSub(shelf), curatedShelfCards(shelf), curatedShelfControl(shelf)))
           .join("");
-        const fullShelf = (title, sub, cards, renderCard) => {
+        const fullShelf = (title, sub, cards, renderCard, extraClass = "") => {
           if (!cards.length) return "";
           const shown = cards.slice(0, libraryShelfLimit);
           const toggle = cards.length > shown.length
@@ -3735,7 +3765,7 @@
             : libraryShelfLimit > 96
               ? `<div class="catalog-more"><button type="button" data-action="collapse-library-shelf">Show less</button></div>`
               : "";
-          return `<section class="web-rail">${shelfHeading(title, sub)}
+          return `<section class="web-rail ${extraClass}">${shelfHeading(title, sub)}
             <div class="catalog-shelf">${shown.map(renderCard).join("")}</div>${toggle}</section>`;
         };
         const fresh = source => source
@@ -3781,10 +3811,14 @@
           const continueLabel = activeTab === "audiobooks" ? "Continue Listening" : activeTab === "books" ? "Continue Reading" : "Continue Watching";
           const upNextLabel = activeTab === "audiobooks" ? "Up Next" : activeTab === "books" ? "Next Reads" : "Unwatched Picks";
           const upNextSub = activeTab === "audiobooks" ? "unstarted titles from your shelves" : activeTab === "books" ? "unstarted books from your shelves" : "newest unwatched titles";
+          const fullLibrary = fullShelf(
+            `All ${tabLabel}`, `${visible.length.toLocaleString()} titles in your catalog`,
+            visible, cardHTML, activeTab === "books" ? "book-catalog-rail" : "",
+          );
           blocks = railStrip(continueLabel, `${cont.length} in progress`, cont.map(cardHTML)) +
                    railStrip(upNextLabel, upNextSub, picks.map(cardHTML)) +
                    curatedRails(tabCatalogKinds()) +
-                   fullShelf(`All ${tabLabel}`, `${visible.length.toLocaleString()} titles in your catalog`, visible, cardHTML);
+                   fullLibrary;
         }
         if (blocks) {
           document.querySelector("#railsBlocks").innerHTML = blocks;
