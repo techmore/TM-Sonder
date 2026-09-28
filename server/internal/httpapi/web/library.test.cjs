@@ -821,6 +821,8 @@ test('the centered timeline switches book/chapter scope and cycles three time mo
     renderPlaybackProgress(bookTimeline());
     const bookLabel=$("#npScopeLabel").textContent;
     const bookTime={mode:$("#npTimeModeLabel").textContent,value:$("#npTimeValue").textContent};
+    const progressControlsVisible=!$("#npBookProgressControls").hidden;
+    const legacyReadoutsHidden=$("#npLegacySeekReadouts").hidden;
     togglePlaybackScope();
     const section=playbackProgressTimeline(bookTimeline());
     const chapterLabel=$("#npScopeLabel").textContent;
@@ -833,13 +835,14 @@ test('the centered timeline switches book/chapter scope and cycles three time mo
     const finishAt=playbackFinishAt(section,10000);
     togglePlaybackTimeDisplay();
     const cycledBack=$("#npTimeModeLabel").textContent;
-    return {bookLabel,bookTime,chapterLabel,chapterElapsed,chapterTotal,chapterRemaining,chapterETA,finishAt,cycledBack,
+    return {bookLabel,bookTime,progressControlsVisible,legacyReadoutsHidden,chapterLabel,chapterElapsed,chapterTotal,chapterRemaining,chapterETA,finishAt,cycledBack,
       scope:section.scope,start:section.start,position:section.position,total:section.total,
       chapterContext:$("#npPartLabel").textContent};
   })()`);
   assert.deepEqual(result, {
     bookLabel: 'Book · 3 chapters',
     bookTime: {mode:'Total',value:'300'},
+    progressControlsVisible: true, legacyReadoutsHidden: true,
     chapterLabel: 'Chapter 2 of 3',
     chapterElapsed: '30',
     chapterTotal: {mode:'Total',value:'60'},
@@ -891,7 +894,7 @@ test('the lock screen gets the author, the narrator and the series', () => {
   assert.match(src, /album: item\.showTitle \|\| item\.series/);
 });
 
-test('the mobile player has readable contrast and listening controls', () => {
+test('the audiobook player has readable timeline contrast and listening controls', () => {
   assert.match(libraryHTML, /id="npEta"/);
   assert.match(libraryHTML, /id="npScopeToggle"/);
   assert.match(libraryHTML, /id="npTimeToggle"/);
@@ -899,6 +902,8 @@ test('the mobile player has readable contrast and listening controls', () => {
   assert.match(libraryHTML, /id="npTimeModeLabel"/);
   assert.match(libraryHTML, /id="npTimeValue"/);
   assert.match(libraryHTML, /id="npBookProgressControls"/);
+  assert.match(libraryHTML, /class="np-progress-caption">ELAPSED<\/span>/);
+  assert.match(libraryHTML, /aria-label="Elapsed time in the selected progress scope"/);
   assert.match(libraryHTML, /id="npMobileToggle"/);
   assert.match(libraryHTML, /id="npMobileKind"/);
   assert.match(libraryHTML, /id="npDetails"/);
@@ -906,6 +911,11 @@ test('the mobile player has readable contrast and listening controls', () => {
   assert.match(libraryHTML, /id="npQueueList"/);
   assert.match(libraryHTML, /id="npSleepOverlay"/);
   const css = fs.readFileSync(`${__dirname}/library.css`, 'utf8');
+  assert.match(css, /\.np-progress-position\s*\{[^}]*display:inline-flex/);
+  const techmoreAudioPlayer = css.match(/body\[data-theme="techmore"\] \.nowplaying\.np-audio-mode\s*\{[^}]*\}/)?.[0] || '';
+  assert.match(techmoreAudioPlayer, /--text:#f7f5ee/);
+  assert.match(techmoreAudioPlayer, /--muted:#c1cab9/);
+  assert.match(techmoreAudioPlayer, /--accent:#e6c57d/);
   const phone = css.slice(css.indexOf('@media (max-width: 700px)'));
   assert.match(phone, /body\.np-expanded \.nowplaying\.np-audio-mode \{[^}]*background:/);
   assert.match(phone, /body\.np-expanded \.np-title \{[^}]*color:var\(--np-fg\)/);

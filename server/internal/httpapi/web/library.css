@@ -632,6 +632,12 @@ body[data-theme="techmore"] .list-detail-header h2 { font-size:25px; }
 body[data-theme="techmore"] .list-entry-title { color:var(--accent); font-weight:600; }
 body[data-theme="techmore"] .list-missing { background:rgba(189,113,72,.1); border-color:rgba(189,113,72,.42); }
 body[data-theme="techmore"] .nowplaying { background:rgba(63,64,56,.96); border-top-color:#7d8c6b; }
+body[data-theme="techmore"] .nowplaying.np-audio-mode {
+  --text:#f7f5ee; --muted:#c1cab9; --accent:#e6c57d; --accent-dark:#20261d;
+  --panel:#232a22; --panel2:#2a352b; --line:#53634f;
+  --np-fg:#f7f5ee; --np-muted:#c1cab9; --np-highlight:#e6c57d;
+  color:var(--np-fg);
+}
 @media (max-width:640px) {
   body[data-theme="techmore"] header,
   body[data-theme="techmore"] section.row { padding-left:16px; padding-right:16px; }
@@ -750,8 +756,15 @@ body.np-visible { padding-bottom:116px; }
 }
 .np-seek-readouts[hidden], .np-book-progress[hidden] { display:none; }
 .np-time { color:var(--muted); font-size:12px; font-variant-numeric:tabular-nums; white-space:nowrap; }
+.np-progress-position {
+  grid-column:1; justify-self:start; display:inline-flex; align-items:baseline;
+  gap:6px; min-width:0; white-space:nowrap;
+}
+.np-progress-caption {
+  color:var(--muted); font-size:9px; font-weight:750; letter-spacing:.06em;
+}
 .np-progress-elapsed {
-  grid-column:1; justify-self:start; color:var(--muted); font-size:11px;
+  color:var(--text); font-size:12px; font-weight:650;
   font-variant-numeric:tabular-nums; white-space:nowrap;
 }
 /* Time left in the whole book. Kept separate from the elapsed/total pair
@@ -1024,7 +1037,7 @@ body[data-theme="bunny"] .actions button.primary:disabled { opacity:.55; }
     background: var(--panel);
   }
   h1 { font-size: 18px; letter-spacing: 0; }
-  .app-version { display: none; }
+  .app-version { display: inline; margin-left: auto; font-size: 10px; }
   input[type="search"] { flex: 1 1 auto; width: auto; width: 100%; min-height: 40px; }
   .header-tools {
     display: flex; flex: 1 1 100%; gap: 8px; align-items: center;

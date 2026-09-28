@@ -225,7 +225,10 @@
           <span class="np-eta" id="npEta" hidden></span>
         </div>
         <div class="np-book-progress" id="npBookProgressControls" hidden>
-          <span class="np-progress-elapsed" id="npProgressElapsed">0:00</span>
+          <span class="np-progress-position" aria-label="Elapsed time in the selected progress scope">
+            <span class="np-progress-caption">ELAPSED</span>
+            <span class="np-progress-elapsed" id="npProgressElapsed">0:00</span>
+          </span>
           <button type="button" class="np-scope-toggle" id="npScopeToggle" aria-pressed="false" aria-label="Switch progress scope" title="Switch between whole-book and chapter progress">
             <span id="npScopeLabel">Whole book</span><span class="np-scope-chevron" aria-hidden="true">↔</span>
           </button>
