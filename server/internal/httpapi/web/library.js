@@ -4351,6 +4351,46 @@
     let networkStatusData = null;
     let networkExposureApplying = false;
     let inviteReferralCount = 0;
+    const BRAND_INVITE_HOLD_MS = 650;
+    const brandInviteButton = document.querySelector("#brandInviteShare");
+    let brandInviteHoldTimer = null;
+    let brandInviteSuppressClick = false;
+    let brandInviteSuppressTimer = null;
+    let brandInviteToastTimer = null;
+    brandInviteButton.addEventListener("pointerdown", event => {
+      if (event.button !== 0) return;
+      clearTimeout(brandInviteHoldTimer);
+      clearTimeout(brandInviteSuppressTimer);
+      brandInviteSuppressClick = false;
+      brandInviteHoldTimer = setTimeout(() => {
+        brandInviteHoldTimer = null;
+        brandInviteSuppressClick = true;
+        void copyBrandInviteLink();
+      }, BRAND_INVITE_HOLD_MS);
+    });
+    const finishBrandInvitePress = () => {
+      clearTimeout(brandInviteHoldTimer);
+      brandInviteHoldTimer = null;
+      if (brandInviteSuppressClick) {
+        clearTimeout(brandInviteSuppressTimer);
+        brandInviteSuppressTimer = setTimeout(() => {
+          brandInviteSuppressClick = false;
+          brandInviteSuppressTimer = null;
+        }, 1000);
+      }
+    };
+    brandInviteButton.addEventListener("pointerup", finishBrandInvitePress);
+    brandInviteButton.addEventListener("pointercancel", finishBrandInvitePress);
+    brandInviteButton.addEventListener("contextmenu", event => event.preventDefault());
+    brandInviteButton.addEventListener("click", () => {
+      if (brandInviteSuppressClick) {
+        brandInviteSuppressClick = false;
+        clearTimeout(brandInviteSuppressTimer);
+        brandInviteSuppressTimer = null;
+        return;
+      }
+      void copyBrandInviteLink();
+    });
     document.querySelector("#settingsBtn").addEventListener("click", openSettings);
     document.querySelector("#applyNetworkExposureBtn").addEventListener("click", applyNetworkExposure);
     document.querySelector("#inviteHeaderBtn").addEventListener("click", openInviteDialog);
@@ -4460,6 +4500,68 @@
       }
     }
 
+    function showBrandInviteToast(message) {
+      const toast = document.querySelector("#brandInviteToast");
+      toast.textContent = message;
+      toast.hidden = false;
+      clearTimeout(brandInviteToastTimer);
+      brandInviteToastTimer = setTimeout(() => {
+        toast.hidden = true;
+        brandInviteToastTimer = null;
+      }, 3000);
+    }
+
+    async function writeTextToClipboard(value) {
+      let clipboardError = null;
+      if (navigator.clipboard?.writeText) {
+        try {
+          await navigator.clipboard.writeText(value);
+          return;
+        } catch (error) {
+          clipboardError = error;
+        }
+      }
+
+      const textarea = document.createElement("textarea");
+      textarea.value = value;
+      textarea.setAttribute("readonly", "");
+      textarea.style.position = "fixed";
+      textarea.style.top = "-1000px";
+      textarea.style.opacity = "0";
+      const previousFocus = document.activeElement;
+      document.body.appendChild(textarea);
+      textarea.focus();
+      textarea.select();
+      let copied = false;
+      try {
+        copied = typeof document.execCommand === "function" && document.execCommand("copy");
+      } finally {
+        textarea.remove();
+        previousFocus?.focus?.();
+      }
+      if (!copied) throw clipboardError || new Error("Clipboard access is unavailable");
+    }
+
+    async function copyBrandInviteLink() {
+      showBrandInviteToast("Preparing your personal invite link…");
+      let inviteLink = document.querySelector("#headerInviteLink").value || document.querySelector("#inviteLink").value;
+      if (!inviteLink) {
+        await loadInviteInfo();
+        inviteLink = document.querySelector("#headerInviteLink").value || document.querySelector("#inviteLink").value;
+      }
+      if (!inviteLink) {
+        const inviteStatus = document.querySelector("#headerInviteStatus").textContent;
+        showBrandInviteToast(inviteStatus || "Sign in to copy your personal invite link.");
+        return;
+      }
+      try {
+        await writeTextToClipboard(inviteLink);
+        showBrandInviteToast("Your personal invite link was copied.");
+      } catch {
+        showBrandInviteToast("Clipboard access was blocked. Open Invite people to copy your link.");
+      }
+    }
+
     async function copyInviteLink(inputSelector, statusSelector) {
       const input = document.querySelector(inputSelector);
       const status = document.querySelector(statusSelector);
@@ -4468,14 +4570,7 @@
         return;
       }
       try {
-        if (navigator.clipboard?.writeText) {
-          await navigator.clipboard.writeText(input.value);
-        } else {
-          input.focus();
-          input.select();
-          if (!document.execCommand("copy")) throw new Error("Clipboard access is unavailable");
-          input.setSelectionRange(0, 0);
-        }
+        await writeTextToClipboard(input.value);
         status.textContent = `Copied invite link · ${inviteReferralCount.toLocaleString()} ${inviteReferralCount === 1 ? "account" : "accounts"} joined.`;
       } catch (error) {
         status.textContent = error.message || "Could not copy invite link. Select the link and copy it manually.";

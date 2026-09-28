@@ -14,7 +14,7 @@
 <body data-theme="earthy" data-library-layout="rails">
   <header>
     <div class="mobile-brand-row">
-      <h1 class="brand-lockup"><img src="/favicon.png?v=asset" alt="" aria-hidden="true"> TM <span>Sonder</span></h1>
+      <h1 class="brand-lockup"><button type="button" class="brand-share-trigger" id="brandInviteShare" aria-label="Copy your personal invite link" title="Press and hold to copy your invite link"><img src="/favicon.png?v=asset" alt="" aria-hidden="true"> TM <span>Sonder</span></button></h1>
       <span class="app-version" id="appVersion" aria-label="TM Sonder version">v__SONDER_VERSION__</span>
       <a class="github-header-link" href="https://github.com/techmore/TM-Sonder" target="_blank" rel="noopener noreferrer" aria-label="TM Sonder on GitHub" title="TM Sonder on GitHub">
         <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true" width="20" height="20">
@@ -481,6 +481,8 @@
       </div>
     </div>
   </dialog>
+
+  <div id="brandInviteToast" class="brand-invite-toast" role="status" aria-live="polite" aria-atomic="true" hidden></div>
 
   <script src="/library.js?v=asset"></script>
 </body>

@@ -76,6 +76,53 @@ test('library shows its version and keeps audiobook layout in Settings', () => {
   assert.match(librarySource, /body\.audiobookLayout = document\.querySelector\("#audiobookLayoutSel"\)\.value/);
 });
 
+test('TM Sonder brand copies the signed-in personal invite link on hold', () => {
+  assert.match(libraryHTML, /id="brandInviteShare"[^>]*aria-label="Copy your personal invite link"[^>]*title="Press and hold to copy your invite link"/);
+  assert.match(libraryHTML, /id="brandInviteToast"[^>]*role="status"[^>]*aria-live="polite"/);
+  assert.match(librarySource, /const BRAND_INVITE_HOLD_MS = 650;/);
+  assert.match(librarySource, /brandInviteButton\.addEventListener\("pointerdown"/);
+  assert.match(librarySource, /async function copyBrandInviteLink\(\)/);
+  assert.match(librarySource, /await loadInviteInfo\(\);[\s\S]*?document\.querySelector\("#headerInviteLink"\)\.value/);
+  assert.match(librarySource, /inviteURL\.searchParams\.set\("ref", payload\.inviteCode\)/);
+});
+
+test('invite clipboard helper uses the async API and falls back if it is denied', async () => {
+  const helperStart = librarySource.indexOf('    async function writeTextToClipboard(value)');
+  const helperEnd = librarySource.indexOf('\n    async function copyBrandInviteLink()', helperStart);
+  assert.notEqual(helperStart, -1);
+  assert.notEqual(helperEnd, -1);
+  const helper = librarySource.slice(helperStart, helperEnd);
+  const inviteURL = 'https://stoverparc.org:8096/account/signup?ref=invite-example';
+
+  let clipboardValue = '';
+  const asyncContext = vm.createContext({
+    navigator: { clipboard: { writeText: async value => { clipboardValue = value; } } },
+    document: {},
+  });
+  await vm.runInContext(`${helper}\nwriteTextToClipboard(${JSON.stringify(inviteURL)})`, asyncContext);
+  assert.equal(clipboardValue, inviteURL);
+
+  let fallbackValue = '';
+  const textarea = {
+    value: '', style: {}, setAttribute() {}, focus() {}, select() {}, remove() {},
+  };
+  const fallbackContext = vm.createContext({
+    navigator: { clipboard: { writeText: async () => { throw new Error('permission denied'); } } },
+    document: {
+      activeElement: null,
+      body: { appendChild() {} },
+      createElement: () => textarea,
+      execCommand: command => {
+        assert.equal(command, 'copy');
+        fallbackValue = textarea.value;
+        return true;
+      },
+    },
+  });
+  await vm.runInContext(`${helper}\nwriteTextToClipboard(${JSON.stringify(inviteURL)})`, fallbackContext);
+  assert.equal(fallbackValue, inviteURL);
+});
+
 test('rail cards keep a fixed width even when titles are long', () => {
   const css = fs.readFileSync(`${__dirname}/library.css`, 'utf8');
   assert.match(css, /\.grid\.rail-mode \.card\s*\{[^}]*flex:0 0 165px;[^}]*min-width:0;/);
