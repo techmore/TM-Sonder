@@ -17,9 +17,6 @@
     .brand-lockup { display:inline-flex; align-items:center; gap:8px; }
     .brand-lockup img { width:28px; height:28px; border-radius:7px; box-shadow:0 0 0 1px rgba(182,213,109,.32); }
     .app-version { color:var(--muted); font-size:11px; font-variant-numeric:tabular-nums; white-space:nowrap; }
-    .header-book-link { display:inline-flex; align-items:center; justify-content:center; width:34px; height:34px; flex:0 0 auto; border:1px solid var(--line); border-radius:8px; color:var(--muted); text-decoration:none; }
-    .header-book-link:hover, .header-book-link:focus-visible { color:var(--accent); border-color:var(--accent); }
-    .header-book-link .size-6 { width:24px; height:24px; }
     button { font:inherit; }
     header {
       position:sticky; top:0; z-index:5; display:flex; flex-wrap:wrap;
@@ -1028,7 +1025,6 @@ body[data-theme="bunny"] .actions button.primary:disabled { opacity:.55; }
   }
   h1 { font-size: 18px; letter-spacing: 0; }
   .app-version { display: none; }
-  .header-book-link { width: 38px; height: 38px; }
   input[type="search"] { flex: 1 1 auto; width: auto; width: 100%; min-height: 40px; }
   .header-tools {
     display: flex; flex: 1 1 100%; gap: 8px; align-items: center;
