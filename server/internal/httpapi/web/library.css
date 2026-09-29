@@ -64,7 +64,7 @@
     .book-card-wrap > .card { width:100%; }
     .grid.rail-mode .book-card-wrap, .catalog-strip .book-card-wrap { flex:0 0 165px; min-width:0; }
     .card-bookmark {
-      position:absolute; z-index:3; top:7px; right:7px; display:grid; place-items:center;
+      position:absolute; z-index:3; right:7px; bottom:7px; display:grid; place-items:center;
       width:40px; height:40px; padding:0; border:1px solid rgba(255,255,255,.36); border-radius:50%;
       color:#fff; background:rgba(10,13,9,.76); box-shadow:0 2px 9px rgba(0,0,0,.36);
       backdrop-filter:blur(7px); cursor:pointer; touch-action:manipulation;

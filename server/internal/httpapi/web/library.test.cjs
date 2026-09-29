@@ -61,6 +61,7 @@ function catalog(items, progress = []) {
 const movie = (id, year, extra = {}) => ({ id, title: 'The Thing', kind: 'movie', year, format: 'mkv', ...extra });
 const librarySource = fs.readFileSync(`${__dirname}/library.js`, 'utf8');
 const libraryHTML = fs.readFileSync(`${__dirname}/library.html`, 'utf8');
+const libraryCSS = fs.readFileSync(`${__dirname}/library.css`, 'utf8');
 
 test('library shows its version and keeps audiobook layout in Settings', () => {
   assert.match(libraryHTML, /id="appVersion"/);
@@ -117,6 +118,7 @@ test('bookmarks live under the profile and default to oldest-first with sortable
 });
 
 test('book cards show a compact bookmark overlay that fills when queued', () => {
+  assert.match(libraryCSS, /\.card-bookmark\s*\{[^}]*right:7px; bottom:7px;/s);
   const get = catalog([]);
   const audiobook = get('cardHTML({ id: "audio-1", title: "The Hobbit", kind: "audiobook" })');
   assert.match(audiobook, /class="book-card-wrap"/);
