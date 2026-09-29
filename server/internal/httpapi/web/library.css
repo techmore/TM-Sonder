@@ -984,6 +984,10 @@ body.np-visible { padding-bottom:116px; }
   color:var(--text); font-size:12px; font-weight:650;
   font-variant-numeric:tabular-nums; white-space:nowrap;
 }
+.np-progress-percent {
+  color:var(--accent); font-size:11px; font-weight:700;
+  font-variant-numeric:tabular-nums; white-space:nowrap;
+}
 /* Time left in the whole book. Kept separate from the elapsed/total pair
    because it answers a different question and competes for the same row. */
 .np-eta {

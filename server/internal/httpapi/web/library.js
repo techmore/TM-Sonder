@@ -1663,6 +1663,15 @@
       const cur = $("#npCur"); if (cur) cur.textContent = formatTime(view.position);
       const dur = $("#npDur"); if (dur) dur.textContent = formatTime(view.total);
       const elapsed = $("#npProgressElapsed"); if (elapsed) elapsed.textContent = formatTime(view.position);
+      const progressPercent = $("#npProgressPercent");
+      if (progressPercent) {
+        const percent = view.total > 0 ? Math.min(100, Math.max(0, view.position / view.total * 100)) : 0;
+        const value = `${formatProgressPercent(percent)}%`;
+        const scope = view.section ? `of ${view.section.label.toLowerCase()}` : "of the book";
+        progressPercent.textContent = value;
+        progressPercent.title = `Progress: ${value} ${scope}`;
+        progressPercent.setAttribute("aria-label", `Progress: ${value} ${scope}`);
+      }
       renderEta(tl);
       renderAudiobookProgressControls(tl, view);
       const partLabel = $("#npPartLabel");
