@@ -3164,6 +3164,16 @@
         : `<svg fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" aria-hidden="true" width="20" height="20"><path stroke-linecap="round" stroke-linejoin="round" d="M17.593 3.322c1.1.128 1.907 1.077 1.907 2.185V21L12 17.25 4.5 21V5.507c0-1.108.806-2.057 1.907-2.185a48.507 48.507 0 0 1 11.186 0Z"/></svg>`;
     }
 
+    function listEntryBookmarkHTML(item) {
+      if (item?.isPlaceholder || !["audiobook", "ebook"].includes(item?.kind)) return "";
+      const itemID = readingRecordID(item);
+      if (!itemID) return "";
+      const title = item.title || "book";
+      const bookmarked = readingState.queue.includes(itemID);
+      const label = bookmarked ? `Remove ${title} from bookmarks` : `Bookmark ${title}`;
+      return `<button type="button" class="card-bookmark list-entry-bookmark" data-action="toggle-reading-queue" data-id="${escapeHTML(itemID)}" data-book-title="${escapeHTML(title)}" aria-pressed="${bookmarked}" aria-label="${escapeHTML(label)}" title="${escapeHTML(label)}">${bookmarkIconMarkup(bookmarked)}</button>`;
+    }
+
     function syncCardBookmark(button, bookmarked = readingState.queue.includes(button.dataset.id)) {
       const title = button.dataset.bookTitle || "book";
       const label = bookmarked ? `Remove ${title} from bookmarks` : `Bookmark ${title}`;
@@ -3973,8 +3983,9 @@
         const entries = (list.items || []).map((entry, index) => {
           const item = entry.item || {};
           const cover = item.posterURL ? `<img class="list-entry-cover" src="${escapeHTML(api(item.posterURL))}" alt="" loading="lazy">` : `<span class="list-entry-cover list-entry-cover-empty" aria-hidden="true">▧</span>`;
+          const bookmark = listEntryBookmarkHTML(item);
           const tags = (entry.tags || []).map(tag => `<span class="tag">${escapeHTML(tag)}</span>`).join("");
-          return `<li>${cover}<span class="list-position">${index + 1}.</span><button class="list-entry-title" data-action="open-detail" data-id="${escapeHTML(item.id || "")}">${escapeHTML(item.title || item.id || "Unknown title")}</button><span class="list-entry-tags">${tags}</span><span class="list-entry-actions"><button data-action="move-list-item" data-list-id="${escapeHTML(list.id)}" data-index="${index}" data-direction="up" ${index === 0 ? "disabled" : ""}>↑</button><button data-action="move-list-item" data-list-id="${escapeHTML(list.id)}" data-index="${index}" data-direction="down" ${index === list.items.length - 1 ? "disabled" : ""}>↓</button><button data-action="remove-list-item" data-list-id="${escapeHTML(list.id)}" data-item-id="${escapeHTML(item.id || "")}">Remove</button></span></li>`;
+          return `<li><span class="list-entry-art">${cover}${bookmark}</span><span class="list-position">${index + 1}.</span><button class="list-entry-title" data-action="open-detail" data-id="${escapeHTML(item.id || "")}">${escapeHTML(item.title || item.id || "Unknown title")}</button><span class="list-entry-tags">${tags}</span><span class="list-entry-actions"><button data-action="move-list-item" data-list-id="${escapeHTML(list.id)}" data-index="${index}" data-direction="up" ${index === 0 ? "disabled" : ""}>↑</button><button data-action="move-list-item" data-list-id="${escapeHTML(list.id)}" data-index="${index}" data-direction="down" ${index === list.items.length - 1 ? "disabled" : ""}>↓</button><button data-action="remove-list-item" data-list-id="${escapeHTML(list.id)}" data-item-id="${escapeHTML(item.id || "")}">Remove</button></span></li>`;
         }).join("");
         const addRow = selectedList
           ? `<div class="list-add-row"><input class="list-book-search" data-list-book-search placeholder="Search ${escapeHTML(poolLabel.toLowerCase())} to add…" aria-label="Search titles to add"><select data-list-select aria-label="Title to add" disabled><option value="">Type to search for a title…</option></select><input data-list-tags placeholder="Entry tags, comma separated" aria-label="Entry tags"><button class="primary" data-action="add-list-item" data-list-id="${escapeHTML(list.id)}">Add</button></div>`

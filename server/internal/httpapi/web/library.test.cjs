@@ -200,6 +200,25 @@ test('book cards show a compact bookmark overlay that fills when queued', () => 
   assert.doesNotMatch(movieCard, /card-bookmark|book-card-wrap/);
 });
 
+test('book list entries offer the same quick bookmark action as catalog cards', () => {
+  const get = catalog([]);
+  const source = librarySource.slice(librarySource.indexOf('function renderLists()'));
+  const audiobook = get('listEntryBookmarkHTML({ id: "audio-1", title: "The Hobbit", kind: "audiobook" })');
+  assert.match(source, /listEntryBookmarkHTML\(item\)/);
+  assert.match(audiobook, /class="card-bookmark list-entry-bookmark"/);
+  assert.match(audiobook, /data-action="toggle-reading-queue" data-id="audio-1"/);
+  assert.match(audiobook, /aria-label="Bookmark The Hobbit"/);
+
+  get('readingState.queue = ["audio-1"]');
+  const queued = get('listEntryBookmarkHTML({ id: "audio-1", title: "The Hobbit", kind: "audiobook" })');
+  assert.match(queued, /aria-pressed="true"/);
+  assert.match(queued, /Remove The Hobbit from bookmarks/);
+  assert.match(queued, /fill="currentColor"/);
+  assert.equal(get('listEntryBookmarkHTML({ id: "movie-1", title: "Arrival", kind: "movie" })'), '');
+  assert.equal(get('listEntryBookmarkHTML({ id: "placeholder", title: "Missing", kind: "audiobook", isPlaceholder: true })'), '');
+  assert.match(libraryCSS, /\.list-entry-bookmark\s*\{[^}]*width:32px; height:32px;/);
+});
+
 test('the book lists page offers one honest 100-title follow queue', () => {
   const get = catalog([]);
   assert.equal(get('TOP_100_BOOKS.length'), 100);

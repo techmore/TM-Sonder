@@ -731,6 +731,11 @@ body.optimize-mode #backRow { display:none !important; }
 .reading-list li { display:flex; align-items:center; gap:12px; padding:10px 0; border-top:1px solid var(--line); }
 .list-entry-cover { width:68px; height:96px; flex:0 0 68px; object-fit:cover; border-radius:6px; background:var(--panel2); color:var(--muted); display:grid; place-items:center; font-size:22px; }
 .list-entry-cover-empty { border:1px solid var(--line); }
+.list-entry-art { position:relative; display:block; width:68px; height:96px; flex:0 0 68px; }
+.list-entry-art .list-entry-cover { width:100%; height:100%; }
+.list-entry-art img.list-entry-cover { display:block; }
+.list-entry-bookmark { right:3px; bottom:3px; width:32px; height:32px; }
+.list-entry-bookmark svg { width:17px; height:17px; }
 .list-position { color:var(--muted); min-width:20px; }
 .list-entry-title { border:0; padding:0; background:none; color:var(--accent); cursor:pointer; text-align:left; font:inherit; }
 .list-entry-tags { display:flex; flex-wrap:wrap; gap:4px; }
@@ -1434,7 +1439,10 @@ body:not(.mobile-filters-open) #filterRow { display:none !important; }
   .reading-list ol li {
     display: grid; grid-template-columns: 34px 1fr; gap: 4px 10px; align-items: center;
   }
+  .list-entry-art { width:34px; height:51px; flex-basis:34px; }
   .list-entry-cover { width: 34px; height: 51px; }
+  .list-entry-bookmark { right:1px; bottom:1px; width:28px; height:28px; }
+  .list-entry-bookmark svg { width:15px; height:15px; }
   .list-position { grid-row: 1; }
   .list-entry-title { grid-column: 2; text-align: left; }
   .list-entry-tags, .list-entry-actions { grid-column: 2; }
