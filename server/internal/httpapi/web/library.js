@@ -475,6 +475,9 @@
     let nowPlayingMode = "audio";
     let npSeeking = false;
     let npLastSaved = 0;
+    let npPlaybackAttempt = null;
+    let npPlaybackRestore = null;
+    let npResumeCheckpoint = null;
     // Multi-part book playback. nowPlayingParts is null for a single-file item,
     // so every existing behaviour is unchanged; when it is set, the player
     // advances through the parts on "ended" and saves progress per part, which
@@ -883,6 +886,8 @@
       const media = npMedia();
       const part = nowPlayingParts && nowPlayingParts[nowPlayingPartIndex];
       if (!media || !part) return;
+      cancelPlaybackAttempt();
+      npResumeCheckpoint = null;
       media.src = api("/stream/" + part.id);
       const expectedSrc = media.src;
       media.load();
@@ -1274,8 +1279,7 @@
       clearSleepClock();
       npSleepDeadline = 0;
       npSleepAtPartEnd = false;
-      const media = npMedia();
-      if (media && !media.paused) media.pause();
+      pausePlayback();
       saveProgress(true);
       const status = $("#npStatus");
       if (status) status.textContent = "Sleep timer ended. Playback paused.";
@@ -1317,20 +1321,102 @@
       return nowPlayingMode === "audio" ? "Tap Play to start this audiobook." : "Tap Play to start this video.";
     }
 
-    function requestPlayback(media) {
-      const source = media.src;
-      try {
-        const result = media.play();
-        if (result && typeof result.catch === "function") result.catch(() => {
-          if (nowPlayingItem && media.src === source) {
-            const status = $("#npStatus");
-            if (status) status.textContent = playbackPrompt();
-          }
-        });
-      } catch {
-        const status = $("#npStatus");
-        if (status) status.textContent = playbackPrompt();
+    function cancelPlaybackAttempt() {
+      if (npPlaybackAttempt) clearTimeout(npPlaybackAttempt.timer);
+      if (npPlaybackRestore) {
+        npPlaybackRestore.media.removeEventListener("loadedmetadata", npPlaybackRestore.restore);
       }
+      npPlaybackAttempt = null;
+      npPlaybackRestore = null;
+    }
+
+    function pausePlayback() {
+      cancelPlaybackAttempt();
+      const media = npMedia();
+      if (media) media.pause();
+    }
+
+    function requestPlayback(media) {
+      if (!nowPlayingItem || !media) return;
+      // Both a page tap and a lock-screen action must call play synchronously:
+      // waiting for a fetch first can lose Safari's user activation.
+      const saved = progressByID.get(currentProgressTargetID());
+      const savedPosition = saved?.seconds > 0 && (!saved.duration || saved.seconds < saved.duration - 8) ? saved.seconds : 0;
+      const currentPosition = Number.isFinite(media.currentTime) ? media.currentTime : 0;
+      const position = npResumeCheckpoint?.position ??
+        (currentPosition > 0 || (media.readyState >= 1 && !media.error) ? currentPosition : savedPosition);
+      const rate = npResumeCheckpoint?.rate ?? (media.playbackRate || 1);
+      cancelPlaybackAttempt();
+      const attempt = { media, source: media.src, target: currentProgressTargetID(),
+        position, rate, retried: false, loading: false, timer: null, generation: 0 };
+      npPlaybackAttempt = attempt;
+      const active = () => npPlaybackAttempt === attempt && nowPlayingItem &&
+        media.src === attempt.source && currentProgressTargetID() === attempt.target;
+      const status = message => { const el = $("#npStatus"); if (el) el.textContent = message; };
+      const failed = error => {
+        if (!active()) return;
+        if (!attempt.retried && error?.name !== "NotAllowedError") { recover(); return; }
+        cancelPlaybackAttempt();
+        onPlayStateChange();
+        status(error?.name === "NotAllowedError" ? playbackPrompt() :
+          "Playback could not resume. Return to Sonder and tap Play to retry; your position is saved.");
+      };
+      const play = () => {
+        if (!active()) return;
+        const generation = ++attempt.generation;
+        try {
+          // Supported by newer Safari; leave unsupported browsers alone.
+          if (typeof navigator !== "undefined" && navigator.audioSession) navigator.audioSession.type = "playback";
+        } catch { /* optional audio-session API */ }
+        try {
+          const result = media.play();
+          if (result && typeof result.catch === "function") result.catch(error => {
+            if (active() && generation === attempt.generation) failed(error);
+          });
+        } catch (error) { failed(error); }
+        if (!active() || generation !== attempt.generation) return;
+        clearTimeout(attempt.timer);
+        attempt.timer = setTimeout(() => {
+          if (!active()) return;
+          // A resolved play promise alone does not prove that iOS resumed audio.
+          if (!media.paused && !attempt.loading && (media.currentTime > attempt.position + 0.05 || media.ended)) {
+            cancelPlaybackAttempt();
+          } else if (!attempt.retried) recover();
+          else failed();
+        }, 8000);
+      };
+      const recover = () => {
+        if (!active() || attempt.retried) return;
+        attempt.retried = true;
+        attempt.loading = true;
+        // A reload can emit pause/timeupdate at zero. Keep that transient state
+        // out of checkpoints and restore this file's exact offset, not the head.
+        npResumeCheckpoint = { position: attempt.position, rate: attempt.rate };
+        const restore = () => {
+          if (!active()) return;
+          try {
+            const duration = media.duration;
+            media.currentTime = Number.isFinite(duration) && duration > 0
+              ? Math.min(attempt.position, Math.max(0, duration - 0.01)) : attempt.position;
+            media.defaultPlaybackRate = attempt.rate;
+            media.playbackRate = attempt.rate;
+          } catch (error) { failed(error); return; }
+          attempt.loading = false;
+          npPlaybackRestore = null;
+          npResumeCheckpoint = null;
+          if (!media.paused) startReadSession();
+          onTimeUpdate();
+          updatePositionState();
+        };
+        npPlaybackRestore = { media, position: attempt.position, restore };
+        media.addEventListener("loadedmetadata", restore, { once: true });
+        status("Reconnecting at your saved position…");
+        try { media.load(); } catch (error) { failed(error); return; }
+        play();
+      };
+      status("");
+      if (npResumeCheckpoint || media.error || media.networkState === 3) recover();
+      else play();
     }
 
     function renderPartQueue() {
@@ -1441,6 +1527,8 @@
       npSeeking = false;
       loadBookChapters(item);
 
+      cancelPlaybackAttempt();
+      npResumeCheckpoint = null;
       media.src = api(plan.url);
       syncPlaybackRate(media);
       media.onerror = () => {
@@ -1477,18 +1565,21 @@
         const status = $("#npStatus");
         if (status) status.textContent = "";
         requestPlayback(media);
-      } else media.pause();
+      } else pausePlayback();
     }
 
     function skipBy(delta) {
       const media = npMedia();
       if (!nowPlayingItem || !media || !Number.isFinite(media.duration)) return;
+      cancelPlaybackAttempt();
+      npResumeCheckpoint = null;
       media.currentTime = Math.min(Math.max(media.currentTime + delta, 0), media.duration || 0);
       onTimeUpdate();
     }
 
     function stopPlayback() {
       const media = npMedia();
+      cancelPlaybackAttempt();
       saveProgress(true);
       sampleReadTime(true);
       persistReadSession(false, true);
@@ -1500,6 +1591,8 @@
         media.load();
       }
       nowPlayingItem = null;
+      npResumeCheckpoint = null;
+      try { if (navigator.audioSession) navigator.audioSession.type = "auto"; } catch { /* optional API */ }
       nowPlayingParts = null;
       nowPlayingPartIndex = 0;
       nowPlayingChapters = null;
@@ -1529,6 +1622,7 @@
     function saveProgress(force = false) {
       const media = npMedia();
       const item = nowPlayingItem;
+      if (npResumeCheckpoint) return;
       sampleReadTime();
       if (!item || !media || !media.duration || !Number.isFinite(media.currentTime)) return;
       const part = nowPlayingParts && nowPlayingParts[nowPlayingPartIndex];
@@ -1619,7 +1713,7 @@
         return {
           offset: 0,
           total: (media && media.duration) || 0,
-          position: (media && media.currentTime) || 0,
+          position: npResumeCheckpoint?.position ?? ((media && media.currentTime) || 0),
           multi: false,
         };
       }
@@ -1632,7 +1726,7 @@
       return {
         offset,
         total: total > 0 ? total : offset + ((media && media.duration) || 0),
-        position: offset + ((media && media.currentTime) || 0),
+        position: offset + (npResumeCheckpoint?.position ?? ((media && media.currentTime) || 0)),
         multi: true,
       };
     }
@@ -1699,6 +1793,8 @@
       const part = nowPlayingParts && nowPlayingParts[nowPlayingPartIndex];
       const media = npMedia();
       if (!media) return;
+      cancelPlaybackAttempt();
+      npResumeCheckpoint = null;
       if (!part) { media.currentTime = Math.max(0, seconds); onTimeUpdate(); return; }
       let offset = 0;
       for (let i = 0; i < nowPlayingParts.length; i++) {
@@ -1708,6 +1804,8 @@
             const shouldPlay = !media.paused && !media.ended;
             saveProgress(true);
             nowPlayingPartIndex = i;
+            cancelPlaybackAttempt();
+            npResumeCheckpoint = null;
             media.src = api("/stream/" + nowPlayingParts[i].id);
             const expectedSrc = media.src;
             media.load();
@@ -1756,12 +1854,11 @@
           artwork,
         });
       } catch { /* MediaMetadata unsupported */ }
-      const media = npMedia();
       const handler = (action, fn) => {
         try { navigator.mediaSession.setActionHandler(action, fn); } catch { /* unsupported action */ }
       };
-      handler("play", () => media && media.play());
-      handler("pause", () => media && media.pause());
+      handler("play", () => { const current = npMedia(); if (current) requestPlayback(current); });
+      handler("pause", () => pausePlayback());
       handler("seekbackward", details => skipBy(-((details && details.seekOffset) || 30)));
       handler("seekforward", details => skipBy((details && details.seekOffset) || 30));
       handler("seekto", details => {
@@ -1880,13 +1977,15 @@
     on("#npSeek", "change", () => { npSeeking = false; });
     on("#npMedia", "timeupdate", () => onTimeUpdate());
     on("#npMedia", "play", () => {
-      startReadSession();
+      if (!npResumeCheckpoint) startReadSession();
       onPlayStateChange();
       const status = $("#npStatus");
-      if (status?.textContent === playbackPrompt()) status.textContent = "";
+      if (status?.textContent === playbackPrompt() || status?.textContent === "Reconnecting at your saved position…") status.textContent = "";
       checkSleepTimer();
     });
     on("#npMedia", "pause", () => {
+      if (npPlaybackAttempt?.loading) return;
+      cancelPlaybackAttempt();
       sampleReadTime(true);
       onPlayStateChange();
       saveProgress(true);
@@ -1936,6 +2035,11 @@
         saveProgress(true);
         persistReadSession(false);
       }
+      if (document.visibilityState === "visible" && nowPlayingItem) {
+        updateMediaSession(nowPlayingItem);
+        onPlayStateChange();
+        updatePositionState();
+      }
       checkSleepTimer();
     });
     onDocument("pagehide", () => {
@@ -1944,6 +2048,12 @@
       persistReadSession(false);
     });
     if (typeof window !== "undefined" && typeof window.addEventListener === "function") {
+      window.addEventListener("pageshow", () => {
+        if (!nowPlayingItem) return;
+        updateMediaSession(nowPlayingItem);
+        onPlayStateChange();
+        updatePositionState();
+      });
       window.addEventListener("online", () => replayPendingProgress().catch(() => {}));
     }
 
