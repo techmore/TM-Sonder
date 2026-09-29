@@ -2,22 +2,55 @@
 
 ## What this is
 
-Sonder has shipped curated "top 100" book lists for a while. They lived in a
-books-only admin surface: you could save a shelf to a list, but you could never
-*browse* one, and the lists only ever matched ebooks and audiobooks.
+Sonder has a 100-title cross-genre reading queue plus shorter genre and canon
+lists. An audit found that several broad shelves—including all-time, American,
+British, world literature, nonfiction, poetry, philosophy, and century lists—
+had only five titles each. Those are now substantial reading paths, with
+dedicated Greek/Roman, Western-tradition, and English-language selections.
+
+The lists are curated entry points, not definitive rankings. Their counts and
+missing-title checklists are calculated against the catalog currently open in
+Sonder.
 
 Nothing about a list was book-specific — the server has always accepted any item
 ID in `POST /api/lists/{id}/items`. The engine now drives every catalog:
 
 | Kinds | Lists | Source |
 | --- | --- | --- |
-| `ebook`, `audiobook` | 65 | The original book canon, unchanged |
+| `ebook`, `audiobook` | 24 | Cross-genre, literary, historical, philosophical, and poetry selections |
 | `movie` | 8 | Greatest films, American cinema, Criterion, sci-fi, noir, horror, animation, recent Best Picture winners |
 | `tvShow` | 4 | Greatest television, prestige/period, comedy, speculative series |
 | `documentary` | 4 | Greats, nature/science/space, history/war, music/performance |
 
 Every movie, show, and documentary shelf is a **selection** rather than a
-complete canon, and each one says so in its own description.
+complete canon, and each one says so in its own description. The new book
+descriptions use the same framing.
+
+## How the book selections were reviewed
+
+The Western-tradition path draws on works taught together in Great Books
+curricula, including ancient Greek and Roman literature, medieval texts,
+Shakespeare, political thought, and later novels. The [University of Dallas
+Core reading list](https://udallas.edu/academics/core-curriculum/books.php) is
+one concrete reference, not a claim that one college's syllabus defines the
+canon. Its [Classics course descriptions](https://udallas.edu/academics/programs/classics/courses.php)
+also ground the Greek and Roman shelf in epic, tragedy, history, and Latin
+poetry.
+
+The English-language shelf follows the broad period range represented by the
+[Norton Anthology of English Literature](https://seagull.wwnorton.com/anthologyofenglishliterature/toc),
+from the Middle Ages through the twenty-first century, and extends beyond a
+single national tradition to Irish, American, African, Caribbean, and South
+Asian writing in English. The [Norton Literature Library](https://seagull.wwnorton.com/NLL)
+provides another cross-genre reference point. The [Great Books Foundation's
+history](https://www.greatbooks.org/celebrating-75-years/) describes the Great
+Books tradition and its later work with women's and immigrant writing; these
+lists aim to keep that conversation open rather than freeze it into one roster.
+
+For ancient Roman authors, the [Loeb Classical Library](https://www.hup.harvard.edu/series/loeb-classical-library)
+is a reference for the surviving range of Latin writing. Sonder's short list
+selects approachable, commonly titled works; it is not a substitute for a
+classics syllabus.
 
 ## How an entry is written
 
@@ -80,16 +113,17 @@ picker only offers lists that can match the tab's catalog, and coverage counts
 are measured against that catalog alone. `Export missing .txt` uses each list's
 own kinds, so a film's missing list is measured against movies.
 
-## Measured against the real library
+## Example coverage snapshot
 
-`TM-Sonder`'s own catalog, 21,753 items, via a headless harness over
-`library.js`:
+The counts below came from a 21,753-item catalog snapshot on September 25,
+2026, via a headless harness over `library.js`. They illustrate how coverage
+works; the live counts vary by catalog and the book shelves have since been
+expanded.
 
 | Catalog | Best shelves |
 | --- | --- |
 | Movies (1,924) | American Cinema Essentials 47/58 · Greatest Movies of All Time 46/59 · Crime, Noir and Thrillers 31/46 |
 | TV (13,909 episodes) | Greatest Television 20/40 · Comedy Worth Rewatching 17/40 · Speculative and Genre Series 12/41 |
-| Books (4,641 ebooks + 1,279 audiobooks) | Top 100 books 57/100 · Best Science Fiction 5/5 |
 | Documentaries | no documentary library configured, so no rails |
 
 ## Files

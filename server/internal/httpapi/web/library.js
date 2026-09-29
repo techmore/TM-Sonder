@@ -58,14 +58,72 @@
 
     const RECOMMENDED_LISTS = [
       ["Sonder Top 100 Books to Read or Listen To", "A cross-genre 100-title queue. Follow it to keep the audiobooks you own in ranked order and see what is still missing.", TOP_100_BOOKS],
-      ["Best Books of All Time", "A broad canon of enduring fiction and nonfiction.", ["Middlemarch", "The Great Gatsby", "Beloved", "War and Peace", "The Republic"]],
-      ["Best Novels of All Time", "The essential novel canon across centuries.", ["Don Quixote", "Anna Karenina", "Middlemarch", "Ulysses", "One Hundred Years of Solitude"]],
-      ["Best Nonfiction of All Time", "Landmark ideas, history, science, and memoir.", ["The Republic", "The Histories", "On the Origin of Species", "Silent Spring", "The Diary of a Young Girl"]],
-      ["Best American Books", "Foundational American novels and voices.", ["Moby-Dick", "The Great Gatsby", "Invisible Man", "Beloved", "The Grapes of Wrath"]],
-      ["Best British Books", "The British literary canon, from Austen to Woolf.", ["Pride and Prejudice", "Jane Eyre", "Middlemarch", "Mrs Dalloway", "Hamlet"]],
-      ["Best World Literature", "Enduring books from around the world.", ["The Iliad", "The Divine Comedy", "The Tale of Genji", "The Brothers Karamazov", "One Hundred Years of Solitude"]],
-      ["Best Books of the 20th Century", "The defining books of the modern century.", ["In Search of Lost Time", "The Sound and the Fury", "The Magic Mountain", "1984", "The Name of the Rose"]],
-      ["Best Books of the 21st Century", "A high-signal contemporary reading shelf.", ["The Road", "2666", "The Brief Wondrous Life of Oscar Wao", "The Overstory", "The Underground Railroad"]],
+      ["Western Tradition: A Reading Path", "A selective path from Greek and Roman foundations through European literature and the global works that reshaped it—not a definitive canon.", [
+        "The Iliad", "The Odyssey", "The Histories", "The Book of Job", "History of the Peloponnesian War", "Antigone", "The Republic", "Nicomachean Ethics", "The Aeneid", "Metamorphoses",
+        "The Bible", "Meditations", "Confessions", "The Consolation of Philosophy", "The Divine Comedy", "The Canterbury Tales", "The Decameron", "The Book of the City of Ladies", "The Prince", "Don Quixote",
+        "Essays", "Hamlet", "King Lear", "Utopia", "Paradise Lost", "Leviathan", "Second Treatise of Government", "Gulliver's Travels", "Candide", "The Social Contract",
+        "A Vindication of the Rights of Woman", "Faust", "Pride and Prejudice", "Frankenstein", "Lyrical Ballads", "Jane Eyre", "Moby-Dick", "On the Origin of Species", "War and Peace", "Middlemarch",
+        "Crime and Punishment", "The Brothers Karamazov", "The Communist Manifesto", "The Souls of Black Folk", "The Interpretation of Dreams", "The Great Gatsby", "Ulysses", "Mrs Dalloway", "The Trial", "1984",
+        "Things Fall Apart", "One Hundred Years of Solitude", "The Fire Next Time", "Beloved", "Midnight's Children", "The Handmaid's Tale",
+      ]],
+      ["Greek & Roman Classics", "Epic, drama, history, philosophy, and poetry from ancient Greece and Rome, read in English translation.", [
+        "The Iliad", "The Odyssey", "The Oresteia", "Antigone", "Oedipus Rex", "Medea", "Lysistrata", "The Histories", "History of the Peloponnesian War", "The Republic",
+        "Symposium", "Apology", "Nicomachean Ethics", "Poetics", "The Aeneid", "The Georgics", "Metamorphoses", "On the Nature of Things", "On Duties", "Commentaries on the Gallic War",
+        "History of Rome", "Parallel Lives", "Letters from a Stoic", "The Odes of Horace", "Satires of Horace", "The Golden Ass", "Satyricon", "The Annals", "The Twelve Caesars", "Meditations", "The Consolation of Philosophy",
+      ]],
+      ["Great English-Language Books", "Major works first written in English, from early literature to British, Irish, American, and global Anglophone voices.", [
+        "Beowulf", "The Canterbury Tales", "Sir Gawain and the Green Knight", "Le Morte d'Arthur", "Hamlet", "King Lear", "Othello", "The Tempest", "Paradise Lost", "The Pilgrim's Progress",
+        "Gulliver's Travels", "Robinson Crusoe", "A Vindication of the Rights of Woman", "Pride and Prejudice", "Emma", "Frankenstein", "Lyrical Ballads", "Jane Eyre", "Wuthering Heights", "Great Expectations",
+        "Leaves of Grass", "Moby-Dick", "Narrative of the Life of Frederick Douglass", "Adventures of Huckleberry Finn", "Middlemarch", "The Picture of Dorian Gray", "The Importance of Being Earnest", "The Souls of Black Folk", "The Turn of the Screw", "Songs of Innocence and of Experience",
+        "Ulysses", "The Great Gatsby", "The Waste Land", "Mrs Dalloway", "To the Lighthouse", "Their Eyes Were Watching God", "The Sound and the Fury", "The Grapes of Wrath", "A Room of One's Own", "Native Son",
+        "Invisible Man", "Things Fall Apart", "A House for Mr Biswas", "Wide Sargasso Sea", "The Fire Next Time", "Beloved", "The Handmaid's Tale", "The Remains of the Day", "Midnight's Children", "The God of Small Things",
+        "The Brief Wondrous Life of Oscar Wao", "The Underground Railroad", "The Overstory", "The Nickel Boys", "I Know Why the Caged Bird Sings", "Howl and Other Poems", "The Complete Poems of Emily Dickinson",
+      ]],
+      ["Best Books of All Time", "A cross-cultural shelf across fiction, drama, poetry, philosophy, and testimony—an invitation, not an objective ranking.", [
+        "The Iliad", "The Odyssey", "The Analects", "The Bhagavad Gita", "The Qur'an", "The Republic", "The Aeneid", "Metamorphoses", "The Tale of Genji", "The Bible",
+        "Confessions", "The Divine Comedy", "The Canterbury Tales", "The Decameron", "One Thousand and One Nights", "Don Quixote", "Essays", "Hamlet", "The Prince", "Paradise Lost",
+        "Dream of the Red Chamber", "Leviathan", "Gulliver's Travels", "Candide", "The Social Contract", "Pride and Prejudice", "Frankenstein", "Jane Eyre", "Moby-Dick", "Leaves of Grass",
+        "War and Peace", "Middlemarch", "Crime and Punishment", "Anna Karenina", "The Brothers Karamazov", "Adventures of Huckleberry Finn", "The Souls of Black Folk", "The Interpretation of Dreams", "The Great Gatsby", "Ulysses",
+        "The Waste Land", "The Trial", "The Diary of a Young Girl", "Things Fall Apart", "One Hundred Years of Solitude", "The Fire Next Time", "Beloved", "Midnight's Children", "The Handmaid's Tale", "Persepolis",
+        "The God of Small Things", "The Remains of the Day", "The Brief Wondrous Life of Oscar Wao", "The Underground Railroad", "The Overstory",
+      ]],
+      ["Best Novels of All Time", "A broad, cross-cultural reading path through landmark novels—not a ranked or complete canon.", [
+        "The Tale of Genji", "Dream of the Red Chamber", "Don Quixote", "Robinson Crusoe", "Pride and Prejudice", "Emma", "Jane Eyre", "Wuthering Heights", "The Scarlet Letter", "Frankenstein",
+        "Great Expectations", "Madame Bovary", "Les Misérables", "Moby-Dick", "War and Peace", "Anna Karenina", "Middlemarch", "Crime and Punishment", "The Brothers Karamazov", "Adventures of Huckleberry Finn",
+        "The Portrait of a Lady", "The Picture of Dorian Gray", "In Search of Lost Time", "The Magic Mountain", "Ulysses", "The Great Gatsby", "Mrs Dalloway", "The Sound and the Fury", "Their Eyes Were Watching God", "The Grapes of Wrath",
+        "The Trial", "Things Fall Apart", "The Master and Margarita", "One Hundred Years of Solitude", "The Name of the Rose", "Invisible Man", "The Handmaid's Tale", "Beloved", "The God of Small Things", "Midnight's Children",
+        "The Remains of the Day", "The Brief Wondrous Life of Oscar Wao", "The Underground Railroad", "The Nickel Boys", "The Overstory",
+      ]],
+      ["Best Nonfiction of All Time", "A cross-era shelf of history, science, philosophy, memoir, and arguments that changed public life.", [
+        "The Histories", "The Republic", "Confessions", "The Prince", "Essays", "The Art of War", "Leviathan", "Second Treatise of Government", "The Social Contract", "The Wealth of Nations",
+        "A Vindication of the Rights of Woman", "The Communist Manifesto", "On the Origin of Species", "Narrative of the Life of Frederick Douglass", "The Souls of Black Folk", "The Diary of a Young Girl", "The Autobiography of Malcolm X", "The Fire Next Time", "The Feminine Mystique", "Silent Spring",
+        "The Power Broker", "The Gulag Archipelago", "The Selfish Gene", "A Brief History of Time", "The Warmth of Other Suns", "The Year of Magical Thinking",
+      ]],
+      ["Best American Books", "A wide American shelf across fiction, poetry, memoir, and writing about the nation.", [
+        "The Scarlet Letter", "Moby-Dick", "Leaves of Grass", "Adventures of Huckleberry Finn", "The Souls of Black Folk", "The Great Gatsby", "The Sound and the Fury", "The Grapes of Wrath", "Their Eyes Were Watching God", "Native Son",
+        "The Fire Next Time", "Invisible Man", "To Kill a Mockingbird", "The Autobiography of Malcolm X", "Slaughterhouse-Five", "I Know Why the Caged Bird Sings", "The Color Purple", "Beloved", "The Things They Carried", "The Brief Wondrous Life of Oscar Wao",
+        "The Underground Railroad", "The Nickel Boys", "The Overstory", "The Great Believers", "The Age of Innocence",
+      ]],
+      ["Best British Books", "A wide survey of literature from England, Scotland, and Wales across periods and forms.", [
+        "Beowulf", "The Canterbury Tales", "Sir Gawain and the Green Knight", "Hamlet", "King Lear", "Macbeth", "Paradise Lost", "The Pilgrim's Progress", "Gulliver's Travels", "Robinson Crusoe",
+        "Pride and Prejudice", "Emma", "Jane Eyre", "Wuthering Heights", "Great Expectations", "Middlemarch", "Tess of the d'Urbervilles", "Dracula", "The Picture of Dorian Gray", "The Importance of Being Earnest",
+        "The Waste Land", "Mrs Dalloway", "To the Lighthouse", "The Lord of the Rings", "1984", "A Clockwork Orange", "The Remains of the Day", "Trainspotting", "Wolf Hall", "Harry Potter and the Philosopher's Stone",
+      ]],
+      ["Best World Literature", "Landmark stories and ideas from multiple literary traditions, in original works and translation.", [
+        "The Epic of Gilgamesh", "The Iliad", "The Odyssey", "The Bhagavad Gita", "The Analects", "The Ramayana", "The Mahabharata", "The Tale of Genji", "The Qur'an", "One Thousand and One Nights",
+        "The Divine Comedy", "The Decameron", "Don Quixote", "Journey to the West", "Dream of the Red Chamber", "The Count of Monte Cristo", "Les Misérables", "War and Peace", "Crime and Punishment", "The Brothers Karamazov",
+        "The Stranger", "The Master and Margarita", "Things Fall Apart", "One Hundred Years of Solitude", "The Cairo Trilogy", "Snow Country", "Persepolis", "Midnight's Children", "The God of Small Things", "The Kite Runner",
+      ]],
+      ["Best Books of the 20th Century", "Modern classics across the novel, poetry, memoir, and political thought.", [
+        "In Search of Lost Time", "Ulysses", "The Waste Land", "The Magic Mountain", "The Sound and the Fury", "The Great Gatsby", "Mrs Dalloway", "To the Lighthouse", "The Trial", "The Stranger",
+        "The Grapes of Wrath", "Their Eyes Were Watching God", "1984", "Things Fall Apart", "One Hundred Years of Solitude", "The Master and Margarita", "The Lord of the Rings", "Beloved", "The Handmaid's Tale", "Midnight's Children",
+        "The Name of the Rose", "The Remains of the Day", "The Diary of a Young Girl", "The Fire Next Time", "The God of Small Things",
+      ]],
+      ["Best Books of the 21st Century", "A living list of influential novels, memoirs, and nonfiction published since 2000.", [
+        "The Road", "2666", "The Brief Wondrous Life of Oscar Wao", "The Overstory", "The Underground Railroad", "The Nickel Boys", "The Kite Runner", "The Book Thief", "Atonement", "The Corrections",
+        "The Goldfinch", "The Amazing Adventures of Kavalier & Clay", "A Visit from the Goon Squad", "Wolf Hall", "Never Let Me Go", "Life of Pi", "Gilead", "The Sympathizer", "The Fifth Season", "My Brilliant Friend",
+        "The Sellout", "Lincoln in the Bardo", "The Warmth of Other Suns", "Sapiens", "Educated", "The Year of Magical Thinking",
+      ]],
       ["Best Short Books", "Canonical books you can finish in a weekend.", ["The Little Prince", "The Death of Ivan Ilyich", "The Stranger", "The Metamorphosis", "The Old Man and the Sea"]],
       ["Best Long Books", "Big, immersive novels worth the commitment.", ["The Count of Monte Cristo", "Les Misérables", "War and Peace", "The Lord of the Rings", "Infinite Jest"]],
       ["Best Debut Novels", "First novels that announced major voices.", ["Frankenstein", "The Bell Jar", "The God of Small Things", "The Secret History", "The Kite Runner"]],
@@ -76,8 +134,15 @@
       ["Best Romance Novels", "Enduring stories about love and longing.", ["Pride and Prejudice", "Jane Eyre", "Wuthering Heights", "Persuasion", "Love in the Time of Cholera"]],
       ["Best Biographies", "Lives that illuminate character, power, and history.", ["The Power Broker", "Long Walk to Freedom", "The Autobiography of Malcolm X", "Steve Jobs", "Alexander Hamilton"]],
       ["Best Memoirs", "Personal testimony with lasting literary power.", ["Night", "The Year of Magical Thinking", "Educated", "The Glass Castle", "When Breath Becomes Air"]],
-      ["Best Philosophy Books", "Foundational works for thinking about life.", ["Meditations", "The Republic", "Nicomachean Ethics", "The Prince", "Being and Time"]],
-      ["Best Poetry Books", "Poetry collections and epics that changed the form.", ["The Iliad", "The Divine Comedy", "Leaves of Grass", "The Waste Land", "The Complete Poems"]]
+      ["Best Philosophy Books", "Ancient and modern arguments about ethics, politics, knowledge, freedom, and how to live.", [
+        "The Analects", "The Bhagavad Gita", "Tao Te Ching", "The Republic", "Symposium", "Nicomachean Ethics", "Meditations", "Letters from a Stoic", "The Enchiridion", "Confessions", "The Consolation of Philosophy", "Essays", "The Prince",
+        "Leviathan", "Discourse on Method", "Meditations on First Philosophy", "A Treatise of Human Nature", "The Social Contract", "The Wealth of Nations", "A Vindication of the Rights of Woman", "On Liberty", "Beyond Good and Evil", "Thus Spoke Zarathustra",
+        "The Second Sex", "The Myth of Sisyphus", "Being and Time", "The Wretched of the Earth", "The Human Condition", "A Theory of Justice",
+      ]],
+      ["Best Poetry Books", "A path through epic, lyric, and modern poetry across languages and centuries.", [
+        "The Iliad", "The Odyssey", "Beowulf", "The Divine Comedy", "The Canterbury Tales", "The Faerie Queene", "Paradise Lost", "Songs of Innocence and of Experience", "Lyrical Ballads", "The Prelude",
+        "Leaves of Grass", "The Complete Poems of Emily Dickinson", "The Waste Land", "Four Quartets", "The Collected Poems of W. B. Yeats", "The Collected Poems of Langston Hughes", "Howl and Other Poems", "The Essential Rumi", "Citizen: An American Lyric", "The Collected Poems of Seamus Heaney",
+      ]]
     ].map(([name, description, titles], index) => ({ id: `recommended-${index}`, name, description, titles }));
 
     // ── Curated shelves for every catalog ──────────────────────────────────
