@@ -1365,7 +1365,7 @@
         const ratio = duration > 0 ? Math.min(seconds / duration, 1) : 0;
         const state = index === nowPlayingPartIndex ? "Playing"
           : ratio >= 0.96 ? "Finished"
-          : seconds > 5 ? `${Math.round(ratio * 100)}%` : "";
+          : seconds > 5 ? `${formatProgressPercent(ratio * 100)}%` : "";
         const partTitle = part.title && part.title !== nowPlayingItem.title
           ? part.title : `Part ${index + 1}`;
         return `<li class="${index === nowPlayingPartIndex ? "current" : ""}">
@@ -2475,6 +2475,10 @@
                 audiobook:"Audiobook", ebook:"Book", all:"All" })[v] || v;
     }
     function progressFor(id) { return progressByID.get(id) ?? null; }
+    function formatProgressPercent(value) {
+      const percent = Math.min(100, Math.max(0, Number(value) || 0));
+      return percent.toFixed(1);
+    }
     // Book-aware progress. A single-file item is its own progress record; a
     // multi-part book is the sum over its parts, because one part's seconds
     // against the whole book's runtime reports a finished book as barely
@@ -3186,7 +3190,7 @@
       const metaBits = [bookContext, item.year || "", runtimeLabel(item), partsBit, qualityBit].filter(Boolean).join(" • ");
       const badge = watched
         ? `<span class="badge watched">WATCHED</span>`
-        : (pct > 0 ? `<span class="badge unwatched">${Math.round(100-pct)}% LEFT</span>` : "");
+        : (pct > 0 ? `<span class="badge unwatched">${formatProgressPercent(100-pct)}% LEFT</span>` : "");
       const card = `
       <button class="card" data-id="${item.id}" data-action="open-detail"
               aria-label="${escapeHTML(item.title)}${metaBits ? ", " + metaBits : ""}">
@@ -3641,7 +3645,7 @@
           : `<span class="queue-cover queue-cover-empty" aria-hidden="true">▧</span>`;
         const progress = item.kind === "audiobook" ? progressForItem(item) : null;
         const progressLabel = progress?.seconds > 0
-          ? ` · ${Math.min(100, Math.round(progress.seconds / (progress.duration || item.durationSeconds || 1) * 100))}% heard`
+          ? ` · ${formatProgressPercent(progress.seconds / (progress.duration || item.durationSeconds || 1) * 100)}% heard`
           : "";
         return `<li>${poster}<span class="queue-position">${index + 1}.</span><button class="queue-title" data-action="open-detail" data-id="${escapeHTML(id)}">${escapeHTML(item.title)}</button><span class="queue-meta">${escapeHTML([item.author, kindLabel(item.kind)].filter(Boolean).join(" · ") + progressLabel)}</span><span class="queue-actions"><button type="button" data-action="move-reading-queue" data-index="${index}" data-direction="-1" aria-label="Move ${escapeHTML(item.title)} up" ${index === 0 ? "disabled" : ""}>↑</button><button type="button" data-action="move-reading-queue" data-index="${index}" data-direction="1" aria-label="Move ${escapeHTML(item.title)} down" ${index === readingState.queue.length - 1 ? "disabled" : ""}>↓</button><button type="button" data-action="remove-reading-queue" data-id="${escapeHTML(id)}">Remove</button></span></li>`;
       }).join("");
@@ -3675,7 +3679,7 @@
           : `<span class="queue-cover queue-cover-empty" aria-hidden="true">▧</span>`;
         const progress = item.kind === "audiobook" ? progressForItem(item) : null;
         const progressLabel = progress?.seconds > 0
-          ? ` · ${Math.min(100, Math.round(progress.seconds / (progress.duration || item.durationSeconds || 1) * 100))}% heard`
+          ? ` · ${formatProgressPercent(progress.seconds / (progress.duration || item.durationSeconds || 1) * 100)}% heard`
           : "";
         const author = item.author ? `${item.author} · ` : "";
         const addedAt = record?.queuedAt
@@ -4881,7 +4885,7 @@
         : Number(item.durationSeconds) || 0);
       const heard = Number(progress?.seconds) || 0;
       const position = total > 0 ? Math.min(heard, total) : heard;
-      const percent = total > 0 ? Math.min(100, Math.round(position / total * 100)) : 0;
+      const percent = total > 0 ? Math.min(100, Math.max(0, position / total * 100)).toFixed(1) : "0.0";
       const finished = isWatched(progress, item);
       const state = finished ? "Finished" : heard > 5 ? "In progress" : "Not started";
       const left = heard > 5 ? `${formatTime(position)} listened` : "No listening progress yet";
@@ -5440,7 +5444,7 @@
       const visible = progress.slice(0, 50);
       if (!visible.length) return `<p class="people-empty">No playback progress yet.</p>`;
       return `<ul class="people-activity-list">${visible.map(record => {
-        const percent = Number(record.duration) > 0 ? ` · ${Math.min(100, Math.floor(Number(record.seconds) / Number(record.duration) * 100))}%` : "";
+        const percent = Number(record.duration) > 0 ? ` · ${formatProgressPercent(Number(record.seconds) / Number(record.duration) * 100)}%` : "";
         const meta = `${peopleDuration(record.seconds)}${percent}`;
         return `<li><button type="button" data-action="open-detail" data-id="${escapeHTML(record.itemID)}">${escapeHTML(record.title || "Untitled media")}</button><span class="people-activity-meta">${escapeHTML(meta)}</span></li>`;
       }).join("")}</ul>${progress.length > visible.length ? `<p class="people-activity-meta">Showing 50 most recently updated items.</p>` : ""}`;
