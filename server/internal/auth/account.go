@@ -14,6 +14,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -47,11 +48,24 @@ type accountFile struct {
 }
 
 type accountRecord struct {
-	Salt         string    `json:"salt"`
-	PasswordHash string    `json:"passwordHash"`
-	CreatedAt    time.Time `json:"createdAt"`
-	InviteCode   string    `json:"inviteCode"`
-	ReferredBy   string    `json:"referredBy,omitempty"`
+	Salt           string    `json:"salt"`
+	PasswordHash   string    `json:"passwordHash"`
+	CreatedAt      time.Time `json:"createdAt"`
+	InviteCode     string    `json:"inviteCode"`
+	ReferredBy     string    `json:"referredBy,omitempty"`
+	ShareBookmarks *bool     `json:"shareBookmarks,omitempty"`
+	ShareProgress  *bool     `json:"shareProgress,omitempty"`
+}
+
+// Profile contains the account details users have chosen to expose to people
+// connected through their invite links. Invite codes and credentials are never
+// included.
+type Profile struct {
+	Username       string    `json:"username"`
+	CreatedAt      time.Time `json:"createdAt"`
+	ShareBookmarks bool      `json:"shareBookmarks"`
+	ShareProgress  bool      `json:"shareProgress"`
+	Relationship   string    `json:"relationship,omitempty"`
 }
 
 // legacyAccountFile is the original single-account on-disk format.
@@ -242,11 +256,29 @@ func makeAccountRecord(password string) (accountRecord, error) {
 		return accountRecord{}, fmt.Errorf("auth: generate invite code: %w", err)
 	}
 	return accountRecord{
-		Salt:         base64.RawStdEncoding.EncodeToString(salt),
-		PasswordHash: base64.RawStdEncoding.EncodeToString(deriveKey(password, salt)),
-		CreatedAt:    time.Now().UTC(),
-		InviteCode:   inviteCode,
+		Salt:           base64.RawStdEncoding.EncodeToString(salt),
+		PasswordHash:   base64.RawStdEncoding.EncodeToString(deriveKey(password, salt)),
+		CreatedAt:      time.Now().UTC(),
+		InviteCode:     inviteCode,
+		ShareBookmarks: boolPointer(true),
+		ShareProgress:  boolPointer(true),
 	}, nil
+}
+
+func boolPointer(value bool) *bool { return &value }
+
+func accountProfile(username string, record accountRecord, relationship string) Profile {
+	profile := Profile{
+		Username: username, CreatedAt: record.CreatedAt,
+		ShareBookmarks: true, ShareProgress: true, Relationship: relationship,
+	}
+	if record.ShareBookmarks != nil {
+		profile.ShareBookmarks = *record.ShareBookmarks
+	}
+	if record.ShareProgress != nil {
+		profile.ShareProgress = *record.ShareProgress
+	}
+	return profile
 }
 
 func newInviteCode() (string, error) {
@@ -456,6 +488,79 @@ func (s *Store) InviteInfo(username string) (string, int, bool) {
 	return owner.InviteCode, count, true
 }
 
+// Profile returns the public profile fields and sharing preferences for one
+// account.
+func (s *Store) Profile(username string) (Profile, bool) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	if s.account == nil {
+		return Profile{}, false
+	}
+	record, ok := s.account.Accounts[username]
+	if !ok {
+		return Profile{}, false
+	}
+	return accountProfile(username, record, ""), true
+}
+
+// ConnectedProfiles returns only the inviter and direct invitees of username.
+func (s *Store) ConnectedProfiles(username string) []Profile {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	if s.account == nil {
+		return []Profile{}
+	}
+	viewer, ok := s.account.Accounts[username]
+	if !ok {
+		return []Profile{}
+	}
+	profiles := make([]Profile, 0)
+	if viewer.ReferredBy != "" {
+		if inviter, exists := s.account.Accounts[viewer.ReferredBy]; exists {
+			profiles = append(profiles, accountProfile(viewer.ReferredBy, inviter, "invited by"))
+		}
+	}
+	for candidate, record := range s.account.Accounts {
+		if record.ReferredBy == username {
+			profiles = append(profiles, accountProfile(candidate, record, "invited"))
+		}
+	}
+	sort.Slice(profiles, func(i, j int) bool {
+		if profiles[i].Relationship != profiles[j].Relationship {
+			return profiles[i].Relationship < profiles[j].Relationship
+		}
+		return profiles[i].Username < profiles[j].Username
+	})
+	return profiles
+}
+
+// UpdateSharing changes which activity is visible to directly connected
+// accounts. Omitted values remain unchanged.
+func (s *Store) UpdateSharing(username string, shareBookmarks, shareProgress *bool) (Profile, bool, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.account == nil {
+		return Profile{}, false, nil
+	}
+	record, ok := s.account.Accounts[username]
+	if !ok || (shareBookmarks == nil && shareProgress == nil) {
+		return Profile{}, false, nil
+	}
+	if shareBookmarks != nil {
+		record.ShareBookmarks = boolPointer(*shareBookmarks)
+	}
+	if shareProgress != nil {
+		record.ShareProgress = boolPointer(*shareProgress)
+	}
+	updated := cloneAccount(s.account)
+	updated.Accounts[username] = record
+	if err := writeAccount(s.path, updated); err != nil {
+		return Profile{}, false, err
+	}
+	s.account = updated
+	return accountProfile(username, record, ""), true, nil
+}
+
 // HasInviteCode reports whether an invite code belongs to an existing account.
 func (s *Store) HasInviteCode(inviteCode string) bool {
 	s.mu.RLock()
@@ -501,6 +606,12 @@ func cloneAccount(account *accountFile) *accountFile {
 	updated := *account
 	updated.Accounts = make(map[string]accountRecord, len(account.Accounts))
 	for username, record := range account.Accounts {
+		if record.ShareBookmarks != nil {
+			record.ShareBookmarks = boolPointer(*record.ShareBookmarks)
+		}
+		if record.ShareProgress != nil {
+			record.ShareProgress = boolPointer(*record.ShareProgress)
+		}
 		updated.Accounts[username] = record
 	}
 	updated.Sessions = make(map[string]sessionRecord, len(account.Sessions))

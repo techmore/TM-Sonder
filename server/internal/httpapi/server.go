@@ -70,6 +70,8 @@ type Server struct {
 	mediaCache         *mediacache.Manager
 	accounts           *auth.Store
 	authLoadErr        error
+	accountActivity    *accountActivityStore
+	activityErr        error
 	onMutation         func()
 	onProgress         func()
 
@@ -86,6 +88,7 @@ type Server struct {
 	libJSON     []byte
 	libJSONGzip []byte
 	libETag     string
+	libUsers    map[string]userLibraryCache
 
 	mux    *http.ServeMux
 	logger *log.Logger
@@ -94,17 +97,23 @@ type Server struct {
 func New(cfg *config.Config, store *library.Store, scanner *library.Scanner, tm *transcode.Manager) *Server {
 	accountPath := filepath.Join(cfg.DataDir, "account.json")
 	accounts, authErr := auth.Open(accountPath)
+	activity, activityErr := openAccountActivity(filepath.Join(cfg.DataDir, "account-activity.json"))
 	s := &Server{
-		store:         store,
-		scanner:       scanner,
-		tm:            tm,
-		movieMetadata: enrich.New(filepath.Join(cfg.DataDir, "metadata-cache")),
-		logger:        log.New(log.Writer(), "sonder-http ", log.LstdFlags),
-		accounts:      accounts,
-		authLoadErr:   authErr,
+		store:           store,
+		scanner:         scanner,
+		tm:              tm,
+		movieMetadata:   enrich.New(filepath.Join(cfg.DataDir, "metadata-cache")),
+		logger:          log.New(log.Writer(), "sonder-http ", log.LstdFlags),
+		accounts:        accounts,
+		authLoadErr:     authErr,
+		accountActivity: activity,
+		activityErr:     activityErr,
 	}
 	if authErr != nil {
 		s.logger.Printf("account store unavailable: %v", authErr)
+	}
+	if activityErr != nil {
+		s.logger.Printf("account activity store unavailable: %v", activityErr)
 	}
 	s.cfgPtr.Store(cfg)
 	s.mux = http.NewServeMux()
@@ -231,6 +240,8 @@ func (s *Server) routes() {
 	m.HandleFunc("GET /account/signup", s.handleAccountSignupPage)
 	m.HandleFunc("GET /api/auth/session", s.handleAuthSession)
 	m.HandleFunc("GET /api/auth/invite", s.handleAccountInviteInfo)
+	m.HandleFunc("GET /api/people", s.handlePeople)
+	m.HandleFunc("PATCH /api/people/sharing", s.handlePeopleSharing)
 	m.HandleFunc("POST /api/auth/login", s.handleAccountLogin)
 	m.HandleFunc("POST /api/auth/setup", s.handleAccountSetup)
 	m.HandleFunc("POST /api/auth/signup", s.handleAccountSignup)

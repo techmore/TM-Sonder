@@ -238,9 +238,7 @@ type BookReadRun struct {
 	Sessions      []ReadingSession `json:"sessions"`
 }
 
-// BookReadingRecord is user-curated state for a catalog book. Sonder currently
-// has one shared library profile, so queue/like/history state is shared across
-// signed-in clients and devices.
+// BookReadingRecord is user-curated state for a catalog book.
 type BookReadingRecord struct {
 	ItemID    string        `json:"itemID"`
 	QueuedAt  *time.Time    `json:"queuedAt,omitempty"`

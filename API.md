@@ -35,6 +35,12 @@ Base URL comes from `/api/discovery` as `localURL` or `lanURL`.
   limit the number of signups.
 - Browser login uses `GET /account/login`, `POST /api/auth/login`, and the HTTP-only `sonder_session` cookie.
   `GET /api/auth/session` reports setup/authentication state and `POST /api/auth/logout` revokes the browser session.
+- Accounts connect only to the person who invited them and the accounts they directly invite. New accounts share
+  bookmarks and playback progress with those connections by default. `GET /api/people` returns connected usernames,
+  signup dates, and activity each person has chosen to share; `PATCH /api/people/sharing` accepts optional
+  `shareBookmarks` and `shareProgress` booleans to change the current account's defaults. The Profile → People panel
+  exposes the same controls. The original owner's existing shared bookmarks and progress are migrated into that
+  account's private activity store on first use; invited accounts start with their own empty activity.
 - Compatibility logins validate an account: Jellyfin `POST /Users/AuthenticateByName` returns an `AccessToken`, and
   Audiobookshelf `POST /login` returns `user.token`. Those tokens are accepted as a Bearer token, Jellyfin
   `Authorization: MediaBrowser ... Token="..."`, or Audiobookshelf `?api_key=...`. Compatibility discovery endpoints
@@ -176,8 +182,10 @@ Includes:
 
 | Method | Path | Purpose |
 | --- | --- | --- |
-| GET | `/api/library` | Full library catalog, progress records, public server settings, activity, and theme. |
-| GET | `/api/reading` | Ordered book queue, likes, and audiobook read/session history. |
+| GET | `/api/library` | Full library catalog, the signed-in account's progress records, public server settings, activity, and theme. |
+| GET | `/api/reading` | The signed-in account's ordered book queue, likes, and audiobook read/session history. |
+| GET | `/api/people` | Direct inviter/invitee profiles and only the bookmarks/progress each account shares. |
+| PATCH | `/api/people/sharing` | Update the signed-in account's bookmark and/or progress sharing preferences. |
 | PATCH/PUT | `/api/reading/{id}` | Set `queued` and/or `liked` for an audiobook or ebook. |
 | POST | `/api/reading/queue/reorder` | Set queue order with `{ "itemIDs": ["..."] }`. |
 | POST | `/api/reading/{id}/sessions` | Upsert cumulative audiobook session time; body has `sessionID`, `activeSeconds`, `mediaSeconds`, and optional `completed`. |

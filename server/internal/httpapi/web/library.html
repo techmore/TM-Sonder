@@ -94,7 +94,23 @@
     <button type="button" id="profileBookmarksBtn" class="profile-menu-item">
       <span>Bookmarks</span><span id="profileBookmarkCount" class="profile-bookmark-count">0</span>
     </button>
+    <button type="button" id="profilePeopleBtn" class="profile-menu-item" hidden>
+      <span>People</span><span id="profilePeopleCount" class="profile-bookmark-count">0</span>
+    </button>
     <a id="profileSignInLink" class="profile-menu-item profile-sign-in" href="/account/login" hidden>Sign in to your account</a>
+  </dialog>
+  <dialog id="peopleDlg" role="dialog" aria-modal="true" aria-labelledby="peopleTitle">
+    <div class="modal-head"><strong id="peopleTitle">People you’re connected with</strong>
+      <button type="button" onclick="document.getElementById('peopleDlg').close()" aria-label="Close">✕</button></div>
+    <div class="modal-body people-modal-body">
+      <section class="people-sharing-settings" aria-labelledby="sharingSettingsTitle">
+        <div><h3 id="sharingSettingsTitle">Your sharing</h3><p>These settings apply to your inviter and the people you invite.</p></div>
+        <label><input type="checkbox" id="shareBookmarksToggle"> Share my bookmarks</label>
+        <label><input type="checkbox" id="shareProgressToggle"> Share my playback progress</label>
+        <span id="peopleSharingStatus" role="status" aria-live="polite"></span>
+      </section>
+      <div id="peopleContent" class="people-list" aria-live="polite"><p class="people-empty">Loading connected accounts…</p></div>
+    </div>
   </dialog>
   <main id="bookDetailPage" class="book-detail-page" aria-live="polite" aria-labelledby="bookDetailTitle" hidden></main>
 

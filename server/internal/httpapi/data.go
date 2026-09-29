@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"time"
 
+	"tm-sonder/server/internal/api"
 	"tm-sonder/server/internal/config"
 	"tm-sonder/server/internal/library"
 )
@@ -28,6 +29,27 @@ type dataImportRequest struct {
 
 func (s *Server) handleDataExport(w http.ResponseWriter, r *http.Request) {
 	bundle := s.store.ExportBundle(s.cfg().Libraries)
+	_, activity, scoped, err := s.accountActivityForRequest(r)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "Account activity is unavailable")
+		return
+	}
+	if scoped {
+		bundle.Snapshot.Progress = make([]api.ProgressRecord, 0, len(activity.Progress))
+		for _, record := range activity.Progress {
+			bundle.Snapshot.Progress = append(bundle.Snapshot.Progress, record)
+		}
+		bundle.Snapshot.Reading = cloneReadingState(activity.Reading)
+		for _, item := range bundle.Snapshot.Items {
+			if item == nil {
+				continue
+			}
+			item.ProgressSeconds = 0
+			if record, ok := activity.Progress[item.ID]; ok {
+				item.ProgressSeconds = record.Seconds
+			}
+		}
+	}
 	filename := fmt.Sprintf("sonder-data-%s.json", time.Now().UTC().Format("20060102-150405"))
 	w.Header().Set("Content-Type", "application/json")
 	w.Header().Set("Content-Disposition", `attachment; filename="`+filename+`"`)

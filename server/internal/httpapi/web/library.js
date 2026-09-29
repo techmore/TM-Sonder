@@ -4520,7 +4520,10 @@
         const target = [...document.querySelectorAll("#tabs button[data-tab]")].find(tab => tab.dataset.tab === btn.dataset.tab);
         target?.click();
       }
-      else if (act === "open-detail" && btn.dataset.id) openDetail(btn.dataset.id);
+      else if (act === "open-detail" && btn.dataset.id) {
+        document.querySelector("#peopleDlg")?.close();
+        openDetail(btn.dataset.id);
+      }
       else if (act === "browse-author-books" && btn.dataset.id) {
         const item = items.find(candidate => candidate.id === btn.dataset.id);
         if (item) browseAuthorBooks(item);
@@ -5108,6 +5111,12 @@
       profileMenu.close();
       selectBookmarksPage();
     });
+    document.querySelector("#profilePeopleBtn").addEventListener("click", () => {
+      profileMenu.close();
+      openPeopleDialog();
+    });
+    document.querySelector("#shareBookmarksToggle").addEventListener("change", event => updatePeopleSharing("shareBookmarks", event.target.checked));
+    document.querySelector("#shareProgressToggle").addEventListener("change", event => updatePeopleSharing("shareProgress", event.target.checked));
     loadProfileInfo();
     document.querySelector("#bookmarksSort").value = bookmarksSort;
     on("#bookmarksSort", "change", event => {
@@ -5183,9 +5192,15 @@
       loadInviteInfo();
     }
 
+    function openPeopleDialog() {
+      document.querySelector("#peopleDlg").showModal();
+      loadPeople();
+    }
+
     async function loadProfileInfo() {
       const name = document.querySelector("#profileName");
       const signIn = document.querySelector("#profileSignInLink");
+      const peopleButton = document.querySelector("#profilePeopleBtn");
       try {
         const response = await fetch(api("/api/auth/session"), { cache: "no-store" });
         const session = await response.json().catch(() => ({}));
@@ -5195,13 +5210,103 @@
         profileButton.setAttribute("aria-label", username ? `Profile: ${username}` : "Profile");
         profileButton.title = username ? `Profile: ${username}` : "Profile";
         signIn.hidden = !!username;
+        peopleButton.hidden = !username;
       } catch (_) {
         name.textContent = "Library profile";
         profileButton.setAttribute("aria-label", "Profile");
         profileButton.title = "Profile";
         signIn.hidden = false;
+        peopleButton.hidden = true;
       }
       refreshProfileBookmarkCount();
+    }
+
+    function peopleDate(value) {
+      const date = new Date(value);
+      return Number.isNaN(date.getTime()) ? "date unavailable" : date.toLocaleDateString(undefined, { year: "numeric", month: "short", day: "numeric" });
+    }
+
+    function peopleDuration(value) {
+      const seconds = Math.max(0, Number(value) || 0);
+      const hours = Math.floor(seconds / 3600);
+      const minutes = Math.floor((seconds % 3600) / 60);
+      return hours ? `${hours}h ${minutes}m` : `${minutes}m`;
+    }
+
+    function renderSharedBooks(person) {
+      if (!person.shareBookmarks) return `<p class="people-empty">${escapeHTML(person.username)} keeps bookmarks private.</p>`;
+      const bookmarks = Array.isArray(person.bookmarks) ? person.bookmarks : [];
+      if (!bookmarks.length) return `<p class="people-empty">No shared bookmarks yet.</p>`;
+      return `<ul class="people-activity-list">${bookmarks.map(book => {
+        const meta = [book.author, book.queuedAt ? `saved ${peopleDate(book.queuedAt)}` : ""].filter(Boolean).join(" · ");
+        return `<li><button type="button" data-action="open-detail" data-id="${escapeHTML(book.itemID)}">${escapeHTML(book.title || "Untitled book")}</button><span class="people-activity-meta">${escapeHTML(meta || String(book.kind || "book"))}</span></li>`;
+      }).join("")}</ul>`;
+    }
+
+    function renderSharedProgress(person) {
+      if (!person.shareProgress) return `<p class="people-empty">${escapeHTML(person.username)} keeps progress private.</p>`;
+      const progress = Array.isArray(person.progress) ? [...person.progress] : [];
+      progress.sort((a, b) => String(b.updatedAt || "").localeCompare(String(a.updatedAt || "")));
+      const visible = progress.slice(0, 50);
+      if (!visible.length) return `<p class="people-empty">No playback progress yet.</p>`;
+      return `<ul class="people-activity-list">${visible.map(record => {
+        const percent = Number(record.duration) > 0 ? ` · ${Math.min(100, Math.floor(Number(record.seconds) / Number(record.duration) * 100))}%` : "";
+        const meta = `${peopleDuration(record.seconds)}${percent}`;
+        return `<li><button type="button" data-action="open-detail" data-id="${escapeHTML(record.itemID)}">${escapeHTML(record.title || "Untitled media")}</button><span class="people-activity-meta">${escapeHTML(meta)}</span></li>`;
+      }).join("")}</ul>${progress.length > visible.length ? `<p class="people-activity-meta">Showing 50 most recently updated items.</p>` : ""}`;
+    }
+
+    async function loadPeople() {
+      const content = document.querySelector("#peopleContent");
+      const status = document.querySelector("#peopleSharingStatus");
+      content.innerHTML = `<p class="people-empty">Loading connected accounts…</p>`;
+      try {
+        const response = await fetch(api("/api/people"), { cache: "no-store" });
+        const payload = await response.json().catch(() => ({}));
+        if (!response.ok) throw new Error(payload.error || "Could not load connected accounts");
+        const profile = payload.profile || {};
+        document.querySelector("#shareBookmarksToggle").checked = profile.shareBookmarks !== false;
+        document.querySelector("#shareProgressToggle").checked = profile.shareProgress !== false;
+        const people = Array.isArray(payload.people) ? payload.people : [];
+        document.querySelector("#profilePeopleCount").textContent = String(people.length);
+        if (!people.length) {
+          content.innerHTML = `<p class="people-empty">No one has joined through your invite links yet. When someone signs up with your link, you’ll see each other here.</p>`;
+          return;
+        }
+        content.innerHTML = people.map(person => {
+          const relation = person.relationship === "invited by" ? "Invited you" : "You invited them";
+          const joined = peopleDate(person.createdAt);
+          return `<article class="people-person"><div class="people-person-head"><strong>${escapeHTML(person.username)}</strong><span>${escapeHTML(relation)} · Joined ${escapeHTML(joined)}</span></div><div class="people-person-content"><section><h4>Bookmarks</h4>${renderSharedBooks(person)}</section><section><h4>Playback progress</h4>${renderSharedProgress(person)}</section></div></article>`;
+        }).join("");
+      } catch (error) {
+        content.innerHTML = `<p class="people-empty">${escapeHTML(error.message || "Could not load connected accounts")}</p>`;
+      }
+      if (!status.dataset.saving) status.textContent = "";
+    }
+
+    async function updatePeopleSharing(field, value) {
+      const status = document.querySelector("#peopleSharingStatus");
+      status.textContent = "Saving…";
+      status.dataset.saving = "true";
+      document.querySelector("#shareBookmarksToggle").disabled = true;
+      document.querySelector("#shareProgressToggle").disabled = true;
+      try {
+        const response = await fetch(api("/api/people/sharing"), {
+          method: "PATCH", headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ [field]: value }),
+        });
+        const result = await response.json().catch(() => ({}));
+        if (!response.ok) throw new Error(result.error || "Could not save sharing settings");
+        status.textContent = "Sharing settings saved.";
+        await loadPeople();
+      } catch (error) {
+        status.textContent = error.message || "Could not save sharing settings";
+        await loadPeople();
+      } finally {
+        delete status.dataset.saving;
+        document.querySelector("#shareBookmarksToggle").disabled = false;
+        document.querySelector("#shareProgressToggle").disabled = false;
+      }
     }
 
     async function loadInviteInfo() {

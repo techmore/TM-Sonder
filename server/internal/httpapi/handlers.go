@@ -3,6 +3,8 @@ package httpapi
 import (
 	"bytes"
 	"compress/gzip"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"io"
@@ -16,6 +18,15 @@ import (
 	"tm-sonder/server/internal/config"
 	"tm-sonder/server/internal/library"
 )
+
+type userLibraryCache struct {
+	storeGeneration    int64
+	activityGeneration uint64
+	json               []byte
+	jsonGzip           []byte
+	etag               string
+	lastUsed           time.Time
+}
 
 // themeFor returns the wire theme snapshot for a preset name. The earthy
 // palette mirrors SonderThemePalette.earthy (8-digit RRGGBBAA hex).
@@ -175,7 +186,19 @@ func strPtr(s string) *string { return &s }
 // The marshaled JSON (plain and gzipped) is memoized per store generation.
 func (s *Server) handleLibrary(w http.ResponseWriter, r *http.Request) {
 	wantGzip := acceptsGzip(r)
-	body, gzipped, etag := s.libraryPayload(wantGzip)
+	var body []byte
+	var gzipped bool
+	var etag string
+	username := s.accountActivityUsername(r)
+	if username != "" {
+		if err := s.ensureAccountActivity(username); err != nil {
+			writeError(w, http.StatusInternalServerError, "Account activity is unavailable")
+			return
+		}
+		body, gzipped, etag = s.libraryPayloadForUser(username, wantGzip)
+	} else {
+		body, gzipped, etag = s.libraryPayload(wantGzip)
+	}
 	w.Header().Set("Vary", "Accept-Encoding")
 	w.Header().Set("ETag", etag)
 	w.Header().Set("Cache-Control", "private, max-age=0, must-revalidate")
@@ -190,6 +213,71 @@ func (s *Server) handleLibrary(w http.ResponseWriter, r *http.Request) {
 	}
 	w.WriteHeader(http.StatusOK)
 	_, _ = w.Write(body)
+}
+
+func (s *Server) libraryPayloadForUser(username string, acceptsGzip bool) ([]byte, bool, string) {
+	progressByID, activityGen := s.accountActivity.progressSnapshotWithGeneration(username)
+	storeGen := s.store.Generation()
+	s.libMu.Lock()
+	defer s.libMu.Unlock()
+	if s.libUsers == nil {
+		s.libUsers = make(map[string]userLibraryCache)
+	}
+	cache := s.libUsers[username]
+	scanning := s.scanner != nil && s.scanner.State().Scanning
+	if cache.json == nil || (!scanning && (cache.storeGeneration != storeGen || cache.activityGeneration != activityGen)) {
+		items := s.wireItems()
+		for index := range items {
+			items[index].ProgressSeconds = 0
+			if record, ok := progressByID[items[index].ID]; ok {
+				items[index].ProgressSeconds = record.Seconds
+			}
+		}
+		progress := make([]api.ProgressRecord, 0, len(progressByID))
+		for _, record := range progressByID {
+			progress = append(progress, record)
+		}
+		sort.Slice(progress, func(i, j int) bool { return progress[i].ItemID < progress[j].ItemID })
+		resp := api.LibraryResponse{
+			Items: items, Progress: progress, MediaDirectories: s.store.Directories(),
+			Activity: s.store.Activity(), ServerSettings: ptrSettings(s.serverSettings()),
+			Theme: ptrTheme(themeFor(s.cfg().ThemePreset)),
+		}
+		var buf bytes.Buffer
+		enc := json.NewEncoder(&buf)
+		enc.SetEscapeHTML(false)
+		_ = enc.Encode(resp)
+		body := buf.Bytes()
+		userHash := sha256.Sum256([]byte(username))
+		cache = userLibraryCache{
+			storeGeneration: storeGen, activityGeneration: activityGen,
+			json: body, jsonGzip: gzipBytes(body),
+			etag:     `"` + hex.EncodeToString(userHash[:8]) + `-` + strconv.FormatInt(storeGen, 16) + `-` + strconv.FormatUint(activityGen, 16) + `"`,
+			lastUsed: time.Now(),
+		}
+	}
+	cache.lastUsed = time.Now()
+	s.libUsers[username] = cache
+	for len(s.libUsers) > 2 {
+		oldestUsername := ""
+		var oldest time.Time
+		for candidate, candidateCache := range s.libUsers {
+			if candidate == username {
+				continue
+			}
+			if oldestUsername == "" || candidateCache.lastUsed.Before(oldest) {
+				oldestUsername, oldest = candidate, candidateCache.lastUsed
+			}
+		}
+		if oldestUsername == "" {
+			break
+		}
+		delete(s.libUsers, oldestUsername)
+	}
+	if acceptsGzip && cache.jsonGzip != nil {
+		return cache.jsonGzip, true, cache.etag
+	}
+	return cache.json, false, cache.etag
 }
 
 // libraryPayload returns the cached JSON body for the current generation in
@@ -506,6 +594,10 @@ func defaultSelections(audio, subtitle []api.PlaybackTrack) (audioID, subID *str
 
 // sessionFor builds the PlaybackSession response for an item.
 func (s *Server) sessionFor(item *library.Item) api.PlaybackSession {
+	return s.sessionForUser(item, "")
+}
+
+func (s *Server) sessionForUser(item *library.Item, username string) api.PlaybackSession {
 	sess := api.PlaybackSession{
 		ItemID:         &item.ID,
 		StreamURL:      "/stream/" + item.ID,
@@ -513,10 +605,17 @@ func (s *Server) sessionFor(item *library.Item) api.PlaybackSession {
 		AudioTracks:    item.EmbeddedAudioTracks,
 		SubtitleTracks: library.MergedSubtitleTracks(item),
 	}
-	if item.DurationSeconds > 0 && item.ProgressSeconds > 0 {
+	if username == "" && item.DurationSeconds > 0 && item.ProgressSeconds > 0 {
 		sess.Percent = item.ProgressSeconds / item.DurationSeconds * 100
 	}
-	if prev, ok := s.store.ProgressFor(item.ID); ok {
+	var prev api.ProgressRecord
+	var found bool
+	if username != "" {
+		prev, found = s.accountActivity.progressFor(username, item.ID)
+	} else {
+		prev, found = s.store.ProgressFor(item.ID)
+	}
+	if found {
 		sess.Seconds = prev.Seconds
 		sess.Duration = prev.Duration
 		if prev.Duration > 0 {
@@ -541,26 +640,45 @@ func (s *Server) handlePlaybackGet(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusNotFound, "Item not found")
 		return
 	}
-	writeJSON(w, http.StatusOK, s.sessionFor(item))
+	username, scoped, err := s.ensureAccountActivityForRequest(r)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "Account activity is unavailable")
+		return
+	}
+	if scoped {
+		writeJSON(w, http.StatusOK, s.sessionForUser(item, username))
+	} else {
+		writeJSON(w, http.StatusOK, s.sessionFor(item))
+	}
 }
 
 var allowedMethods = map[string]bool{http.MethodPost: true, http.MethodPatch: true, http.MethodPut: true}
 
 // applyUpdate decodes a PlaybackStateUpdate and merges it last-write-wins.
 // Omitted optional track fields keep their previously saved values.
-func (s *Server) applyUpdate(w http.ResponseWriter, r *http.Request) (*library.Item, bool) {
+func (s *Server) applyUpdate(w http.ResponseWriter, r *http.Request) (*library.Item, string, bool) {
 	item, ok := s.store.Get(r.PathValue("id"))
 	if !ok {
 		writeError(w, http.StatusNotFound, "Item not found")
-		return nil, false
+		return nil, "", false
 	}
 	var upd api.PlaybackStateUpdate
 	if err := jsonDecode(w, r, &upd); err != nil {
 		writeError(w, http.StatusBadRequest, "Invalid playback payload")
-		return nil, false
+		return nil, "", false
+	}
+	username, scoped, err := s.ensureAccountActivityForRequest(r)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "Account activity is unavailable")
+		return nil, "", false
 	}
 
-	rec, _ := s.store.ProgressFor(item.ID)
+	var rec api.ProgressRecord
+	if scoped {
+		rec, _ = s.accountActivity.progressFor(username, item.ID)
+	} else {
+		rec, _ = s.store.ProgressFor(item.ID)
+	}
 	rec.ItemID = item.ID
 	rec.Seconds = upd.Seconds
 	if upd.Duration > 0 {
@@ -579,9 +697,16 @@ func (s *Server) applyUpdate(w http.ResponseWriter, r *http.Request) (*library.I
 	if rec.ID == "" {
 		rec.ID = api.NewID()
 	}
-	s.store.SetProgress(rec)
-	s.progressChanged()
-	return item, true
+	if scoped {
+		if _, err := s.accountActivity.setProgress(username, rec); err != nil {
+			writeError(w, http.StatusInternalServerError, "Could not save playback progress")
+			return nil, "", false
+		}
+	} else {
+		s.store.SetProgress(rec)
+		s.progressChanged()
+	}
+	return item, username, true
 }
 
 func (s *Server) handlePlaybackUpdate(w http.ResponseWriter, r *http.Request) {
@@ -589,7 +714,7 @@ func (s *Server) handlePlaybackUpdate(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusMethodNotAllowed, "Method not allowed")
 		return
 	}
-	item, ok := s.applyUpdate(w, r)
+	item, username, ok := s.applyUpdate(w, r)
 	if !ok {
 		return
 	}
@@ -598,11 +723,11 @@ func (s *Server) handlePlaybackUpdate(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusNotFound, "Item not found")
 		return
 	}
-	writeJSON(w, http.StatusOK, s.sessionFor(fresh))
+	writeJSON(w, http.StatusOK, s.sessionForUser(fresh, username))
 }
 
 func (s *Server) handleProgressUpdate(w http.ResponseWriter, r *http.Request) {
-	item, ok := s.applyUpdate(w, r)
+	item, username, ok := s.applyUpdate(w, r)
 	if !ok {
 		return
 	}
@@ -611,7 +736,7 @@ func (s *Server) handleProgressUpdate(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusNotFound, "Item not found")
 		return
 	}
-	writeJSON(w, http.StatusOK, s.sessionFor(fresh))
+	writeJSON(w, http.StatusOK, s.sessionForUser(fresh, username))
 }
 
 // handleRefreshTracks re-probes one item and returns the fresh session.
@@ -632,7 +757,16 @@ func (s *Server) handleRefreshTracks(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusNotFound, "Item not found")
 		return
 	}
-	writeJSON(w, http.StatusOK, s.sessionFor(item))
+	username, scoped, err := s.ensureAccountActivityForRequest(r)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "Account activity is unavailable")
+		return
+	}
+	if scoped {
+		writeJSON(w, http.StatusOK, s.sessionForUser(item, username))
+	} else {
+		writeJSON(w, http.StatusOK, s.sessionFor(item))
+	}
 }
 
 // --- audiobooks ---
@@ -743,6 +877,29 @@ type audiobookChapterTimeline struct {
 }
 
 func (s *Server) toCatalogItem(it *library.Item) catalogItem {
+	return s.toCatalogItemForUser(it, "")
+}
+
+func (s *Server) toCatalogItemForUser(it *library.Item, username string) catalogItem {
+	view := *it
+	if username != "" {
+		view.ProgressSeconds = 0
+		if record, ok := s.accountActivity.progressFor(username, it.ID); ok {
+			view.ProgressSeconds = record.Seconds
+		}
+	}
+	out := s.toCatalogItemBase(&view)
+	if username != "" {
+		out.ProgressUpdatedAt = nil
+		if record, ok := s.accountActivity.progressFor(username, it.ID); ok && !record.UpdatedAt.IsZero() {
+			updated := record.UpdatedAt
+			out.ProgressUpdatedAt = &updated
+		}
+	}
+	return out
+}
+
+func (s *Server) toCatalogItemBase(it *library.Item) catalogItem {
 	// The catalog is assembled straight from the store, which does not carry the
 	// derived ordering metadata, so recompute it here rather than reaching into
 	// the scan pipeline. The stored values win where they exist: once the series
@@ -818,17 +975,25 @@ func (s *Server) toCatalogItem(it *library.Item) catalogItem {
 // the listing as 148 rows and made alphabetical browsing useless. The rows for
 // one book are merged, with the parts preserved for playback.
 func (s *Server) mediaCatalog(w http.ResponseWriter, r *http.Request, kind api.MediaKind) {
+	username, scoped, err := s.ensureAccountActivityForRequest(r)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "Account activity is unavailable")
+		return
+	}
+	if !scoped {
+		username = ""
+	}
 	q := strings.ToLower(strings.TrimSpace(r.URL.Query().Get("q")))
 	all := s.store.InternalItemsOfKind(kind)
 	items := []catalogItem{}
 	if kind == api.KindAudiobook {
-		items = s.collapseIntoBooks(all, q)
+		items = s.collapseIntoBooksForUser(all, q, username)
 	} else {
 		for _, it := range all {
 			if q != "" && !catalogMatches(it, q) {
 				continue
 			}
-			items = append(items, s.toCatalogItem(it))
+			items = append(items, s.toCatalogItemForUser(it, username))
 		}
 	}
 	writeJSON(w, http.StatusOK, catalogResponse{
@@ -880,6 +1045,10 @@ func narratorLabel(it catalogItem) string {
 // playback order. Books whose folder cannot be resolved are listed per file so
 // they never disappear from the catalog.
 func (s *Server) collapseIntoBooks(all []*library.Item, q string) []catalogItem {
+	return s.collapseIntoBooksForUser(all, q, "")
+}
+
+func (s *Server) collapseIntoBooksForUser(all []*library.Item, q, username string) []catalogItem {
 	groups, conflicts := library.BookGroups(all, s.cfg().Libraries)
 	byGroup := map[string][]*library.Item{}
 	var ungrouped []*library.Item
@@ -932,7 +1101,7 @@ func (s *Server) collapseIntoBooks(all []*library.Item, q string) []catalogItem 
 		sort.Slice(parts, func(a, b int) bool { return order[parts[a].ID] < order[parts[b].ID] })
 
 		head := parts[0]
-		entry := s.toCatalogItem(head)
+		entry := s.toCatalogItemForUser(head, username)
 		if q != "" && !catalogMatches(head, q) {
 			continue
 		}
@@ -955,20 +1124,31 @@ func (s *Server) collapseIntoBooks(all []*library.Item, q string) []catalogItem 
 		}
 		for i, p := range parts {
 			entry.DurationSeconds += p.DurationSeconds
-			entry.ProgressSeconds += p.ProgressSeconds
+			partProgress := p.ProgressSeconds
+			if username != "" {
+				partProgress = 0
+				if rec, ok := s.accountActivity.progressFor(username, p.ID); ok {
+					partProgress = rec.Seconds
+				}
+			}
+			entry.ProgressSeconds += partProgress
 			entry.Parts = append(entry.Parts, catalogPart{
 				ID:              p.ID,
 				Title:           p.Title,
 				Index:           i + 1,
 				DurationSeconds: p.DurationSeconds,
 				PosterURL:       p.PosterURL,
-				ProgressSeconds: p.ProgressSeconds,
+				ProgressSeconds: partProgress,
 			})
 			if entry.PosterURL == nil && p.PosterURL != nil {
 				entry.PosterURL = p.PosterURL
 			}
 			if entry.ProgressUpdatedAt == nil {
-				if rec, ok := s.store.ProgressFor(p.ID); ok && !rec.UpdatedAt.IsZero() {
+				rec, ok := s.store.ProgressFor(p.ID)
+				if username != "" {
+					rec, ok = s.accountActivity.progressFor(username, p.ID)
+				}
+				if ok && !rec.UpdatedAt.IsZero() {
 					u := rec.UpdatedAt
 					entry.ProgressUpdatedAt = &u
 				}
@@ -981,7 +1161,7 @@ func (s *Server) collapseIntoBooks(all []*library.Item, q string) []catalogItem 
 		if q != "" && !catalogMatches(it, q) {
 			continue
 		}
-		entry := s.toCatalogItem(it)
+		entry := s.toCatalogItemForUser(it, username)
 		if bookID, ok := conflicted[it.ID]; ok {
 			if c, found := conflicts[bookID]; found {
 				entry.BookConflict = &catalogConflict{
@@ -1014,6 +1194,10 @@ func (s *Server) handleAudiobooks(w http.ResponseWriter, r *http.Request) {
 // third return is false for a single-file book, so a caller can leave the
 // response byte-identical to the pre-grouping shape.
 func (s *Server) bookPartsFor(item *library.Item) ([]catalogPart, *catalogConflict, bool) {
+	return s.bookPartsForUser(item, "")
+}
+
+func (s *Server) bookPartsForUser(item *library.Item, username string) ([]catalogPart, *catalogConflict, bool) {
 	all := s.store.InternalItemsOfKind(api.KindAudiobook)
 	groups, conflicts := library.BookGroups(all, s.cfg().Libraries)
 	g, ok := groups[item.ID]
@@ -1030,7 +1214,11 @@ func (s *Server) bookPartsFor(item *library.Item) ([]catalogPart, *catalogConfli
 				DurationSeconds: p.DurationSeconds,
 				PosterURL:       p.PosterURL,
 			}
-			if rec, found := s.store.ProgressFor(p.ID); found {
+			rec, found := s.store.ProgressFor(p.ID)
+			if username != "" {
+				rec, found = s.accountActivity.progressFor(username, p.ID)
+			}
+			if found {
 				part.ProgressSeconds = rec.Seconds
 			}
 			parts = append(parts, part)
@@ -1053,8 +1241,16 @@ func (s *Server) handleAudiobookDetail(w http.ResponseWriter, r *http.Request) {
 	// A request may address any single file of a multi-file book, so the parts
 	// list is resolved from the book grouping rather than assumed to be the
 	// requested file.
-	if parts, conflict, multi := s.bookPartsFor(it); multi {
-		detail := s.toCatalogItem(it)
+	username, scoped, err := s.ensureAccountActivityForRequest(r)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "Account activity is unavailable")
+		return
+	}
+	if !scoped {
+		username = ""
+	}
+	if parts, conflict, multi := s.bookPartsForUser(it, username); multi {
+		detail := s.toCatalogItemForUser(it, username)
 		detail.PartCount = len(parts)
 		detail.Parts = parts
 		detail.BookConflict = conflict
@@ -1087,7 +1283,7 @@ func (s *Server) handleAudiobookDetail(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 	}
-	detail := s.toCatalogItem(it)
+	detail := s.toCatalogItemForUser(it, username)
 	detail.ChapterCount = len(chapters)
 	writeJSON(w, http.StatusOK, catalogDetail{
 		Item:     detail,
@@ -1104,7 +1300,15 @@ func (s *Server) handleAudiobookChapters(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
-	parts, _, multi := s.bookPartsFor(it)
+	username, scoped, err := s.ensureAccountActivityForRequest(r)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "Account activity is unavailable")
+		return
+	}
+	if !scoped {
+		username = ""
+	}
+	parts, _, multi := s.bookPartsForUser(it, username)
 	if !multi {
 		parts = []catalogPart{{
 			ID: it.ID, Title: it.Title, Index: 1, DurationSeconds: it.DurationSeconds,

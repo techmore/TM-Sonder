@@ -419,6 +419,28 @@ dialog.profile-menu {
 .profile-menu-item:hover, .profile-menu-item:focus-visible { background:var(--panel2); color:var(--accent); }
 .profile-bookmark-count { display:grid; place-items:center; min-width:25px; height:25px; padding:0 6px; border-radius:999px; background:var(--accent); color:var(--accent-dark); font-size:12px; font-weight:700; }
 .profile-sign-in { border-top:1px solid var(--line); margin-top:4px; }
+dialog#peopleDlg { width:min(760px, 94vw); max-height:90vh; border:1px solid var(--line); border-radius:14px; background:var(--panel); color:var(--text); padding:0; }
+.people-modal-body { display:grid; gap:18px; }
+.people-sharing-settings { display:grid; grid-template-columns:minmax(0,1fr) auto; align-items:center; gap:10px 18px; padding:14px; border:1px solid var(--line); border-radius:12px; background:var(--panel2); }
+.people-sharing-settings h3 { margin:0 0 4px; font-size:16px; }
+.people-sharing-settings p { margin:0; color:var(--muted); font-size:12px; }
+.people-sharing-settings label { display:flex; align-items:center; gap:8px; font-size:13px; white-space:nowrap; }
+.people-sharing-settings input { accent-color:var(--accent); }
+#peopleSharingStatus { grid-column:1 / -1; min-height:1em; color:var(--muted); font-size:12px; }
+.people-list { display:grid; gap:12px; }
+.people-person { overflow:hidden; border:1px solid var(--line); border-radius:12px; background:var(--panel); }
+.people-person-head { display:flex; align-items:baseline; justify-content:space-between; gap:12px; padding:14px 16px; border-bottom:1px solid var(--line); }
+.people-person-head strong { overflow-wrap:anywhere; font-size:16px; }
+.people-person-head span { color:var(--muted); font-size:12px; text-align:right; }
+.people-person-content { display:grid; grid-template-columns:1fr 1fr; gap:16px; padding:14px 16px; }
+.people-person-content h4 { margin:0 0 8px; color:var(--accent); font-size:12px; letter-spacing:.4px; text-transform:uppercase; }
+.people-activity-list { display:grid; gap:5px; margin:0; padding:0; list-style:none; }
+.people-activity-list li { display:flex; align-items:baseline; justify-content:space-between; gap:10px; padding:5px 0; border-bottom:1px solid var(--line); font-size:12px; }
+.people-activity-list li:last-child { border-bottom:0; }
+.people-activity-list button { overflow:hidden; padding:0; border:0; background:transparent; color:var(--text); text-align:left; text-overflow:ellipsis; white-space:nowrap; cursor:pointer; font:inherit; }
+.people-activity-list button:hover { color:var(--accent); }
+.people-activity-meta { flex:none; color:var(--muted); white-space:nowrap; }
+.people-empty { margin:0; padding:18px; border:1px dashed var(--line); border-radius:10px; color:var(--muted); text-align:center; }
 .bookmarks-panel { padding:22px; }
 .bookmarks-page-head { display:flex; align-items:flex-end; justify-content:space-between; gap:16px; padding:6px 0 16px; border-bottom:1px solid var(--line); }
 .bookmarks-page-head h2 { margin:5px 0 3px !important; color:var(--text) !important; font-size:24px !important; letter-spacing:-.3px !important; text-transform:none !important; }
@@ -1344,11 +1366,15 @@ body:not(.mobile-filters-open) #filterRow { display:none !important; }
   .catalog-detail-cover { width: 104px; }
 
   /* Dialogs get the full sheet treatment. */
-  dialog#detail, dialog#settingsDlg, dialog#inviteDlg {
+  dialog#detail, dialog#settingsDlg, dialog#inviteDlg, dialog#peopleDlg {
     width: 100%; max-width: 100%; max-height: 92vh;
     margin: auto auto 0; border-radius: 18px 18px 0 0; border-bottom: 0;
   }
   .modal-body { padding: 16px; max-height: calc(92vh - 56px); }
+  .people-sharing-settings { grid-template-columns:1fr; align-items:start; }
+  .people-person-content { grid-template-columns:1fr; gap:14px; }
+  .people-person-head { align-items:flex-start; flex-direction:column; gap:4px; }
+  .people-person-head span { text-align:left; }
   dialog video { max-height: 34vh; }
 
   /* Episode and edition rows were four columns wide and crushed. */

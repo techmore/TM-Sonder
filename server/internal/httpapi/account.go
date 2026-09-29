@@ -426,6 +426,7 @@ func renderAccountForm(w http.ResponseWriter, setup, signup bool, next, message,
 <button type="submit">` + html.EscapeString(button) + `</button>
 </form>`
 	if signup {
+		form += `<p class="secondary">When you join, you and the person who invited you can see each other’s bookmarks and playback progress. You can change either sharing setting anytime from Profile → People.</p>`
 		form += `<p class="secondary">Already have an account? <a href="/account/login">Sign in</a>.</p>`
 	} else if !setup {
 		form += `<p class="secondary">Need an account? Use the one-time setup link from the server owner to create the first account. After that, ask an existing user for an invite link.</p>`
