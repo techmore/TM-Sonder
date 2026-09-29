@@ -116,6 +116,28 @@ test('bookmarks live under the profile and default to oldest-first with sortable
   assert.deepEqual(get('sortBookmarkEntries(bookmarkTestEntries, "manual").map(entry => entry.id)'), ['first', 'second', 'third']);
 });
 
+test('book cards show a compact bookmark overlay that fills when queued', () => {
+  const get = catalog([]);
+  const audiobook = get('cardHTML({ id: "audio-1", title: "The Hobbit", kind: "audiobook" })');
+  assert.match(audiobook, /class="book-card-wrap"/);
+  assert.match(audiobook, /class="card-bookmark" data-action="toggle-reading-queue" data-id="audio-1"/);
+  assert.match(audiobook, /aria-label="Bookmark The Hobbit"/);
+  assert.match(audiobook, /stroke-width="1.5"/);
+  assert.match(audiobook, /class="card" data-id="audio-1" data-action="open-detail"/);
+
+  get('readingState.queue = ["audio-1"]');
+  const bookmarked = get('cardHTML({ id: "audio-1", title: "The Hobbit", kind: "audiobook" })');
+  assert.match(bookmarked, /aria-pressed="true"/);
+  assert.match(bookmarked, /fill="currentColor"/);
+  assert.match(bookmarked, /Remove The Hobbit from bookmarks/);
+
+  const ebook = get('cardHTML({ id: "ebook-1", title: "Dune", kind: "ebook" })');
+  assert.match(ebook, /data-id="ebook-1"/);
+  assert.match(ebook, /class="card-bookmark"/);
+  const movieCard = get('cardHTML({ id: "movie-1", title: "Arrival", kind: "movie" })');
+  assert.doesNotMatch(movieCard, /card-bookmark|book-card-wrap/);
+});
+
 test('the book lists page offers one honest 100-title follow queue', () => {
   const get = catalog([]);
   assert.equal(get('TOP_100_BOOKS.length'), 100);

@@ -2846,6 +2846,25 @@
         .sort((a, b) => a.title.localeCompare(b.title));
     }
 
+    function bookmarkIconMarkup(bookmarked) {
+      return bookmarked
+        ? `<svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true" width="20" height="20"><path fill-rule="evenodd" d="M6.32 2.577a49.255 49.255 0 0 1 11.36 0c1.497.174 2.57 1.46 2.57 2.93V21a.75.75 0 0 1-1.085.67L12 18.089l-7.165 3.583A.75.75 0 0 1 3.75 21V5.507c0-1.47 1.073-2.756 2.57-2.93Z" clip-rule="evenodd"/></svg>`
+        : `<svg fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" aria-hidden="true" width="20" height="20"><path stroke-linecap="round" stroke-linejoin="round" d="M17.593 3.322c1.1.128 1.907 1.077 1.907 2.185V21L12 17.25 4.5 21V5.507c0-1.108.806-2.057 1.907-2.185a48.507 48.507 0 0 1 11.186 0Z"/></svg>`;
+    }
+
+    function syncCardBookmark(button, bookmarked = readingState.queue.includes(button.dataset.id)) {
+      const title = button.dataset.bookTitle || "book";
+      const label = bookmarked ? `Remove ${title} from bookmarks` : `Bookmark ${title}`;
+      button.setAttribute("aria-pressed", String(bookmarked));
+      button.setAttribute("aria-label", label);
+      button.title = label;
+      button.innerHTML = bookmarkIconMarkup(bookmarked);
+    }
+
+    function refreshBookmarkButtons() {
+      document.querySelectorAll(".card-bookmark").forEach(button => syncCardBookmark(button));
+    }
+
     function cardHTML(item, opts = {}) {
       const p = progressForItem(item);
       const watched = isWatched(p, item);
@@ -2869,7 +2888,7 @@
       const badge = watched
         ? `<span class="badge watched">WATCHED</span>`
         : (pct > 0 ? `<span class="badge unwatched">${Math.round(100-pct)}% LEFT</span>` : "");
-      return `
+      const card = `
       <button class="card" data-id="${item.id}" data-action="open-detail"
               aria-label="${escapeHTML(item.title)}${metaBits ? ", " + metaBits : ""}">
         <div class="frame">
@@ -2881,6 +2900,13 @@
         <h3>${escapeHTML(opts.showTitle ? (item.showTitle || item.title) : item.title)}</h3>
         <p class="meta">${escapeHTML(metaBits || kindLabel(item.kind))}</p>
       </button>`;
+      if (!item.isPlaceholder && ["audiobook", "ebook"].includes(item.kind)) {
+        const recordID = readingRecordID(item);
+        const bookmarked = readingState.queue.includes(recordID);
+        const label = bookmarked ? `Remove ${item.title} from bookmarks` : `Bookmark ${item.title}`;
+        return `<div class="book-card-wrap">${card}<button type="button" class="card-bookmark" data-action="toggle-reading-queue" data-id="${escapeHTML(recordID)}" data-book-title="${escapeHTML(item.title)}" aria-pressed="${bookmarked}" aria-label="${escapeHTML(label)}" title="${escapeHTML(label)}">${bookmarkIconMarkup(bookmarked)}</button></div>`;
+      }
+      return card;
     }
 
     const PAGE_SIZE = 200;
@@ -3221,6 +3247,7 @@
       readingState.records = Array.isArray(readingState.records) ? readingState.records : [];
       readingByID.clear();
       for (const record of readingState.records) readingByID.set(record.itemID, record);
+      refreshBookmarkButtons();
       renderReadingLists();
       refreshProfileBookmarkCount();
       if (activeTab === "bookmarks") renderBookmarksPage();
@@ -3241,12 +3268,30 @@
         const queue = readingState.queue.filter(id => id !== itemID);
         if (value) queue.push(itemID);
         readingState.queue = queue;
+        refreshBookmarkButtons();
       }
       renderReadingLists();
       refreshProfileBookmarkCount();
       if (activeTab === "bookmarks") renderBookmarksPage();
       if (detailItemID && $("#detail")?.open) openDetail(detailItemID, true);
       if (selectedBookID) renderBookDetailByID(selectedBookID);
+    }
+
+    async function toggleCardBookmark(button) {
+      const itemID = button.dataset.id;
+      const queued = !readingState.queue.includes(itemID);
+      button.disabled = true;
+      button.setAttribute("aria-busy", "true");
+      syncCardBookmark(button, queued);
+      try {
+        await setBookReadingFlag(itemID, "queued", queued);
+      } catch (error) {
+        refreshBookmarkButtons();
+        showBookmarkToast(error.message || "Could not update this bookmark");
+      } finally {
+        button.disabled = false;
+        button.removeAttribute("aria-busy");
+      }
     }
 
     async function moveReadingQueue(index, direction) {
@@ -4335,8 +4380,12 @@
         if (item) browseAuthorBooks(item);
       }
       else if (act === "toggle-reading-queue" && btn.dataset.id) {
-        setBookReadingFlag(btn.dataset.id, "queued", !readingState.queue.includes(btn.dataset.id))
-          .catch(error => { const status = $("#bookDetailShareStatus") || $("#detailShareStatus") || $("#bookmarksStatus"); if (status) status.textContent = error.message || "Could not update bookmarks"; });
+        if (btn.classList.contains("card-bookmark")) {
+          void toggleCardBookmark(btn);
+        } else {
+          setBookReadingFlag(btn.dataset.id, "queued", !readingState.queue.includes(btn.dataset.id))
+            .catch(error => { const status = $("#bookDetailShareStatus") || $("#detailShareStatus") || $("#bookmarksStatus"); if (status) status.textContent = error.message || "Could not update bookmarks"; });
+        }
       }
       else if (act === "toggle-book-like" && btn.dataset.id) {
         setBookReadingFlag(btn.dataset.id, "liked", !readingByID.get(btn.dataset.id)?.likedAt)
@@ -4853,6 +4902,7 @@
     let brandInviteSuppressClick = false;
     let brandInviteSuppressTimer = null;
     let brandInviteToastTimer = null;
+    let bookmarkToastTimer = null;
     brandInviteButton.addEventListener("pointerdown", event => {
       if (event.button !== 0) return;
       clearTimeout(brandInviteHoldTimer);
@@ -5061,6 +5111,18 @@
       brandInviteToastTimer = setTimeout(() => {
         toast.hidden = true;
         brandInviteToastTimer = null;
+      }, 3000);
+    }
+
+    function showBookmarkToast(message) {
+      const toast = document.querySelector("#bookmarkToast");
+      if (!toast) return;
+      toast.textContent = message;
+      toast.hidden = false;
+      clearTimeout(bookmarkToastTimer);
+      bookmarkToastTimer = setTimeout(() => {
+        toast.hidden = true;
+        bookmarkToastTimer = null;
       }, 3000);
     }
 

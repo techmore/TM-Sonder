@@ -22,7 +22,7 @@
       font:inherit; cursor:pointer; touch-action:manipulation; user-select:none; -webkit-user-select:none;
     }
     .brand-share-trigger:active { opacity:.76; }
-    .brand-invite-toast {
+    .brand-invite-toast, .bookmark-toast {
       position:fixed; z-index:1000; left:50%; bottom:calc(var(--tabbar-h, 0px) + env(safe-area-inset-bottom, 0px) + 12px);
       transform:translateX(-50%); width:max-content; max-width:calc(100vw - 28px);
       padding:11px 16px; border:1px solid var(--line); border-radius:999px;
@@ -60,6 +60,21 @@
     }
     .grid.rail-mode { display:flex; overflow-x:auto; padding-top:4px; }
     .grid.rail-mode .card { flex:0 0 165px; min-width:0; }
+    .book-card-wrap { position:relative; min-width:0; width:100%; }
+    .book-card-wrap > .card { width:100%; }
+    .grid.rail-mode .book-card-wrap, .catalog-strip .book-card-wrap { flex:0 0 165px; min-width:0; }
+    .card-bookmark {
+      position:absolute; z-index:3; top:7px; right:7px; display:grid; place-items:center;
+      width:40px; height:40px; padding:0; border:1px solid rgba(255,255,255,.36); border-radius:50%;
+      color:#fff; background:rgba(10,13,9,.76); box-shadow:0 2px 9px rgba(0,0,0,.36);
+      backdrop-filter:blur(7px); cursor:pointer; touch-action:manipulation;
+      transition:transform .15s ease, background .15s ease, color .15s ease;
+    }
+    .card-bookmark:hover { transform:scale(1.06); background:rgba(10,13,9,.94); }
+    .card-bookmark[aria-pressed="true"] { color:var(--accent); border-color:rgba(182,213,109,.72); }
+    .card-bookmark:focus-visible { outline:2px solid var(--accent); outline-offset:2px; }
+    .card-bookmark:disabled { cursor:progress; opacity:.78; }
+    .card-bookmark svg { display:block; flex:none; }
 
     /* Rails catalog view: shelves stay browseable on the left while the
        selected title remains visible as an invitation to start consuming. */
@@ -325,6 +340,7 @@
       main.grid { grid-template-columns:repeat(auto-fill,minmax(128px,1fr)); gap:12px; padding:14px; }
       .catalog-rails { padding:14px 14px 40px; }
       .catalog-strip .card { flex-basis:136px; }
+      .catalog-strip .book-card-wrap { flex-basis:136px; }
       .catalog-shelf { grid-template-columns:repeat(auto-fill,minmax(136px,1fr)); gap:12px; }
       .catalog-detail-hero { grid-template-columns:104px minmax(0,1fr); gap:12px; }
       .catalog-detail-cover { width:104px; }
@@ -1285,11 +1301,13 @@ body:not(.mobile-filters-open) #filterRow { display:none !important; }
     -webkit-mask-image: linear-gradient(90deg, #000 0, #000 calc(100% - 34px), transparent 100%);
   }
   .grid.rail-mode .card, .catalog-strip .card { scroll-snap-align: start; }
+  .grid.rail-mode .book-card-wrap, .catalog-strip .book-card-wrap { scroll-snap-align:start; }
   /* Denser: 132px cards on a 393px screen gave three across and a lot of
      scrolling to reach anything. 104px gives four, and the rails show more of
      the shelf at once. */
   .grid.rail-mode .card { flex-basis: 104px; }
   .catalog-strip .card { flex-basis: 104px; }
+  .grid.rail-mode .book-card-wrap, .catalog-strip .book-card-wrap { flex-basis:104px; }
   .catalog-shelf { grid-template-columns: repeat(auto-fill, minmax(104px, 1fr)); gap: 9px; }
   main.grid { grid-template-columns: repeat(auto-fill, minmax(104px, 1fr)); gap: 9px; padding: 10px 10px 24px; }
   main.grid .card h3 { font-size: 11.5px; }
