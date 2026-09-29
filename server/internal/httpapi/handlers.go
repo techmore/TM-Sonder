@@ -693,7 +693,11 @@ func (s *Server) applyUpdate(w http.ResponseWriter, r *http.Request) (*library.I
 	if upd.SubtitlesEnabled != nil {
 		rec.SubtitlesEnabled = upd.SubtitlesEnabled
 	}
-	rec.UpdatedAt = time.Now().UTC()
+	if upd.UpdatedAt != nil {
+		rec.UpdatedAt = upd.UpdatedAt.UTC()
+	} else {
+		rec.UpdatedAt = time.Now().UTC()
+	}
 	if rec.ID == "" {
 		rec.ID = api.NewID()
 	}

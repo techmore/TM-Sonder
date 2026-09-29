@@ -276,11 +276,13 @@ type LibraryResponse struct {
 }
 
 type PlaybackStateUpdate struct {
-	Seconds          float64 `json:"seconds"`
-	Duration         float64 `json:"duration"`
-	AudioTrackID     *string `json:"audioTrackID,omitempty"`
-	SubtitleTrackID  *string `json:"subtitleTrackID,omitempty"`
-	SubtitlesEnabled *bool   `json:"subtitlesEnabled,omitempty"`
+	Seconds  float64 `json:"seconds"`
+	Duration float64 `json:"duration"`
+	// UpdatedAt preserves checkpoint order when requests arrive out of order.
+	UpdatedAt        *time.Time `json:"updatedAt,omitempty"`
+	AudioTrackID     *string    `json:"audioTrackID,omitempty"`
+	SubtitleTrackID  *string    `json:"subtitleTrackID,omitempty"`
+	SubtitlesEnabled *bool      `json:"subtitlesEnabled,omitempty"`
 }
 
 // AudiobookChapter mirrors SonderAudiobookChapter: endSeconds is null for

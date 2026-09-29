@@ -511,11 +511,58 @@
       const value = localJSON(PENDING_PROGRESS_KEY, []);
       return Array.isArray(value) ? value : [];
     }
+    const progressWritesByID = new Map();
+    let lastProgressTimestampMS = 0;
+    function progressTimestampIsAtLeast(left, right) {
+      const leftMS = Date.parse(left || "");
+      const rightMS = Date.parse(right || "");
+      if (Number.isFinite(leftMS) && Number.isFinite(rightMS)) return leftMS >= rightMS;
+      return String(left || "") >= String(right || "");
+    }
+    function nextProgressTimestamp(itemID) {
+      const lastSavedMS = Date.parse(progressByID.get(itemID)?.updatedAt || "");
+      lastProgressTimestampMS = Math.max(
+        Date.now(),
+        lastProgressTimestampMS + 1,
+        Number.isFinite(lastSavedMS) ? lastSavedMS + 1 : 0,
+      );
+      return new Date(lastProgressTimestampMS).toISOString();
+    }
+    function writeProgressCheckpoint(record) {
+      const previous = progressWritesByID.get(record.itemID) || Promise.resolve();
+      const request = previous.catch(() => {}).then(() => fetch(api("/api/progress/" + record.itemID), {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ seconds: record.seconds, duration: record.duration, updatedAt: record.updatedAt }),
+        keepalive: true,
+      }));
+      progressWritesByID.set(record.itemID, request);
+      const cleanup = () => {
+        if (progressWritesByID.get(record.itemID) === request) progressWritesByID.delete(record.itemID);
+      };
+      request.then(cleanup, cleanup);
+      return request;
+    }
+    function settleProgressCheckpoint(checkpoint, session) {
+      if (!session?.updatedAt) return false;
+      const saved = {
+        itemID: checkpoint.itemID,
+        seconds: Number(session.seconds) || 0,
+        duration: Number(session.duration) || checkpoint.duration,
+        updatedAt: session.updatedAt,
+      };
+      if (!progressTimestampIsAtLeast(saved.updatedAt, checkpoint.updatedAt)) return false;
+      const current = progressByID.get(checkpoint.itemID);
+      if (!current || progressTimestampIsAtLeast(saved.updatedAt, current.updatedAt)) {
+        progressByID.set(checkpoint.itemID, saved);
+      }
+      clearPendingProgress(checkpoint.itemID, checkpoint.updatedAt);
+      return true;
+    }
     function savePendingProgress(record) {
       const pending = pendingProgress();
       const index = pending.findIndex(entry => entry.itemID === record.itemID);
       if (index < 0) pending.push(record);
-      else if (String(record.updatedAt) >= String(pending[index].updatedAt)) pending[index] = record;
+      else if (progressTimestampIsAtLeast(record.updatedAt, pending[index].updatedAt)) pending[index] = record;
       writeLocalJSON(PENDING_PROGRESS_KEY, pending);
     }
     function clearPendingProgress(itemID, updatedAt) {
@@ -526,13 +573,30 @@
       for (const record of pendingProgress()) {
         if (!record?.itemID || !Number.isFinite(Number(record.seconds))) continue;
         const current = progressByID.get(record.itemID);
-        if (!current || String(record.updatedAt) > String(current.updatedAt || "")) {
+        if (!current || !progressTimestampIsAtLeast(current.updatedAt, record.updatedAt)) {
           progressByID.set(record.itemID, record);
         }
       }
     }
     function serverCheckpointIsCurrent(serverRecord, localRecord) {
-      return !!serverRecord && String(serverRecord.updatedAt || "") >= String(localRecord.updatedAt || "");
+      return !!serverRecord && progressTimestampIsAtLeast(serverRecord.updatedAt, localRecord.updatedAt);
+    }
+    function replaceServerProgress(serverProgress = []) {
+      const previous = [...progressByID.entries()];
+      progressByID.clear();
+      (serverProgress || []).forEach(record => {
+        if (record?.itemID) progressByID.set(record.itemID, record);
+      });
+      // A library response can have started before a checkpoint finished
+      // saving. Keep a newer in-memory checkpoint if that response is stale.
+      for (const [itemID, record] of previous) {
+        const serverRecord = progressByID.get(itemID);
+        if (!serverRecord || !progressTimestampIsAtLeast(serverRecord.updatedAt, record.updatedAt)) {
+          progressByID.set(itemID, record);
+        }
+      }
+      restorePendingProgress();
+      replayPendingProgress(serverProgress).catch(() => {});
     }
     async function replayPendingProgress(serverProgress = []) {
       const serverByID = new Map((serverProgress || []).map(record => [record.itemID, record]));
@@ -544,18 +608,10 @@
           continue;
         }
         try {
-          const response = await fetch(api("/api/progress/" + record.itemID), {
-            method: "POST", headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ seconds: record.seconds, duration: record.duration }), keepalive: true,
-          });
+          const response = await writeProgressCheckpoint(record);
           if (!response.ok) continue;
           const session = await response.json().catch(() => null);
-          const acknowledged = session?.updatedAt || record.updatedAt;
-          const visible = progressByID.get(record.itemID);
-          if (!visible || String(visible.updatedAt || "") <= record.updatedAt) {
-            progressByID.set(record.itemID, { ...record, updatedAt: acknowledged });
-          }
-          clearPendingProgress(record.itemID, record.updatedAt);
+          settleProgressCheckpoint(record, session);
         } catch { /* retry on the next page load or online event */ }
       }
     }
@@ -1483,24 +1539,15 @@
       const payload = { seconds: media.currentTime, duration: media.duration };
       const checkpoint = {
         itemID: targetID, seconds: payload.seconds, duration: payload.duration,
-        updatedAt: new Date().toISOString(),
+        updatedAt: nextProgressTimestamp(targetID),
       };
       progressByID.set(targetID, checkpoint);
       if (selectedBookID === item.id) renderBookProgress(item);
       savePendingProgress(checkpoint);
-      fetch(api("/api/progress/" + targetID), {
-        method: "POST", headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(payload), keepalive: true,
-      }).then(async response => {
+      writeProgressCheckpoint(checkpoint).then(async response => {
         if (!response.ok) return;
         const saved = await response.json().catch(() => null);
-        if (saved?.updatedAt) {
-          const current = progressByID.get(targetID);
-          if (!current || String(current.updatedAt || "") <= checkpoint.updatedAt) {
-            progressByID.set(targetID, { ...checkpoint, updatedAt: saved.updatedAt });
-          }
-        }
-        clearPendingProgress(targetID, checkpoint.updatedAt);
+        settleProgressCheckpoint(checkpoint, saved);
       }).catch(() => {});
     }
 
@@ -1887,6 +1934,9 @@
       saveProgress(true);
       persistReadSession(false);
     });
+    if (typeof window !== "undefined" && typeof window.addEventListener === "function") {
+      window.addEventListener("online", () => replayPendingProgress().catch(() => {}));
+    }
 
     // --- metadata facets (genres / authors / narrators / studios) ----------
     // Facets are scoped to the items in the current tab, so movie genres and
@@ -5010,8 +5060,7 @@
       showAllLibraryTab = data.serverSettings?.showAllLibraryTab === true;
       applyTheme(data.theme?.preset || "earthy");
       items = data.items ?? [];
-      (data.progress ?? []).forEach(pr => progressByID.set(pr.itemID, pr));
-      restorePendingProgress();
+      replaceServerProgress(data.progress ?? []);
       if (!restoreCopyGroups(etag)) {
         rebuildCopyGroups();
         cacheCopyGroups(etag);
@@ -5029,7 +5078,6 @@
       }
       render();
       if (sharedBook) openDetail(sharedBook.id);
-      replayPendingProgress(data.progress ?? []).catch(() => {});
       refreshLists().catch(() => { lists = []; });
       refreshReadingState().catch(() => { readingState = { queue: [], records: [] }; });
       if (activeTab === "optimize") {
@@ -5703,7 +5751,7 @@
         return { etag, data: await response.json() };
       }).then(({ etag, data }) => {
         items = data.items ?? [];
-        (data.progress ?? []).forEach(pr => progressByID.set(pr.itemID, pr));
+        replaceServerProgress(data.progress ?? []);
         storageData = null;
         if (!restoreCopyGroups(etag)) {
           rebuildCopyGroups();
@@ -5739,8 +5787,7 @@
       showAllLibraryTab = data.serverSettings?.showAllLibraryTab === true;
       applyEmptyLibraryTabs();
       storageData = null;
-      progressByID.clear();
-      (data.progress ?? []).forEach(pr => progressByID.set(pr.itemID, pr));
+      replaceServerProgress(data.progress ?? []);
       if (!restoreCopyGroups(etag)) {
         rebuildCopyGroups();
         cacheCopyGroups(etag);
