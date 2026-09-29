@@ -92,6 +92,30 @@ test('All is optional in Settings and Storage/Optimize are Settings destinations
   assert.match(librarySource, /showAllLibraryTab = data\.serverSettings\?\.showAllLibraryTab === true/);
 });
 
+test('bookmarks live under the profile and default to oldest-first with sortable manual order', () => {
+  assert.match(libraryHTML, /id="profileBtn"[^>]*aria-label="Profile"/);
+  assert.match(libraryHTML, /id="profileMenu"[\s\S]*id="profileBookmarksBtn"[\s\S]*id="profileBookmarkCount"/);
+  assert.match(libraryHTML, /id="bookmarksPanel"[\s\S]*id="bookmarksSort"[\s\S]*value="oldest"/);
+  assert.match(libraryHTML, /<option value="manual">Manual order<\/option>/);
+  assert.match(librarySource, /function selectBookmarksPage\(\)/);
+  assert.match(librarySource, /requestedTab === "bookmarks" \? requestedTab/);
+  assert.match(librarySource, /data-action="toggle-reading-queue"[\s\S]{0,230}\+ Bookmark for later/);
+  assert.match(librarySource, /data-action="move-reading-queue"/);
+
+  const get = catalog([]);
+  const entries = [
+    { id: 'third', index: 2, queuedAt: '2026-04-04T10:00:00Z', item: { title: 'Zulu', author: 'Amy' } },
+    { id: 'first', index: 0, queuedAt: '2026-04-01T10:00:00Z', item: { title: 'Alpha', author: 'Zoe' } },
+    { id: 'second', index: 1, queuedAt: '2026-04-01T10:00:00Z', item: { title: 'Beta', author: 'Amy' } },
+  ];
+  get(`bookmarkTestEntries = ${JSON.stringify(entries)}`);
+  assert.deepEqual(get('sortBookmarkEntries(bookmarkTestEntries, "oldest").map(entry => entry.id)'), ['first', 'second', 'third']);
+  assert.deepEqual(get('sortBookmarkEntries(bookmarkTestEntries, "newest").map(entry => entry.id)'), ['third', 'second', 'first']);
+  assert.deepEqual(get('sortBookmarkEntries(bookmarkTestEntries, "title").map(entry => entry.id)'), ['first', 'second', 'third']);
+  assert.deepEqual(get('sortBookmarkEntries(bookmarkTestEntries, "author").map(entry => entry.id)'), ['second', 'third', 'first']);
+  assert.deepEqual(get('sortBookmarkEntries(bookmarkTestEntries, "manual").map(entry => entry.id)'), ['first', 'second', 'third']);
+});
+
 test('the book lists page offers one honest 100-title follow queue', () => {
   const get = catalog([]);
   assert.equal(get('TOP_100_BOOKS.length'), 100);

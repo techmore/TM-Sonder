@@ -5,6 +5,13 @@
     let listFollowInProgress = false;
     let readingState = { queue: [], records: [] };
     const readingByID = new Map();
+    const BOOKMARK_SORT_KEY = "sonder-bookmarks-sort-v1";
+    const BOOKMARK_SORT_MODES = ["oldest", "newest", "title", "author", "manual"];
+    let bookmarksSort = "oldest";
+    try {
+      const savedSort = localStorage.getItem(BOOKMARK_SORT_KEY);
+      if (BOOKMARK_SORT_MODES.includes(savedSort)) bookmarksSort = savedSort;
+    } catch (_) { /* Keep the oldest-first default when local storage is unavailable. */ }
     let detailItemID = null;
     let selectedBookID = null;
     let bookPageReturnHash = "";
@@ -13,6 +20,27 @@
     const listCandidateState = new Map();
     let listIndexGeneration = 0;
     const progressByID = new Map();
+
+    function sortBookmarkEntries(entries, mode) {
+      const addedOrder = (a, b) => {
+        const aTime = Date.parse(a.queuedAt || "");
+        const bTime = Date.parse(b.queuedAt || "");
+        if (Number.isFinite(aTime) && Number.isFinite(bTime) && aTime !== bTime) return aTime - bTime;
+        return a.index - b.index;
+      };
+      return [...entries].sort((a, b) => {
+        if (mode === "manual") return a.index - b.index;
+        if (mode === "newest") return -addedOrder(a, b);
+        if (mode === "title") {
+          return String(a.item?.sortTitle || a.item?.title || "").localeCompare(String(b.item?.sortTitle || b.item?.title || "")) || a.index - b.index;
+        }
+        if (mode === "author") {
+          return String(a.item?.author || "").localeCompare(String(b.item?.author || "")) ||
+            String(a.item?.sortTitle || a.item?.title || "").localeCompare(String(b.item?.sortTitle || b.item?.title || "")) || a.index - b.index;
+        }
+        return addedOrder(a, b);
+      });
+    }
 
     const TOP_100_BOOKS = [
       "Don Quixote", "Middlemarch", "War and Peace", "The Great Gatsby", "Beloved", "Ulysses", "One Hundred Years of Solitude", "The Brothers Karamazov", "Anna Karenina", "Madame Bovary",
@@ -3047,11 +3075,12 @@
       const seg = location.hash.replace(/^#\/?/, "").split("/")
         .filter(s => s !== "").map(decodeURIComponent);
       if (seg.length === 0) return false;
-      const tabs = ["all", "movies", "tvshows", "documentaries", "audiobooks", "books", "storage", "optimize"];
+      const tabs = ["all", "movies", "tvshows", "documentaries", "audiobooks", "books", "storage", "optimize", "bookmarks"];
       // Keep old #lists links useful after Lists moved into the reading tabs.
       const legacyListsTab = tabIsHidden("books") && !tabIsHidden("audiobooks") ? "audiobooks" : "books";
       const requestedTab = seg[0] === "lists" ? legacyListsTab : seg[0];
-      const tab = tabs.includes(requestedTab) && !tabIsHidden(requestedTab) ? requestedTab : defaultLibraryTab();
+      const tab = requestedTab === "bookmarks" ? requestedTab
+        : tabs.includes(requestedTab) && !tabIsHidden(requestedTab) ? requestedTab : defaultLibraryTab();
       activeTab = tab;
       listsPageOpen = seg[0] === "lists" || (["audiobooks", "books"].includes(tab) && ["lists", "list"].includes(seg[1]));
       for (const b of document.querySelectorAll("#tabs button"))
@@ -3133,6 +3162,27 @@
       window.scrollTo({ top:0 });
     }
 
+    function selectBookmarksPage() {
+      activeTab = "bookmarks";
+      selectedBookID = null;
+      bookPageReturnHash = "";
+      detailItemID = null;
+      selectedListID = null;
+      listsPageOpen = false;
+      openShow = null;
+      openSeason = null;
+      currentPage = 1;
+      document.title = "Bookmarks · TM Sonder";
+      for (const button of document.querySelectorAll("#tabs button[data-tab]")) button.classList.remove("active");
+      if (optimizationPollTimer) {
+        clearTimeout(optimizationPollTimer);
+        optimizationPollTimer = null;
+      }
+      render();
+      syncHash(true);
+      window.scrollTo({ top: 0, behavior: "smooth" });
+    }
+
     for (const b of document.querySelectorAll("#tabs button")) {
       b.addEventListener("click", () => selectLibraryTab(b.dataset.tab));
     }
@@ -3172,6 +3222,8 @@
       readingByID.clear();
       for (const record of readingState.records) readingByID.set(record.itemID, record);
       renderReadingLists();
+      refreshProfileBookmarkCount();
+      if (activeTab === "bookmarks") renderBookmarksPage();
       if (detailItemID && $("#detail")?.open) openDetail(detailItemID, true);
       if (selectedBookID) renderBookDetailByID(selectedBookID);
       await replayPendingReadingSessions();
@@ -3191,6 +3243,8 @@
         readingState.queue = queue;
       }
       renderReadingLists();
+      refreshProfileBookmarkCount();
+      if (activeTab === "bookmarks") renderBookmarksPage();
       if (detailItemID && $("#detail")?.open) openDetail(detailItemID, true);
       if (selectedBookID) renderBookDetailByID(selectedBookID);
     }
@@ -3207,6 +3261,7 @@
       if (!response.ok) throw new Error("Could not reorder the reading queue");
       readingState.queue = (await response.json()).queue || queue;
       renderReadingLists();
+      if (activeTab === "bookmarks") renderBookmarksPage();
     }
 
     async function shareBook(itemID) {
@@ -3245,7 +3300,48 @@
           : "";
         return `<li>${poster}<span class="queue-position">${index + 1}.</span><button class="queue-title" data-action="open-detail" data-id="${escapeHTML(id)}">${escapeHTML(item.title)}</button><span class="queue-meta">${escapeHTML([item.author, kindLabel(item.kind)].filter(Boolean).join(" · ") + progressLabel)}</span><span class="queue-actions"><button type="button" data-action="move-reading-queue" data-index="${index}" data-direction="-1" aria-label="Move ${escapeHTML(item.title)} up" ${index === 0 ? "disabled" : ""}>↑</button><button type="button" data-action="move-reading-queue" data-index="${index}" data-direction="1" aria-label="Move ${escapeHTML(item.title)} down" ${index === readingState.queue.length - 1 ? "disabled" : ""}>↓</button><button type="button" data-action="remove-reading-queue" data-id="${escapeHTML(id)}">Remove</button></span></li>`;
       }).join("");
-      return `<section class="reading-queue"><div class="reading-queue-head"><div><h3>Reading queue</h3><p>Books to listen to or read next, in your chosen order.</p></div><span>${entries.length}</span></div><p class="queue-status" id="readingQueueStatus" role="status" aria-live="polite"></p>${rows ? `<ol>${rows}</ol>` : `<p class="queue-empty">Your queue is empty. Save a book from its details to keep it here.</p>`}</section>`;
+      return `<section class="reading-queue"><div class="reading-queue-head"><div><h3>Bookmarks · reading queue</h3><p>Saved books also appear in Profile → Bookmarks, oldest first by default.</p></div><span>${entries.length}</span></div><p class="queue-status" id="readingQueueStatus" role="status" aria-live="polite"></p>${rows ? `<ol>${rows}</ol>` : `<p class="queue-empty">Your queue is empty. Bookmark a book from its details to keep it here.</p>`}</section>`;
+    }
+
+    function bookmarkEntries() {
+      return readingState.queue.map((id, index) => {
+        const item = items.find(candidate => candidate.id === id);
+        const record = readingByID.get(id);
+        return { id, index, item, record, queuedAt: record?.queuedAt || "" };
+      }).filter(entry => entry.item && ["audiobook", "ebook"].includes(entry.item.kind));
+    }
+
+    function refreshProfileBookmarkCount() {
+      const count = bookmarkEntries().length;
+      const badge = $("#profileBookmarkCount");
+      const button = $("#profileBookmarksBtn");
+      if (badge) badge.textContent = String(count);
+      if (button) button.setAttribute("aria-label", `Bookmarks, ${count} ${count === 1 ? "book" : "books"}`);
+    }
+
+    function renderBookmarksPage() {
+      const host = $("#bookmarksView");
+      if (!host) return;
+      const entries = sortBookmarkEntries(bookmarkEntries(), bookmarksSort);
+      host.innerHTML = entries.length ? entries.map((entry, position) => {
+        const { id, index, item, record } = entry;
+        const poster = item.posterURL
+          ? `<img class="queue-cover" src="${escapeHTML(api(item.posterURL))}" alt="" loading="lazy">`
+          : `<span class="queue-cover queue-cover-empty" aria-hidden="true">▧</span>`;
+        const progress = item.kind === "audiobook" ? progressForItem(item) : null;
+        const progressLabel = progress?.seconds > 0
+          ? ` · ${Math.min(100, Math.round(progress.seconds / (progress.duration || item.durationSeconds || 1) * 100))}% heard`
+          : "";
+        const author = item.author ? `${item.author} · ` : "";
+        const addedAt = record?.queuedAt
+          ? `Added ${new Date(record.queuedAt).toLocaleDateString(undefined, { year: "numeric", month: "short", day: "numeric" })}`
+          : `Queue position ${index + 1}`;
+        const reorder = bookmarksSort === "manual"
+          ? `<button type="button" data-action="move-reading-queue" data-index="${index}" data-direction="-1" aria-label="Move ${escapeHTML(item.title)} up" ${index === 0 ? "disabled" : ""}>↑</button><button type="button" data-action="move-reading-queue" data-index="${index}" data-direction="1" aria-label="Move ${escapeHTML(item.title)} down" ${index === readingState.queue.length - 1 ? "disabled" : ""}>↓</button>`
+          : "";
+        return `<li>${poster}<span class="queue-position">${position + 1}.</span><button class="queue-title" data-action="open-detail" data-id="${escapeHTML(id)}">${escapeHTML(item.title)}</button><span class="queue-meta">${escapeHTML(`${author}${kindLabel(item.kind)}${progressLabel}`)}</span><time class="bookmark-added-at"${record?.queuedAt ? ` datetime="${escapeHTML(record.queuedAt)}"` : ""}>${escapeHTML(addedAt)}</time><span class="queue-actions">${reorder}<button type="button" data-action="remove-reading-queue" data-id="${escapeHTML(id)}">Remove</button></span></li>`;
+      }).join("") : `<li class="bookmarks-empty">No bookmarks yet. Open an audiobook or ebook and choose “Bookmark for later” to start your queue.</li>`;
+      refreshProfileBookmarkCount();
     }
 
     function renderLikedBooks() {
@@ -3807,7 +3903,7 @@
     function renderReadingLists() {
       const panel = $("#listsPanel");
       if (!panel) return;
-      const visible = listsPageOpen || !["storage", "optimize"].includes(activeTab);
+      const visible = listsPageOpen || !["storage", "optimize", "bookmarks"].includes(activeTab);
       panel.hidden = !visible;
       if (visible) renderLists();
     }
@@ -3815,15 +3911,18 @@
     function render() {
       const storage = activeTab === "storage";
       const optimize = activeTab === "optimize";
+      const bookmarksPage = activeTab === "bookmarks";
       const bookTab = ["audiobooks", "books"].includes(activeTab);
       const listsPage = listsPageOpen && bookTab;
       const coverFilter = $("#coverFilter");
-      if (coverFilter) coverFilter.hidden = activeTab !== "audiobooks" || listsPage;
+      if (coverFilter) coverFilter.hidden = activeTab !== "audiobooks" || listsPage || bookmarksPage;
       for (const selector of ["#q", "#watched", "#sort"]) {
         const control = $(selector);
-        if (control) control.hidden = listsPage;
+        if (control) control.hidden = listsPage || bookmarksPage;
       }
-      if (listsPage) $("#mobileFilterToggle").hidden = true;
+      if (listsPage || bookmarksPage) $("#mobileFilterToggle").hidden = true;
+      $("#bookmarksPanel").hidden = !bookmarksPage;
+      document.body.classList.toggle("bookmarks-mode", bookmarksPage);
       const bookAreaNav = $("#bookAreaNav");
       if (bookAreaNav) {
         bookAreaNav.hidden = !bookTab;
@@ -3857,11 +3956,30 @@
         $("#seasonList").hidden = true;
         $("#pager").hidden = true;
         $("#listsPanel").hidden = true;
+        $("#bookmarksPanel").hidden = true;
         renderBookDetail(bookPage);
         return;
       }
       document.body.classList.toggle("storage-mode", storage);
       document.body.classList.toggle("optimize-mode", optimize);
+      if (bookmarksPage) {
+        document.title = "Bookmarks · TM Sonder";
+        document.body.classList.remove("storage-mode", "optimize-mode", "mobile-filters-open");
+        $("#filterRow").hidden = true;
+        $("#storagePanel").hidden = true;
+        $("#optimizationPage").hidden = true;
+        $("#continueRow").hidden = true;
+        $("#railsRow").hidden = true;
+        $("#movieCatalog").hidden = true;
+        $("#backRow").hidden = true;
+        $("#grid").hidden = true;
+        $("#seasonList").hidden = true;
+        $("#pager").hidden = true;
+        $("#listsPanel").hidden = true;
+        $("#bookmarksPanel").hidden = false;
+        renderBookmarksPage();
+        return;
+      }
       $("#storagePanel").hidden = !storage;
       renderReadingLists();
       $("#optimizationPage").hidden = !optimize;
@@ -4218,7 +4336,7 @@
       }
       else if (act === "toggle-reading-queue" && btn.dataset.id) {
         setBookReadingFlag(btn.dataset.id, "queued", !readingState.queue.includes(btn.dataset.id))
-          .catch(error => { const status = $("#bookDetailShareStatus") || $("#detailShareStatus"); if (status) status.textContent = error.message || "Could not update queue"; });
+          .catch(error => { const status = $("#bookDetailShareStatus") || $("#detailShareStatus") || $("#bookmarksStatus"); if (status) status.textContent = error.message || "Could not update bookmarks"; });
       }
       else if (act === "toggle-book-like" && btn.dataset.id) {
         setBookReadingFlag(btn.dataset.id, "liked", !readingByID.get(btn.dataset.id)?.likedAt)
@@ -4227,12 +4345,12 @@
       else if (act === "share-book" && btn.dataset.id) shareBook(btn.dataset.id);
       else if (act === "move-reading-queue") {
         moveReadingQueue(Number(btn.dataset.index), Number(btn.dataset.direction)).catch(error => {
-          const status = $("#readingQueueStatus"); if (status) status.textContent = error.message || "Could not reorder queue";
+          const status = $("#readingQueueStatus") || $("#bookmarksStatus"); if (status) status.textContent = error.message || "Could not reorder bookmarks";
         });
       }
       else if (act === "remove-reading-queue" && btn.dataset.id) {
         setBookReadingFlag(btn.dataset.id, "queued", false).catch(error => {
-          const status = $("#readingQueueStatus"); if (status) status.textContent = error.message || "Could not remove book";
+          const status = $("#readingQueueStatus") || $("#bookmarksStatus"); if (status) status.textContent = error.message || "Could not remove bookmark";
         });
       }
       else if (act === "open-show" && btn.dataset.show) openShowPage(btn.dataset.show);
@@ -4493,7 +4611,7 @@
               ${plan ? `<button id="bookDetailResume" type="button" class="book-resume-button" data-action="play-item" data-id="${escapeHTML(item.id)}" aria-label="${escapeHTML(playState.label)}: ${escapeHTML(title)}">${escapeHTML(playState.label)}</button><span id="bookDetailResumeNote" class="muted">${escapeHTML(playState.note)}</span>` : `<a class="book-resume-button" href="${api("/stream/" + item.id)}" target="_blank" rel="noopener">Open in a player</a>`}
             </div>
             <div class="book-actions" aria-label="Book actions">
-              <button type="button" data-action="toggle-reading-queue" data-id="${escapeHTML(recordID)}" aria-pressed="${queued}">${queued ? "✓ In reading queue" : "+ Add to reading queue"}</button>
+              <button type="button" data-action="toggle-reading-queue" data-id="${escapeHTML(recordID)}" aria-pressed="${queued}">${queued ? "✓ Bookmarked" : "+ Bookmark for later"}</button>
               <button type="button" data-action="toggle-book-like" data-id="${escapeHTML(recordID)}" aria-pressed="${liked}">${liked ? "♥ Liked" : "♡ Like"}</button>
               <button type="button" data-action="share-book" data-id="${escapeHTML(recordID)}">Share link</button>
               <span id="bookDetailShareStatus" class="book-detail-status" role="status" aria-live="polite"></span>
@@ -4636,7 +4754,7 @@
       const isQueued = readingState.queue.includes(recordID);
       const isLiked = !!readingRecord?.likedAt;
       const readingActions = ["audiobook", "ebook"].includes(item.kind)
-        ? `<div class="book-actions" aria-label="Book actions"><button type="button" data-action="toggle-reading-queue" data-id="${escapeHTML(recordID)}" aria-pressed="${isQueued}">${isQueued ? "✓ In reading queue" : "+ Add to reading queue"}</button><button type="button" data-action="toggle-book-like" data-id="${escapeHTML(recordID)}" aria-pressed="${isLiked}">${isLiked ? "♥ Liked" : "♡ Like"}</button><button type="button" data-action="share-book" data-id="${escapeHTML(recordID)}">Share link</button><span id="detailShareStatus" role="status" aria-live="polite"></span></div>`
+        ? `<div class="book-actions" aria-label="Book actions"><button type="button" data-action="toggle-reading-queue" data-id="${escapeHTML(recordID)}" aria-pressed="${isQueued}">${isQueued ? "✓ Bookmarked" : "+ Bookmark for later"}</button><button type="button" data-action="toggle-book-like" data-id="${escapeHTML(recordID)}" aria-pressed="${isLiked}">${isLiked ? "♥ Liked" : "♡ Like"}</button><button type="button" data-action="share-book" data-id="${escapeHTML(recordID)}">Share link</button><span id="detailShareStatus" role="status" aria-live="polite"></span></div>`
         : "";
       const historyHTML = item.kind === "audiobook" ? readHistoryHTML(readingRecord) : "";
 
@@ -4770,6 +4888,36 @@
       void copyBrandInviteLink();
     });
     document.querySelector("#settingsBtn").addEventListener("click", openSettings);
+    const profileButton = document.querySelector("#profileBtn");
+    const profileMenu = document.querySelector("#profileMenu");
+    profileButton.addEventListener("click", () => {
+      if (profileMenu.open) {
+        profileMenu.close();
+        return;
+      }
+      profileMenu.show();
+      const rect = profileButton.getBoundingClientRect();
+      const left = Math.max(12, Math.min(rect.right - profileMenu.offsetWidth, window.innerWidth - profileMenu.offsetWidth - 12));
+      const top = Math.max(12, Math.min(rect.bottom + 8, window.innerHeight - profileMenu.offsetHeight - 12));
+      profileMenu.style.left = `${left}px`;
+      profileMenu.style.top = `${top}px`;
+      profileButton.setAttribute("aria-expanded", "true");
+    });
+    profileMenu.addEventListener("close", () => profileButton.setAttribute("aria-expanded", "false"));
+    document.addEventListener("pointerdown", event => {
+      if (profileMenu.open && !profileMenu.contains(event.target) && !profileButton.contains(event.target)) profileMenu.close();
+    });
+    document.querySelector("#profileBookmarksBtn").addEventListener("click", () => {
+      profileMenu.close();
+      selectBookmarksPage();
+    });
+    loadProfileInfo();
+    document.querySelector("#bookmarksSort").value = bookmarksSort;
+    on("#bookmarksSort", "change", event => {
+      if (BOOKMARK_SORT_MODES.includes(event.target.value)) bookmarksSort = event.target.value;
+      try { localStorage.setItem(BOOKMARK_SORT_KEY, bookmarksSort); } catch (_) { /* Sorting still works for this page view. */ }
+      renderBookmarksPage();
+    });
     document.querySelector("#applyNetworkExposureBtn").addEventListener("click", applyNetworkExposure);
     document.querySelector("#inviteHeaderBtn").addEventListener("click", openInviteDialog);
     document.querySelector("#copyInviteLink").addEventListener("click", () => copyInviteLink("#inviteLink", "#inviteStatus"));
@@ -4836,6 +4984,27 @@
     function openInviteDialog() {
       document.querySelector("#inviteDlg").showModal();
       loadInviteInfo();
+    }
+
+    async function loadProfileInfo() {
+      const name = document.querySelector("#profileName");
+      const signIn = document.querySelector("#profileSignInLink");
+      try {
+        const response = await fetch(api("/api/auth/session"), { cache: "no-store" });
+        const session = await response.json().catch(() => ({}));
+        if (!response.ok) throw new Error(session.error || "Profile unavailable");
+        const username = typeof session.username === "string" ? session.username.trim() : "";
+        name.textContent = username || "Library profile";
+        profileButton.setAttribute("aria-label", username ? `Profile: ${username}` : "Profile");
+        profileButton.title = username ? `Profile: ${username}` : "Profile";
+        signIn.hidden = !!username;
+      } catch (_) {
+        name.textContent = "Library profile";
+        profileButton.setAttribute("aria-label", "Profile");
+        profileButton.title = "Profile";
+        signIn.hidden = false;
+      }
+      refreshProfileBookmarkCount();
     }
 
     async function loadInviteInfo() {

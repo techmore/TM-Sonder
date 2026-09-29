@@ -71,6 +71,13 @@
           <path stroke-linecap="round" stroke-linejoin="round" d="M7.217 10.907a2.25 2.25 0 1 0 0 2.186m0-2.186c.18.324.283.696.283 1.093s-.103.77-.283 1.093m0-2.186 9.566-5.314m-9.566 7.5 9.566 5.314m0 0a2.25 2.25 0 1 0 3.935 2.186 2.25 2.25 0 0 0-3.935-2.186Zm0-12.814a2.25 2.25 0 1 0 3.933-2.185 2.25 2.25 0 0 0-3.933 2.185Z" />
         </svg>
       </button>
+      <div class="profile-menu-wrap">
+        <button id="profileBtn" type="button" aria-label="Profile" aria-haspopup="dialog" aria-expanded="false" title="Profile">
+          <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" aria-hidden="true" width="20" height="20">
+            <path stroke-linecap="round" stroke-linejoin="round" d="M15.75 6a3.75 3.75 0 1 1-7.5 0 3.75 3.75 0 0 1 7.5 0ZM4.5 20.1a8.25 8.25 0 0 1 15 0A17.9 17.9 0 0 1 12 21.75c-2.7 0-5.25-.59-7.5-1.65Z" />
+          </svg>
+        </button>
+      </div>
       <button id="settingsBtn" aria-label="Settings" title="Settings">
         <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.6" stroke="currentColor" aria-hidden="true" width="20" height="20">
           <path stroke-linecap="round" stroke-linejoin="round" d="M10.5 3.75h3l.52 2.07a6.9 6.9 0 0 1 1.58.91l2.03-.66 1.5 2.6-1.51 1.53c.17.67.17 1.38 0 2.05l1.51 1.53-1.5 2.6-2.03-.66a6.9 6.9 0 0 1-1.58.91l-.52 2.07h-3l-.52-2.07a6.9 6.9 0 0 1-1.58-.91l-2.03.66-1.5-2.6 1.51-1.53a4.2 4.2 0 0 1 0-2.05L4.87 8.67l1.5-2.6 2.03.66a6.9 6.9 0 0 1 1.58-.91l.52-2.07Z" />
@@ -79,6 +86,16 @@
       </button>
     </div>
   </header>
+  <dialog id="profileMenu" class="profile-menu" aria-label="Profile menu">
+    <div class="profile-menu-heading">
+      <span class="profile-menu-eyebrow">YOUR PROFILE</span>
+      <strong id="profileName">Library profile</strong>
+    </div>
+    <button type="button" id="profileBookmarksBtn" class="profile-menu-item">
+      <span>Bookmarks</span><span id="profileBookmarkCount" class="profile-bookmark-count">0</span>
+    </button>
+    <a id="profileSignInLink" class="profile-menu-item profile-sign-in" href="/account/login" hidden>Sign in to your account</a>
+  </dialog>
   <main id="bookDetailPage" class="book-detail-page" aria-live="polite" aria-labelledby="bookDetailTitle" hidden></main>
 
   <nav id="bookAreaNav" class="book-area-nav" aria-label="Book library views" hidden>
@@ -200,6 +217,27 @@
       <button type="submit" class="primary">Create list</button>
     </form>
     <div id="listsView"></div>
+  </section>
+
+  <section id="bookmarksPanel" class="row bookmarks-panel" hidden aria-live="polite" aria-labelledby="bookmarksTitle">
+    <div class="bookmarks-page-head">
+      <div>
+        <p class="bookmarks-eyebrow">YOUR READING QUEUE</p>
+        <h2 id="bookmarksTitle">Bookmarks</h2>
+        <p class="muted">Books you save are added to your queue. Oldest bookmarks come first by default.</p>
+      </div>
+      <label class="bookmarks-sort-label" for="bookmarksSort">Sort
+        <select id="bookmarksSort" aria-label="Sort bookmarks">
+          <option value="oldest">Oldest added</option>
+          <option value="newest">Newest added</option>
+          <option value="title">Title A–Z</option>
+          <option value="author">Author A–Z</option>
+          <option value="manual">Manual order</option>
+        </select>
+      </label>
+    </div>
+    <p id="bookmarksStatus" class="queue-status" role="status" aria-live="polite"></p>
+    <ol id="bookmarksView" class="bookmarks-list"></ol>
   </section>
 
   <dialog id="detail" role="dialog" aria-modal="true" aria-labelledby="detailTitle">
