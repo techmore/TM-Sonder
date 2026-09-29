@@ -241,6 +241,13 @@
     .book-author-tag { margin-left:5px; }
     .book-detail-facts { display:flex; flex-wrap:wrap; gap:7px; margin-top:16px; }
     .book-detail-fact { padding:6px 10px; border:1px solid var(--line); border-radius:999px; background:var(--panel2); color:var(--text-soft); font-size:12px; }
+    .book-chapter-support { margin-top:14px; padding:11px 13px; border:1px solid var(--line); border-radius:10px; background:var(--panel); }
+    .book-chapter-support[data-state="chaptered"] { border-color:var(--accent); }
+    .book-chapter-support[data-state="single"] { border-left:3px solid var(--muted); }
+    .book-chapter-support strong { display:block; color:var(--text); font-size:13px; }
+    .book-chapter-support p { margin:4px 0 0; color:var(--muted); font-size:12px; line-height:1.4; }
+    .book-chapter-support button { margin-top:8px; padding:6px 10px; border:1px solid var(--line); border-radius:7px; background:var(--panel2); color:var(--text); cursor:pointer; }
+    .book-chapter-support button:hover { border-color:var(--accent); color:var(--accent); }
     .book-detail-progress { margin-top:22px; padding:15px 16px; border:1px solid var(--line); border-radius:11px; background:var(--panel); }
     .book-detail-progress-head { display:flex; justify-content:space-between; align-items:center; gap:12px; }
     .book-detail-progress-head span { color:var(--muted); font-size:11px; font-weight:700; letter-spacing:.8px; text-transform:uppercase; }

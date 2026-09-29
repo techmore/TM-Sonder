@@ -493,6 +493,8 @@
     let npChapterRequest = 0;
     let npReadSession = null;
     const audiobookChapterCache = new Map();
+    const audiobookChapterRequests = new Map();
+    const bookChapterDetailRefreshes = new Set();
 
     const PENDING_PROGRESS_KEY = "tmSonderPendingProgress";
     const PENDING_READING_KEY = "tmSonderPendingReadingSessions";
@@ -703,7 +705,7 @@
         return `${formatChapterNumber(section.chapter.index)} of ${formatChapterNumber(nowPlayingChapters.length)}`;
       }
       if (section?.kind === "part") return `${nowPlayingPartIndex + 1} of ${nowPlayingParts.length}`;
-      if (nowPlayingChaptersAvailable && nowPlayingChapters.length) return formatChapterNumber(nowPlayingChapters.length);
+      if (nowPlayingChaptersAvailable && nowPlayingChapters.length > 1) return formatChapterNumber(nowPlayingChapters.length);
       if (nowPlayingParts?.length > 1) return String(nowPlayingParts.length);
       return "Book";
     }
@@ -871,47 +873,116 @@
       return `Part ${nowPlayingPartIndex + 1} of ${nowPlayingParts.length}`;
     }
 
-    function loadBookChapters(item) {
-      const request = ++npChapterRequest;
-      nowPlayingChapters = null;
-      nowPlayingChaptersAvailable = false;
+    function fetchAudiobookChapterInfo(item) {
       if (!item || item.kind !== "audiobook" || typeof fetch !== "function") {
-        nowPlayingChapters = [];
-        return;
+        return Promise.resolve({ available:false, chapters:[], error:true });
       }
       const cached = audiobookChapterCache.get(item.id);
-      if (cached) {
-        nowPlayingChapters = cached.chapters;
-        nowPlayingChaptersAvailable = cached.available;
-        return;
-      }
-      fetch(api(`/api/audiobooks/${encodeURIComponent(item.id)}/chapters`))
-        .then(response => response.ok ? response.json() : null)
+      if (cached) return Promise.resolve(cached);
+      const pending = audiobookChapterRequests.get(item.id);
+      if (pending) return pending;
+
+      const request = fetch(api(`/api/audiobooks/${encodeURIComponent(item.id)}/chapters`))
+        .then(response => {
+          if (!response.ok) throw new Error("Chapter information unavailable");
+          return response.json();
+        })
         .then(result => {
-          if (request !== npChapterRequest || nowPlayingItem?.id !== item.id) return;
           const available = result?.available === true && Array.isArray(result.chapters);
           const chapters = available ? result.chapters.filter(chapter =>
             Number.isFinite(Number(chapter.startSeconds)) &&
             Number.isFinite(Number(chapter.endSeconds)) &&
             Number(chapter.endSeconds) > Number(chapter.startSeconds)
           ) : [];
-          nowPlayingChapters = chapters;
-          nowPlayingChaptersAvailable = available;
-          audiobookChapterCache.set(item.id, { available, chapters });
-          renderNowPlaying();
-          renderPlaybackProgress(bookTimeline());
+          const info = { available, chapters, error:false };
+          audiobookChapterCache.set(item.id, info);
+          return info;
         })
         .catch(() => {
-          if (request !== npChapterRequest || nowPlayingItem?.id !== item.id) return;
-          nowPlayingChapters = [];
-          nowPlayingChaptersAvailable = false;
+          const info = { available:false, chapters:[], error:true };
+          audiobookChapterCache.set(item.id, info);
+          return info;
+        })
+        .finally(() => audiobookChapterRequests.delete(item.id));
+      audiobookChapterRequests.set(item.id, request);
+      return request;
+    }
+
+    function requestBookDetailChapterInfo(item) {
+      if (audiobookChapterCache.has(item.id) || bookChapterDetailRefreshes.has(item.id)) return;
+      bookChapterDetailRefreshes.add(item.id);
+      fetchAudiobookChapterInfo(item).then(() => {
+        bookChapterDetailRefreshes.delete(item.id);
+        if (nowPlayingItem?.id === item.id) {
+          const info = audiobookChapterCache.get(item.id);
+          nowPlayingChapters = info?.chapters || [];
+          nowPlayingChaptersAvailable = info?.available === true;
           renderNowPlaying();
           renderPlaybackProgress(bookTimeline());
-        });
+        }
+        if (selectedBookID === item.id) renderBookDetailByID(item.id);
+      });
+    }
+
+    function bookChapterSupportMarkup(item) {
+      const info = audiobookChapterCache.get(item.id);
+      if (!info) {
+        requestBookDetailChapterInfo(item);
+        return `<section class="book-chapter-support" data-state="checking" aria-live="polite">
+          <div><strong>Checking for chapter breaks…</strong><p>Reading the audiobook’s chapter markers.</p></div>
+        </section>`;
+      }
+      if (info.error) {
+        return `<section class="book-chapter-support" data-state="unavailable" role="status">
+          <div><strong>Could not check chapter markers</strong><p>Chapter information could not be read right now.</p>
+          <button type="button" data-action="retry-book-chapters" data-id="${escapeHTML(item.id)}">Retry check</button></div>
+        </section>`;
+      }
+      if (!info.available) {
+        return `<section class="book-chapter-support" data-state="unavailable" role="status">
+          <div><strong>Chapter information unavailable</strong><p>This audio file could not be checked for embedded chapter markers.</p></div>
+        </section>`;
+      }
+      if (info.chapters.length > 1) {
+        return `<section class="book-chapter-support" data-state="chaptered" role="status">
+          <div><strong>${formatChapterNumber(info.chapters.length)} chapters detected</strong><p>You can jump between chapter breaks in the player.</p></div>
+        </section>`;
+      }
+      const parts = partsOf(item);
+      const note = parts?.length > 1
+        ? `No chapter breaks are embedded. You can still move between the book’s ${parts.length} audio parts in the player.`
+        : "This audiobook plays as one continuous track.";
+      return `<section class="book-chapter-support" data-state="single" role="status">
+        <div><strong>No chapter breaks embedded</strong><p>${escapeHTML(note)}</p></div>
+      </section>`;
+    }
+
+    function retryBookChapterCheck(id) {
+      const item = items.find(candidate => candidate.id === id && candidate.kind === "audiobook");
+      if (!item) return;
+      audiobookChapterCache.delete(item.id);
+      renderBookDetailByID(item.id);
+    }
+
+    function loadBookChapters(item) {
+      const request = ++npChapterRequest;
+      nowPlayingChapters = null;
+      nowPlayingChaptersAvailable = false;
+      if (!item || item.kind !== "audiobook") {
+        nowPlayingChapters = [];
+        return;
+      }
+      fetchAudiobookChapterInfo(item).then(info => {
+        if (request !== npChapterRequest || nowPlayingItem?.id !== item.id) return;
+        nowPlayingChapters = info.chapters;
+        nowPlayingChaptersAvailable = info.available;
+        renderNowPlaying();
+        renderPlaybackProgress(bookTimeline());
+      });
     }
 
     function currentBookChapter(tl = bookTimeline()) {
-      if (!nowPlayingChaptersAvailable || !nowPlayingChapters?.length) return null;
+      if (!nowPlayingChaptersAvailable || !nowPlayingChapters || nowPlayingChapters.length < 2) return null;
       const position = Math.max(0, tl.position || 0);
       for (let i = 0; i < nowPlayingChapters.length; i++) {
         const chapter = nowPlayingChapters[i];
@@ -962,10 +1033,16 @@
         const part = nowPlayingParts?.length > 1 ? ` · Part ${chapter.partIndex} of ${nowPlayingParts.length}` : "";
         return `Chapter ${formatChapterNumber(chapter.index)} of ${formatChapterNumber(nowPlayingChapters.length)}${part}`;
       }
-      if (bookPartLabel()) return bookPartLabel();
-      if (nowPlayingChapters === null) return "Loading chapters…";
-      if (!nowPlayingChaptersAvailable) return "Chapter info unavailable";
-      return nowPlayingChapters.length ? "Finding current chapter…" : "No embedded chapters";
+      const part = bookPartLabel();
+      if (nowPlayingChapters === null) return [part, "Checking chapter breaks…"].filter(Boolean).join(" · ");
+      if (!nowPlayingChaptersAvailable) {
+        const status = audiobookChapterCache.get(nowPlayingItem.id)?.error
+          ? "Could not check chapter markers" : "Chapter information unavailable";
+        return [part, status].filter(Boolean).join(" · ");
+      }
+      if (nowPlayingChapters.length > 1) return [part, "Finding current chapter…"].filter(Boolean).join(" · ");
+      return [part, nowPlayingParts?.length > 1 ? "No chapter breaks" : "Single track · no chapter breaks"]
+        .filter(Boolean).join(" · ");
     }
 
     function playbackFinishAt(view, now = Date.now()) {
@@ -1213,8 +1290,11 @@
       }
       queue.hidden = false;
       if (title) {
-        const chapterCount = nowPlayingChaptersAvailable ? nowPlayingChapters.length : 0;
-        title.textContent = `${nowPlayingParts.length} parts${chapterCount ? ` · ${formatChapterNumber(chapterCount)} chapters` : ""}`;
+        const chapterStatus = nowPlayingChapters === null ? "checking chapter breaks…"
+          : !nowPlayingChaptersAvailable ? "chapter information unavailable"
+          : nowPlayingChapters.length > 1 ? `${formatChapterNumber(nowPlayingChapters.length)} chapters`
+          : "no chapter breaks";
+        title.textContent = `${nowPlayingParts.length} parts · ${chapterStatus}`;
       }
       if (toggle) {
         toggle.textContent = npQueueOpen ? "Hide list" : "Show list";
@@ -4430,6 +4510,7 @@
       if (act === "scan-storage") scanStorageNow();
       else if (act === "toggle-movie-detail") toggleMovieDetail();
       else if (act === "back-book-page") closeBookPage();
+      else if (act === "retry-book-chapters" && btn.dataset.id) retryBookChapterCheck(btn.dataset.id);
       else if (act === "play-item" && btn.dataset.id) startPlaybackById(btn.dataset.id);
       else if (act === "expand-movie-shelf") { movieShelfExpanded = true; renderMovieCatalog(visibleItems()); }
       else if (act === "collapse-movie-shelf") { movieShelfExpanded = false; renderMovieCatalog(visibleItems()); }
@@ -4720,6 +4801,7 @@
             ${item.subtitle ? `<p class="book-detail-subtitle">${escapeHTML(item.subtitle)}</p>` : ""}
             ${item.author ? `<p class="book-detail-byline">By <button class="book-author-tag" type="button" data-action="browse-author-books" data-id="${escapeHTML(item.id)}" aria-label="See more books by ${escapeHTML(item.author)}">${escapeHTML(item.author)}</button></p>` : ""}
             ${facts ? `<div class="book-detail-facts" aria-label="Book details">${facts}</div>` : ""}
+            ${bookChapterSupportMarkup(item)}
             ${bookProgressMarkup(item)}
             <div class="book-detail-actions">
               ${plan ? `<button id="bookDetailResume" type="button" class="book-resume-button" data-action="play-item" data-id="${escapeHTML(item.id)}" aria-label="${escapeHTML(playState.label)}: ${escapeHTML(title)}">${escapeHTML(playState.label)}</button><span id="bookDetailResumeNote" class="muted">${escapeHTML(playState.note)}</span>` : `<a class="book-resume-button" href="${api("/stream/" + item.id)}" target="_blank" rel="noopener">Open in a player</a>`}
