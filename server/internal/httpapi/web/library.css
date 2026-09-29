@@ -265,12 +265,44 @@
     .book-detail-meta strong { margin-bottom:5px; color:var(--muted); font-size:10px; letter-spacing:.7px; text-transform:uppercase; }
     .book-detail-meta span { color:var(--text); font-size:13px; line-height:1.4; overflow-wrap:anywhere; }
     .book-detail-description { margin-top:28px; max-width:860px; }
-    .book-detail-description h3, .book-series-section h3 { margin:0 0 10px; font-size:18px; }
+    .book-detail-description h3, .book-series-order h3 { margin:0; font-size:18px; }
     .book-detail-description .summary { white-space:pre-line; }
     .book-detail-tags { display:flex; flex-wrap:wrap; gap:7px; margin-top:16px; }
-    .book-series-section { margin-top:34px; }
-    .book-series-section > p { margin:0 0 14px; color:var(--muted); font-size:13px; }
-    .book-series-grid { grid-template-columns:repeat(auto-fill,minmax(130px,1fr)); gap:14px; }
+    .book-series-order { margin-top:22px; padding:16px; border:1px solid var(--line); border-radius:12px; background:var(--panel); }
+    .book-series-order-head { display:flex; justify-content:space-between; align-items:center; gap:16px; }
+    .book-series-kicker { margin:0 0 5px; color:var(--accent); font-size:10px; font-weight:800; letter-spacing:1px; }
+    .book-series-position { margin:5px 0 0; color:var(--muted); font-size:12px; }
+    .book-series-order-source { padding:6px 9px; border:1px solid var(--line); border-radius:999px; color:var(--muted); font-size:11px; white-space:nowrap; }
+    .book-series-neighbors { display:grid; grid-template-columns:minmax(0,1fr) minmax(130px,.65fr) minmax(0,1fr); align-items:stretch; gap:10px; margin-top:14px; }
+    .book-series-neighbor { min-width:0; min-height:90px; display:flex; flex-direction:column; justify-content:center; gap:8px; padding:10px; border:1px solid var(--line); border-radius:9px; background:var(--panel2); color:var(--text); text-align:left; text-decoration:none; }
+    button.book-series-neighbor { cursor:pointer; }
+    button.book-series-neighbor:hover { border-color:var(--accent); }
+    .book-series-neighbor-label, .book-series-current > span { color:var(--muted); font-size:9px; font-weight:800; letter-spacing:.8px; }
+    .book-series-neighbor-body { min-width:0; display:flex; align-items:center; gap:9px; }
+    .book-series-neighbor-body img, .book-series-neighbor-cover-empty { flex:0 0 38px; width:38px; height:54px; display:grid; place-items:center; overflow:hidden; border-radius:4px; background:var(--bg); object-fit:cover; color:var(--accent); font-size:18px; }
+    .book-series-neighbor-body > span:last-child { min-width:0; }
+    .book-series-neighbor-body strong, .book-series-neighbor-body small { display:block; overflow:hidden; text-overflow:ellipsis; }
+    .book-series-neighbor-body strong { display:-webkit-box; -webkit-box-orient:vertical; -webkit-line-clamp:2; white-space:normal; font-size:12px; line-height:1.35; }
+    .book-series-neighbor-body small { margin-top:3px; color:var(--muted); font-size:10px; }
+    .book-series-edge { align-items:flex-start; color:var(--muted); }
+    .book-series-edge strong { font-size:12px; font-weight:500; }
+    .book-series-current { display:flex; flex-direction:column; justify-content:center; align-items:center; gap:7px; padding:10px; color:var(--text); text-align:center; }
+    .book-series-current strong { font-size:12px; line-height:1.35; }
+    .book-series-set-order { min-height:38px; padding:8px 12px; border:1px solid var(--accent); border-radius:8px; background:transparent; color:var(--accent); cursor:pointer; white-space:nowrap; }
+    .book-series-set-order:hover { background:rgba(182,213,109,.1); }
+    .book-series-order-unset { padding:12px 14px; }
+    .book-series-order-unset .book-series-order-head { align-items:center; }
+    .book-series-order-unset > p, .book-series-order-help { margin:10px 0 0; color:var(--muted); font-size:12px; line-height:1.45; }
+    .book-series-order code { color:var(--text); font-size:11px; }
+    @media (max-width: 700px) {
+      .book-series-order { padding:12px; }
+      .book-series-neighbors { grid-template-columns:minmax(0,1fr) minmax(0,1fr); gap:8px; }
+      .book-series-current { grid-column:1 / -1; grid-row:1; padding:2px 0; }
+      .book-series-neighbor { min-height:80px; padding:8px; }
+      .book-series-order-head { align-items:flex-start; }
+      .book-series-order-unset .book-series-order-head { align-items:center; }
+      .book-series-set-order { padding:7px 9px; font-size:11px; }
+    }
     .book-detail-history { max-width:860px; }
     .book-read-history { margin:18px 0; padding:14px 16px; border:1px solid var(--line); border-radius:10px; background:var(--bg); }
     .book-read-history h3 { margin:0 0 8px; font-size:14px; }
@@ -683,8 +715,14 @@ body.optimize-mode #backRow { display:none !important; }
 .list-create-form, .list-add-row { display:flex; flex-wrap:wrap; gap:8px; margin:14px 0; }
 .list-create-form input, .list-add-row input, .list-add-row select { min-width:150px; flex:1 1 180px; }
 .list-create-form button, .list-add-row button { flex:0 0 auto; }
+.list-series-option { display:inline-flex; align-items:center; gap:7px; padding:8px 10px; border:1px solid var(--line); border-radius:8px; color:var(--text-soft); font-size:12px; cursor:pointer; }
+.list-series-option input { min-width:0; flex:0 0 auto; accent-color:var(--accent); }
 .reading-list { margin:14px 0; padding:15px; border:1px solid var(--line); border-radius:12px; background:var(--panel); }
 .reading-list-head { display:flex; justify-content:space-between; align-items:flex-start; gap:12px; }
+.list-header-actions { display:flex; flex-wrap:wrap; justify-content:flex-end; gap:7px; }
+.list-header-actions button, .list-series-toggle { min-height:34px; padding:6px 9px; border:1px solid var(--line); border-radius:7px; background:var(--panel2); color:var(--text-soft); cursor:pointer; font-size:11px; }
+.list-series-toggle[aria-pressed="true"] { border-color:var(--accent); color:var(--accent); }
+.list-header-actions button:hover { border-color:var(--accent); color:var(--accent); }
 .reading-list-head h3 { margin:0; }
 .list-open-title { border:0; padding:0; background:none; color:var(--accent); cursor:pointer; font:inherit; font-weight:600; text-align:left; }
 .list-open-title:hover { text-decoration:underline; }

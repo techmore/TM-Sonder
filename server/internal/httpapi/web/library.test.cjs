@@ -117,6 +117,66 @@ test('bookmarks live under the profile and default to oldest-first with sortable
   assert.deepEqual(get('sortBookmarkEntries(bookmarkTestEntries, "manual").map(entry => entry.id)'), ['first', 'second', 'third']);
 });
 
+test('series metadata shows reliable previous and next books in numeric order', () => {
+  const books = [
+    { id:'third', title:'Record of a Spaceborn Few', kind:'audiobook', author:'Becky Chambers', series:'Wayfarers', seriesNumber:3 },
+    { id:'first', title:'The Long Way to a Small, Angry Planet', kind:'audiobook', author:'Becky Chambers', series:'Wayfarers', seriesNumber:1 },
+    { id:'second', title:'A Closed and Common Orbit', kind:'audiobook', author:'Becky Chambers', series:'Wayfarers', seriesNumber:2 },
+  ];
+  const get = catalog(books);
+  const context = get(`(() => {
+    const series = resolveBookSeries(items.find(book => book.id === "second"), items, [])[0];
+    return {name:series.name, mode:series.mode, ordered:series.ordered, position:series.position,
+      index:series.index, count:series.count, previous:series.previous.title, next:series.next.title};
+  })()`);
+  assert.deepEqual(context, {
+    name:'Wayfarers', mode:'metadata', ordered:true, position:'2', index:1, count:3,
+    previous:'The Long Way to a Small, Angry Planet', next:'Record of a Spaceborn Few',
+  });
+});
+
+test('a list tagged series supplies manual order when book metadata is missing', () => {
+  const books = [
+    { id:'one', title:'Zulu Volume', kind:'audiobook', author:'Series Author' },
+    { id:'two', title:'Alpha Volume', kind:'audiobook', author:'Series Author' },
+    { id:'three', title:'Middle Volume', kind:'audiobook', author:'Series Author' },
+  ];
+  const get = catalog(books);
+  const list = {
+    id:'manual-series', name:'Manual Saga', tags:['Series'], itemIDs:['one','two','three'],
+    items:[books[0], books[1], books[2]].map(item => ({ item, tags:[] })),
+  };
+  get(`lists = ${JSON.stringify([list])}`);
+  const context = get(`(() => {
+    const series = resolveBookSeries(items[1], items, lists)[0];
+    return {name:series.name, mode:series.mode, position:series.position, count:series.count,
+      previous:series.previous.title, next:series.next.title};
+  })()`);
+  assert.deepEqual(context, {
+    name:'Manual Saga', mode:'list', position:2, count:3,
+    previous:'Zulu Volume', next:'Middle Volume',
+  });
+});
+
+test('series metadata does not invent reading order when positions are incomplete', () => {
+  const get = catalog([
+    { id:'a', title:'A', kind:'audiobook', series:'Unnumbered Saga' },
+    { id:'b', title:'B', kind:'audiobook', series:'Unnumbered Saga' },
+  ]);
+  const context = get(`(() => {
+    const series = resolveBookSeries(items[0], items, [])[0];
+    return {ordered:series.ordered, previous:series.previous, next:series.next, count:series.count};
+  })()`);
+  assert.deepEqual(context, { ordered:false, previous:null, next:null, count:2 });
+  assert.match(librarySource, /data-action="open-series-lists"/);
+  assert.match(librarySource, /data-action="toggle-series-list"/);
+  assert.match(librarySource, /newListSeries"\)\?\.checked/);
+  assert.equal(get('isSeriesList({ tags: ["recommended", "SERIES"] })'), true);
+  assert.equal(get('isSeriesList({ tags: ["recommended"] })'), false);
+  assert.match(libraryHTML, /id="newListSeries" type="checkbox"/);
+  assert.match(libraryCSS, /\.book-series-neighbors\s*\{/);
+});
+
 test('book cards show a compact bookmark overlay that fills when queued', () => {
   assert.match(libraryCSS, /\.card-bookmark\s*\{[^}]*right:7px; bottom:7px;/s);
   const get = catalog([]);

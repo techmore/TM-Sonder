@@ -2754,6 +2754,110 @@
       return bookParts.get(item.id) || null;
     }
 
+    function seriesTextKey(value) {
+      return foldDiacritics(String(value || "").trim()).toLowerCase();
+    }
+
+    function isSeriesList(list) {
+      return (list?.tags || []).some(tag => seriesTextKey(tag) === "series");
+    }
+
+    function seriesPositionDetails(book) {
+      for (const raw of [book?.seriesPosition, book?.seriesNumber]) {
+        if (raw == null || String(raw).trim() === "") continue;
+        const label = String(raw).trim().replace(/^(?:book|part|#)\s*/i, "");
+        const match = label.match(/^(\d+(?:\.\d+)?)(?:\s*([a-z]))?$/i);
+        if (!match) continue;
+        const value = Number(match[1]);
+        if (Number.isFinite(value) && value > 0) return { value, suffix: (match[2] || "").toLowerCase(), label };
+      }
+      return null;
+    }
+
+    function seriesWorkKey(book) {
+      const title = seriesTextKey(book?.title).replace(/[^a-z0-9]+/g, "");
+      if (!title) return `item:${book?.id || ""}`;
+      return `work:${seriesTextKey(book?.author)}\u0000${title}`;
+    }
+
+    function uniqueSeriesBooks(source) {
+      const byWork = new Map();
+      for (const book of source || []) {
+        if (!book || !["audiobook", "ebook"].includes(book.kind) || book.isPlaceholder) continue;
+        const key = seriesWorkKey(book);
+        const existing = byWork.get(key);
+        if (!existing) {
+          byWork.set(key, book);
+          continue;
+        }
+        const existingPosition = seriesPositionDetails(existing);
+        const candidatePosition = seriesPositionDetails(book);
+        const existingPart = Number(existing.bookPartIndex) || 0;
+        const candidatePart = Number(book.bookPartIndex) || 0;
+        if ((!existingPosition && candidatePosition) || (candidatePart > 0 && (existingPart <= 0 || candidatePart < existingPart))) {
+          byWork.set(key, book);
+        }
+      }
+      return [...byWork.values()];
+    }
+
+    function compareSeriesBooks(a, b) {
+      const ap = seriesPositionDetails(a), bp = seriesPositionDetails(b);
+      if (ap && bp) {
+        const position = ap.value - bp.value || ap.suffix.localeCompare(bp.suffix);
+        if (position) return position;
+      } else if (ap || bp) {
+        return ap ? -1 : 1;
+      }
+      return String(a.title || "").localeCompare(String(b.title || ""), undefined, { numeric: true, sensitivity: "base" }) ||
+        String(a.id || "").localeCompare(String(b.id || ""));
+    }
+
+    // A list tagged "series" is the manual source of truth for a reading order.
+    // It lets people fix incomplete or incorrect file metadata without changing
+    // media files; the saved list order drives Previous/Next on each book page.
+    function resolveBookSeries(item, sourceItems = items, savedLists = lists) {
+      if (!item || !["audiobook", "ebook"].includes(item.kind)) return [];
+      const targetKey = seriesWorkKey(item);
+      const byID = new Map((sourceItems || []).map(book => [book.id, book]));
+      const contexts = [];
+      for (const list of savedLists || []) {
+        if (!isSeriesList(list)) continue;
+        const listed = Array.isArray(list.items) && list.items.length
+          ? list.items.map(entry => entry?.item || entry)
+          : (list.itemIDs || []).map(id => byID.get(id)).filter(Boolean);
+        const books = uniqueSeriesBooks(listed);
+        const index = books.findIndex(book => seriesWorkKey(book) === targetKey);
+        if (index < 0) continue;
+        contexts.push({
+          name: String(list.name || "Book series").trim(), mode: "list", ordered: true,
+          books, index, count: books.length, position: index + 1,
+          previous: books[index - 1] || null, next: books[index + 1] || null,
+        });
+      }
+
+      const name = String(item.series || "").trim();
+      const key = seriesTextKey(name);
+      if (key) {
+        const books = uniqueSeriesBooks((sourceItems || []).filter(book => seriesTextKey(book.series) === key))
+          .sort(compareSeriesBooks);
+        const index = books.findIndex(book => seriesWorkKey(book) === targetKey);
+        if (index >= 0 && !contexts.some(context => seriesTextKey(context.name) === key)) {
+          const positions = books.map(seriesPositionDetails);
+          const positionKeys = positions.map(position => position ? `${position.value}:${position.suffix}` : "");
+          const ordered = positionKeys.every(Boolean) && new Set(positionKeys).size === books.length;
+          const currentPosition = positions[index];
+          contexts.push({
+            name, mode: "metadata", ordered, books, index, count: books.length,
+            position: currentPosition?.label || "",
+            previous: ordered ? (books[index - 1] || null) : null,
+            next: ordered ? (books[index + 1] || null) : null,
+          });
+        }
+      }
+      return contexts;
+    }
+
     function readingRecordID(item) {
       return item?.kind === "audiobook" ? readingBookID(item) : (item?.id || "");
     }
@@ -3432,6 +3536,7 @@
       if (!response.ok) throw new Error("Lists unavailable");
       lists = (await response.json()).lists || [];
       if (["all", "audiobooks", "books"].includes(activeTab)) renderLists();
+      if (selectedBookID) renderBookDetailByID(selectedBookID);
     }
 
     async function refreshReadingState() {
@@ -3837,8 +3942,8 @@
         : "Lists and curated shelves";
       const intro = $("#listsIntro");
       if (intro) intro.textContent = listsPageOpen
-        ? "Follow an ordered list to add the titles you own to your Sonder queue. Missing books stay listed so you can see what to find next."
-        : "A title can appear in many lists. Each list keeps its own order and tags. Curated shelves below match the catalog you are browsing.";
+        ? "Mark a list as a series reading order, add the books, and use the arrows to arrange them. Each book page will show what comes before and after; other lists stay independent."
+        : "A title can appear in many lists. Mark a list as a series reading order to use it for Previous/Next book navigation. Curated shelves below match the catalog you are browsing.";
       const kinds = listPoolKinds();
       const candidates = listCandidates(kinds);
       const poolLabel = listPoolLabel(kinds);
@@ -3862,6 +3967,8 @@
           ? `<div class="list-add-row"><input class="list-book-search" data-list-book-search placeholder="Search ${escapeHTML(poolLabel.toLowerCase())} to add…" aria-label="Search titles to add"><select data-list-select aria-label="Title to add" disabled><option value="">Type to search for a title…</option></select><input data-list-tags placeholder="Entry tags, comma separated" aria-label="Entry tags"><button class="primary" data-action="add-list-item" data-list-id="${escapeHTML(list.id)}">Add</button></div>`
           : "";
         const listTags = (list.tags || []).filter(tag => tag !== "sonder-top-100").map(tag => `<span class="tag">${escapeHTML(tag)}</span>`).join("");
+        const seriesList = isSeriesList(list);
+        const seriesToggle = `<button type="button" class="list-series-toggle" data-action="toggle-series-list" data-list-id="${escapeHTML(list.id)}" aria-pressed="${seriesList}">${seriesList ? "✓ Series order on" : "Use as series order"}</button>`;
         const recommendation = recommendationForSavedList(list);
         const recommendationKinds = recommendation ? curatedKindsInPool(recommendation, kinds) : [];
         const missing = recommendation ? recommendation.entries.filter(entry => !candidateForEntry(entry, recommendationKinds)) : [];
@@ -3869,7 +3976,7 @@
         const title = selectedList
           ? `<h3>${escapeHTML(list.name)}</h3>`
           : `<h3><button class="list-open-title" data-action="open-reading-list" data-list-id="${escapeHTML(list.id)}">${escapeHTML(list.name)}</button></h3>`;
-        return `<article class="reading-list${selectedListID === list.id ? " selected-reading-list" : ""}" data-list-id="${escapeHTML(list.id)}"><div class="reading-list-head"><div>${title}${list.description ? `<p>${escapeHTML(list.description)}</p>` : ""}<div>${listTags}</div></div><button data-action="delete-list" data-list-id="${escapeHTML(list.id)}">Delete</button></div>${addRow}<ol>${entries || '<li class="list-empty">No titles yet.</li>'}</ol>${missingHTML}</article>`;
+        return `<article class="reading-list${selectedListID === list.id ? " selected-reading-list" : ""}" data-list-id="${escapeHTML(list.id)}"><div class="reading-list-head"><div>${title}${list.description ? `<p>${escapeHTML(list.description)}</p>` : ""}<div>${listTags}</div></div><div class="list-header-actions">${seriesToggle}<button data-action="delete-list" data-list-id="${escapeHTML(list.id)}">Delete</button></div></div>${addRow}<ol>${entries || '<li class="list-empty">No titles yet.</li>'}</ol>${missingHTML}</article>`;
       }).join("");
       const detailHeader = selectedList ? `<div class="list-detail-header"><button data-action="back-to-lists">‹ All lists</button><span class="muted">Dedicated list page</span></div>` : "";
       host.innerHTML = detailHeader + renderReadingQueue() + renderLikedBooks() + recommended + (saved || '<div class="empty-state">Create a list to start building a queue.</div>');
@@ -3954,6 +4061,7 @@
     on("#listCreateForm", "submit", async e => {
       e.preventDefault();
       const tags = $("#newListTags").value.split(",").map(value => value.trim()).filter(Boolean);
+      if ($("#newListSeries")?.checked && !isSeriesList({ tags })) tags.push("series");
       try {
         await listMutation("/api/lists", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ name: $("#newListName").value, description: $("#newListDescription").value, tags }) });
         e.target.reset();
@@ -4560,6 +4668,17 @@
       if (act === "scan-storage") scanStorageNow();
       else if (act === "toggle-movie-detail") toggleMovieDetail();
       else if (act === "back-book-page") closeBookPage();
+      else if (act === "open-series-lists") {
+        selectedBookID = null;
+        bookPageReturnHash = "";
+        detailItemID = null;
+        activeTab = "audiobooks";
+        listsPageOpen = true;
+        selectedListID = null;
+        render();
+        syncHash(true);
+        window.scrollTo({ top: 0, behavior: "smooth" });
+      }
       else if (act === "retry-book-chapters" && btn.dataset.id) retryBookChapterCheck(btn.dataset.id);
       else if (act === "play-item" && btn.dataset.id) startPlaybackById(btn.dataset.id);
       else if (act === "expand-movie-shelf") { movieShelfExpanded = true; renderMovieCatalog(visibleItems()); }
@@ -4639,6 +4758,16 @@
       else if (act === "remove-list-item") {
         listMutation(`/api/lists/${encodeURIComponent(btn.dataset.listId)}/items/${encodeURIComponent(btn.dataset.itemId)}`, { method: "DELETE" }).catch(error => alert(error.message || "Could not remove book"));
       }
+      else if (act === "toggle-series-list") {
+        const list = lists.find(candidate => candidate.id === btn.dataset.listId);
+        if (!list) return;
+        const tags = (list.tags || []).filter(tag => seriesTextKey(tag) !== "series");
+        if (!isSeriesList(list)) tags.push("series");
+        listMutation(`/api/lists/${encodeURIComponent(list.id)}`, {
+          method: "PATCH", headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ name: list.name, description: list.description || "", tags }),
+        }).catch(error => alert(error.message || "Could not update series order"));
+      }
       else if (act === "delete-list") {
         if (confirm("Delete this reading list? The catalog books will remain.")) listMutation(`/api/lists/${encodeURIComponent(btn.dataset.listId)}`, { method: "DELETE" }).catch(error => alert(error.message || "Could not delete list"));
       }
@@ -4714,24 +4843,34 @@
       window.scrollTo({ top: 0, behavior: "smooth" });
     }
 
-    function booksInSameSeries(item) {
-      const series = foldDiacritics(String(item?.series || "").trim()).toLowerCase();
-      if (!series) return [];
-      const ownKey = itemGroupKey.get(item.id) || copyKey(item);
-      const seen = new Set([ownKey]);
-      const orderOf = book => {
-        const position = Number(book.seriesNumber ?? book.seriesPosition);
-        return Number.isFinite(position) ? position : Number.POSITIVE_INFINITY;
-      };
-      return items.filter(book => book.kind === "audiobook" && !book.isPlaceholder &&
-          foldDiacritics(String(book.series || "").trim()).toLowerCase() === series)
-        .sort((a, b) => orderOf(a) - orderOf(b) || (a.title || "").localeCompare(b.title || ""))
-        .filter(book => {
-          const key = itemGroupKey.get(book.id) || copyKey(book);
-          if (seen.has(key)) return false;
-          seen.add(key);
-          return true;
-        }).slice(0, 12);
+    function bookSeriesNeighbor(book, direction, emptyLabel) {
+      if (!book) {
+        return `<div class="book-series-neighbor book-series-edge" aria-label="${escapeHTML(emptyLabel)}"><span class="book-series-neighbor-label">${direction === "previous" ? "← PREVIOUS" : "NEXT →"}</span><strong>${escapeHTML(emptyLabel)}</strong></div>`;
+      }
+      const title = book.title || "Untitled book";
+      const cover = book.posterURL
+        ? `<img src="${escapeHTML(api(book.posterURL))}" alt="" loading="lazy">`
+        : `<span class="book-series-neighbor-cover-empty" aria-hidden="true">${escapeHTML(title.slice(0, 1).toUpperCase() || "B")}</span>`;
+      return `<button type="button" class="book-series-neighbor" data-action="open-detail" data-id="${escapeHTML(book.id)}" aria-label="Open ${direction} book: ${escapeHTML(title)}"><span class="book-series-neighbor-label">${direction === "previous" ? "← PREVIOUS" : "NEXT →"}</span><span class="book-series-neighbor-body">${cover}<span><strong>${escapeHTML(title)}</strong><small>${escapeHTML(kindLabel(book.kind))}</small></span></span></button>`;
+    }
+
+    function bookSeriesNavigationHTML(item, contexts = resolveBookSeries(item)) {
+      if (!contexts.length) {
+        return `<section class="book-series-order book-series-order-unset" aria-label="Series and reading order"><div class="book-series-order-head"><div><p class="book-series-kicker">SERIES READING ORDER</p><h3>Not recorded</h3></div><button type="button" class="book-series-set-order" data-action="open-series-lists">Set it up in Lists</button></div><p>No series has been recorded for this book yet. If it belongs to one, create a list and mark it as a series reading order.</p></section>`;
+      }
+      return contexts.map(context => {
+        const orderLabel = context.mode === "list"
+          ? `Book ${context.position} of ${context.count} · manual order`
+          : context.ordered
+            ? `Book ${context.position || context.index + 1} · ${context.count} in your library`
+            : "Series found · exact order needs review";
+        const previousEmpty = context.mode === "list" ? "First in this list" : "No earlier title in Sonder";
+        const nextEmpty = context.mode === "list" ? "Last in this list" : "No later title in Sonder";
+        const previous = context.ordered ? context.previous : null;
+        const next = context.ordered ? context.next : null;
+        const needsOrder = context.mode === "metadata" && !context.ordered;
+        return `<section class="book-series-order" aria-label="Reading order for ${escapeHTML(context.name)}"><div class="book-series-order-head"><div><p class="book-series-kicker">SERIES READING ORDER</p><h3>${escapeHTML(context.name)}</h3><p class="book-series-position">${escapeHTML(orderLabel)}</p></div>${needsOrder ? `<button type="button" class="book-series-set-order" data-action="open-series-lists">Set exact order</button>` : `<span class="book-series-order-source">${context.mode === "list" ? "Your ordered list" : "From book metadata"}</span>`}</div><div class="book-series-neighbors">${bookSeriesNeighbor(previous, "previous", previousEmpty)}<span class="book-series-current" aria-current="true"><span>YOU ARE HERE</span><strong>${escapeHTML(item.title || "Untitled book")}</strong></span>${bookSeriesNeighbor(next, "next", nextEmpty)}</div>${needsOrder ? `<p class="book-series-order-help">Some books in this series are missing a reliable position. Mark a list as a series reading order and arrange its books there.</p>` : ""}</section>`;
+      }).join("");
     }
 
     function bookProgressMarkup(item) {
@@ -4813,19 +4952,21 @@
       const poster = item.posterURL
         ? `<img src="${escapeHTML(api(item.posterURL))}" alt="Cover of ${escapeHTML(title)}">`
         : `<span class="book-detail-cover-empty" aria-hidden="true">${escapeHTML(title.slice(0, 1).toUpperCase() || "B")}</span>`;
+      const seriesContexts = resolveBookSeries(item);
+      const primarySeries = seriesContexts[0] || null;
+      const series = String(item.series || "").trim() || primarySeries?.name || "";
+      const seriesFact = primarySeries?.ordered
+        ? primarySeries.mode === "list"
+          ? `Order ${primarySeries.position} of ${primarySeries.count}`
+          : `Book ${primarySeries.position || primarySeries.index + 1} in series`
+        : item.seriesNumber ? `Book ${item.seriesNumber} in series` : "";
       const facts = [
         item.year ? `<span class="book-detail-fact">${escapeHTML(String(item.year))}</span>` : "",
         runtimeLabel(item) ? `<span class="book-detail-fact">${escapeHTML(runtimeLabel(item))}</span>` : "",
-        item.seriesNumber ? `<span class="book-detail-fact">Book ${escapeHTML(String(item.seriesNumber))} in series</span>` : "",
+        seriesFact ? `<span class="book-detail-fact">${escapeHTML(seriesFact)}</span>` : "",
         partsOf(item) ? `<span class="book-detail-fact">${partsOf(item).length} audio parts</span>` : "",
       ].filter(Boolean).join("");
-      const series = String(item.series || "").trim();
-      const related = booksInSameSeries(item);
-      const seriesHTML = series ? `<section class="book-series-section" aria-label="Books in ${escapeHTML(series)}">
-        <h3>More in ${escapeHTML(series)}</h3>
-        <p>${related.length ? "Continue the series in order, or choose another book from the shelf." : "No other books from this series are indexed yet."}</p>
-        ${related.length ? `<div class="book-series-grid catalog-shelf">${related.map(book => cardHTML(book)).join("")}</div>` : ""}
-      </section>` : "";
+      const seriesHTML = bookSeriesNavigationHTML(item, seriesContexts);
       const genres = (Array.isArray(item.genres) ? item.genres : []).filter(Boolean).slice(0, 8);
       const tags = (Array.isArray(item.tags) ? item.tags : []).filter(Boolean).slice(0, 12);
       const genreTags = genres.map(genre => `<span class="tag">${escapeHTML(genre)}</span>`).join("");
@@ -4839,7 +4980,7 @@
       const details = [
         item.author ? `<div><strong>Author</strong><span>${escapeHTML(item.author)}</span></div>` : "",
         item.narrator ? `<div><strong>Narrated by</strong><span>${escapeHTML(item.narrator)}</span></div>` : "",
-        series ? `<div><strong>Series</strong><span>${escapeHTML(series)}${item.seriesNumber ? ` · Book ${escapeHTML(String(item.seriesNumber))}` : ""}</span></div>` : "",
+        series ? `<div><strong>Series</strong><span>${escapeHTML(series)}${seriesFact ? ` · ${escapeHTML(seriesFact)}` : ""}</span></div>` : "",
         item.year ? `<div><strong>Published</strong><span>${escapeHTML(String(item.year))}</span></div>` : "",
         item.format ? `<div><strong>Audio format</strong><span>.${escapeHTML(String(item.format).toUpperCase())}</span></div>` : "",
       ].filter(Boolean).join("");
@@ -4867,11 +5008,12 @@
             </div>
           </div>
         </section>
+        ${seriesHTML}
         ${details ? `<section class="book-detail-meta" aria-label="About this book">${details}</section>` : ""}
         ${item.summary ? `<section class="book-detail-description"><h3>About this book</h3><p class="summary">${escapeHTML(item.summary)}</p></section>` : ""}
         ${genreTags || regularTags ? `<div class="book-detail-tags" aria-label="Book tags">${genreTags}${regularTags}</div>` : ""}
         ${readHistoryHTML(readingRecord) ? `<div class="book-detail-history">${readHistoryHTML(readingRecord)}</div>` : ""}
-        ${seriesHTML}`;
+        `;
       document.title = `${title} · TM Sonder`;
     }
 

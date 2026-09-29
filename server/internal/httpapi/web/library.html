@@ -224,12 +224,13 @@
 
   <section id="listsPanel" class="row lists-panel" hidden aria-live="polite">
     <h2 id="listsTitle">Lists and curated shelves</h2>
-    <p id="listsIntro" class="muted">A title can appear in many lists. Each list keeps its own order and tags. Curated shelves below match the catalog you are browsing.</p>
+    <p id="listsIntro" class="muted">A title can appear in many lists. Mark a list as a series reading order to use it for Previous/Next book navigation.</p>
     <p id="listActionStatus" class="list-action-status" role="status" aria-live="polite" hidden></p>
     <form id="listCreateForm" class="list-create-form">
       <input id="newListName" required placeholder="New list name" aria-label="New list name">
       <input id="newListDescription" placeholder="Description" aria-label="List description">
-      <input id="newListTags" placeholder="Tags, comma separated" aria-label="List tags">
+      <input id="newListTags" placeholder="Tags — use ‘series’ for reading order" aria-label="List tags; use series for book order">
+      <label class="list-series-option" for="newListSeries"><input id="newListSeries" type="checkbox"> Series reading order</label>
       <button type="submit" class="primary">Create list</button>
     </form>
     <div id="listsView"></div>

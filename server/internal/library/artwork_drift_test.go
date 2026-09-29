@@ -25,7 +25,11 @@ func TestRebuildKeepsProviderPosterOverOrphanFrame(t *testing.T) {
 		t.Fatal(err)
 	}
 	old := scanner.buildItem(path, "item", st, api.MediaFormat("mkv"), "movies", "movie")
-	old.PosterPath = "/provider/official.jpg"
+	officialPoster := filepath.Join(root, "official.jpg")
+	if err := os.WriteFile(officialPoster, []byte("official poster"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	old.PosterPath = officialPoster
 	old.PosterSource = "wikipedia"
 	store.Upsert(old)
 	rebuilt := scanner.buildItem(path, "item", st, api.MediaFormat("mkv"), "movies", "movie")
