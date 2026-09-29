@@ -204,8 +204,18 @@ func (sc *Scanner) thumbExists(id string) bool {
 	if sc.thumbDir == "" {
 		return false
 	}
-	st, err := os.Stat(filepath.Join(sc.thumbDir, id+".jpg"))
-	return err == nil && !st.IsDir()
+	return posterFileExists(filepath.Join(sc.thumbDir, id+".jpg"))
+}
+
+// posterFileExists checks that a saved artwork reference still points to a
+// regular file. Catalog snapshots can outlive their media mount, so a nonempty
+// PosterPath alone is not evidence that the poster can still be served.
+func posterFileExists(path string) bool {
+	if path == "" {
+		return false
+	}
+	st, err := os.Stat(path)
+	return err == nil && st.Mode().IsRegular()
 }
 
 func (sc *Scanner) State() ScanState {
@@ -870,6 +880,7 @@ func (sc *Scanner) scanLibraryInto(lib config.Library, keep map[string]bool, pen
 		// a standing condition, which would otherwise re-probe every untagged
 		// book on every scan forever.
 		wantsTagProbe := unchanged && existing.Kind == api.KindAudiobook && !existing.ProbedTagsRead
+		wantsPosterRefresh := unchanged && existing.PosterPath != "" && !posterFileExists(existing.PosterPath)
 		newLocalArt := false
 		if unchanged && !wantsFirstProbe && existing.PosterPath == "" {
 			b := strings.TrimSuffix(filepath.Base(path), filepath.Ext(path))
@@ -883,7 +894,8 @@ func (sc *Scanner) scanLibraryInto(lib config.Library, keep map[string]bool, pen
 				newLocalArt = true
 			}
 		}
-		if unchanged && !wantsFirstProbe && !wantsOptimizationProbe && !wantsTagProbe && !newLocalArt {
+		if unchanged && !wantsFirstProbe && !wantsOptimizationProbe && !wantsTagProbe &&
+			!wantsPosterRefresh && !newLocalArt {
 			res.Skipped++
 			return nil
 		}
@@ -1131,7 +1143,7 @@ func (sc *Scanner) buildItem(path, id string, st os.FileInfo, format api.MediaFo
 		// Keep provider artwork when local discovery came up empty. Thumbnails
 		// included: the generated file survives rebuilds even when the reference
 		// was dropped (see orphan reattach below).
-		if prev.PosterPath != "" && (item.PosterPath == "" ||
+		if posterFileExists(prev.PosterPath) && (item.PosterPath == "" ||
 			(item.PosterSource == "thumbnail" && prev.PosterSource != "thumbnail")) {
 			item.PosterPath = prev.PosterPath
 			item.PosterURL = prev.PosterURL
