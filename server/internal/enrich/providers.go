@@ -291,6 +291,7 @@ func (e *Enricher) audnexusLookup(ctx context.Context, in Input, cacheJSON, cach
 
 type openLibrarySearch struct {
 	Docs []struct {
+		Key              string   `json:"key"`
 		Title            string   `json:"title"`
 		AuthorNames      []string `json:"author_name"`
 		FirstPublishYear int      `json:"first_publish_year"`
@@ -299,11 +300,15 @@ type openLibrarySearch struct {
 	} `json:"docs"`
 }
 
+type openLibraryWork struct {
+	Description json.RawMessage `json:"description"`
+}
+
 func (e *Enricher) openLibraryLookup(ctx context.Context, in Input, cacheJSON, cachePoster string) (*Enrichment, error) {
 	q := url.Values{}
 	q.Set("title", in.Title)
 	q.Set("limit", "5")
-	q.Set("fields", "title,author_name,first_publish_year,cover_i,subject")
+	q.Set("fields", "key,title,author_name,first_publish_year,cover_i,subject")
 	data, err := e.fetch(ctx, openLibBaseURL+"/search.json?"+q.Encode())
 	if err != nil {
 		return nil, nil
@@ -313,6 +318,7 @@ func (e *Enricher) openLibraryLookup(ctx context.Context, in Input, cacheJSON, c
 		return nil, nil
 	}
 	var match *struct {
+		Key              string   `json:"key"`
 		Title            string   `json:"title"`
 		AuthorNames      []string `json:"author_name"`
 		FirstPublishYear int      `json:"first_publish_year"`
@@ -320,42 +326,79 @@ func (e *Enricher) openLibraryLookup(ctx context.Context, in Input, cacheJSON, c
 		Subjects         []string `json:"subject"`
 	}
 	for i := range res.Docs {
-		if normalizeBookTitle(res.Docs[i].Title) == normalizeBookTitle(in.Title) {
-			match = &res.Docs[i]
-			break
+		doc := &res.Docs[i]
+		if normalizeBookTitle(doc.Title) != normalizeBookTitle(in.Title) {
+			continue
 		}
+		if in.Author != "" {
+			authorMatch := false
+			for _, author := range doc.AuthorNames {
+				if normalizeBookTitle(author) == normalizeBookTitle(in.Author) {
+					authorMatch = true
+					break
+				}
+			}
+			if !authorMatch {
+				continue
+			}
+		}
+		match = (*struct {
+			Key              string   `json:"key"`
+			Title            string   `json:"title"`
+			AuthorNames      []string `json:"author_name"`
+			FirstPublishYear int      `json:"first_publish_year"`
+			CoverID          int      `json:"cover_i"`
+			Subjects         []string `json:"subject"`
+		})(doc)
+		break
 	}
 	if match == nil {
 		return nil, nil
 	}
 	if match.CoverID != 0 {
-		e.downloadTo(ctx,
-			fmt.Sprintf(coversBaseURL+"/b/id/%d-L.jpg", match.CoverID),
-			cachePoster)
+		e.downloadTo(ctx, fmt.Sprintf(coversBaseURL+"/b/id/%d-L.jpg", match.CoverID), cachePoster)
 	}
-	var tags []string
-	var genres []string
-	for _, s := range match.Subjects {
+	var summary string
+	if strings.HasPrefix(match.Key, "/works/") {
+		if workData, fetchErr := e.fetch(ctx, openLibBaseURL+match.Key+".json"); fetchErr == nil {
+			var work openLibraryWork
+			if json.Unmarshal(workData, &work) == nil {
+				summary = openLibraryDescription(work.Description)
+			}
+		}
+	}
+	var tags, genres []string
+	for _, subject := range match.Subjects {
 		if len(tags) >= 8 {
 			break
 		}
-		tags = append(tags, strings.ToLower(s))
-		genres = append(genres, strings.ToLower(s))
+		tags = append(tags, strings.ToLower(subject))
+		genres = append(genres, strings.ToLower(subject))
 	}
-	for _, a := range match.AuthorNames {
-		tags = append(tags, strings.ToLower(a))
+	for _, author := range match.AuthorNames {
+		tags = append(tags, strings.ToLower(author))
 	}
 	tags = append(tags, "open-library")
-
-	payload := &Enrichment{
-		Summary:  "",
-		Author:   firstString(match.AuthorNames),
-		Tags:     tags,
-		Genres:   genres,
-		Provider: "open-library",
-	}
+	payload := &Enrichment{Summary: summary, Author: firstString(match.AuthorNames), Tags: tags, Genres: genres, Provider: "open-library"}
 	writeCache(cacheJSON, payload)
 	return payload, nil
+}
+
+func openLibraryDescription(raw json.RawMessage) string {
+	var description string
+	if json.Unmarshal(raw, &description) != nil {
+		var value struct {
+			Value string `json:"value"`
+		}
+		if json.Unmarshal(raw, &value) == nil {
+			description = value.Value
+		}
+	}
+	description = strings.TrimSpace(html.UnescapeString(description))
+	if runes := []rune(description); len(runes) > 2400 {
+		description = strings.TrimSpace(string(runes[:2400])) + "…"
+	}
+	return description
 }
 
 // normalizeBookTitle folds case/diacritics and strips non-alphanumerics.

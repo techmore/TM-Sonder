@@ -53,6 +53,7 @@ func RunPass(ctx context.Context, logger *log.Logger, store Catalog, cacheRoot s
 				it := j.item
 				input := Input{
 					Title:            it.Title,
+					Author:           derefStr(it.Author),
 					Kind:             string(it.Kind),
 					Year:             it.Year,
 					Studio:           it.Studio,

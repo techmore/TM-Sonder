@@ -241,6 +241,9 @@ func (s *Server) routes() {
 	m.HandleFunc("GET /api/auth/session", s.handleAuthSession)
 	m.HandleFunc("GET /api/auth/invite", s.handleAccountInviteInfo)
 	m.HandleFunc("GET /api/people", s.handlePeople)
+	m.HandleFunc("GET /api/people/public-queue", s.handlePublicQueueSettings)
+	m.HandleFunc("PATCH /api/people/public-queue", s.handlePublicQueueSettings)
+	m.HandleFunc("GET /shared/queue/{token}", s.handlePublicQueue)
 	m.HandleFunc("PATCH /api/people/sharing", s.handlePeopleSharing)
 	m.HandleFunc("POST /api/auth/login", s.handleAccountLogin)
 	m.HandleFunc("POST /api/auth/setup", s.handleAccountSetup)
@@ -572,6 +575,10 @@ func (s *Server) withAuth(next http.Handler) http.Handler {
 		// no catalog, settings, or media data; the page and all API routes remain
 		// protected below.
 		if isPublicWebAsset(r.URL.Path) {
+			next.ServeHTTP(w, r)
+			return
+		}
+		if strings.HasPrefix(r.URL.Path, "/shared/queue/") {
 			next.ServeHTTP(w, r)
 			return
 		}

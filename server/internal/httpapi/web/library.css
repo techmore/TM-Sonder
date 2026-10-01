@@ -458,6 +458,12 @@ dialog#peopleDlg { width:min(760px, 94vw); max-height:90vh; border:1px solid var
 .people-sharing-settings p { margin:0; color:var(--muted); font-size:12px; }
 .people-sharing-settings label { display:flex; align-items:center; gap:8px; font-size:13px; white-space:nowrap; }
 .people-sharing-settings input { accent-color:var(--accent); }
+.public-queue-sharing { grid-column:1 / -1; display:grid; gap:9px; padding-top:10px; border-top:1px solid var(--line); }
+.public-queue-sharing label { white-space:normal; }
+#publicQueueLinkRow { display:grid; grid-template-columns:minmax(0,1fr) auto; gap:8px; }
+#publicQueueLinkRow[hidden] { display:none; }
+#publicQueueLink { min-width:0; width:100%; padding:9px; border:1px solid var(--line); border-radius:8px; background:var(--panel); color:var(--text); }
+#publicQueueLinkRow small { grid-column:1 / -1; color:var(--muted); }
 #peopleSharingStatus { grid-column:1 / -1; min-height:1em; color:var(--muted); font-size:12px; }
 .people-list { display:grid; gap:12px; }
 .people-person { overflow:hidden; border:1px solid var(--line); border-radius:12px; background:var(--panel); }

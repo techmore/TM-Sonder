@@ -5441,6 +5441,12 @@
     });
     document.querySelector("#shareBookmarksToggle").addEventListener("change", event => updatePeopleSharing("shareBookmarks", event.target.checked));
     document.querySelector("#shareProgressToggle").addEventListener("change", event => updatePeopleSharing("shareProgress", event.target.checked));
+    document.querySelector("#sharePublicQueueToggle").addEventListener("change", event => updatePublicQueueSharing(event.target.checked));
+    document.querySelector("#copyPublicQueueLink").addEventListener("click", async () => {
+      const input = document.querySelector("#publicQueueLink");
+      try { await navigator.clipboard.writeText(input.value); document.querySelector("#peopleSharingStatus").textContent = "Public link copied."; }
+      catch { input.select(); document.execCommand("copy"); document.querySelector("#peopleSharingStatus").textContent = "Public link copied."; }
+    });
     loadProfileInfo();
     document.querySelector("#bookmarksSort").value = bookmarksSort;
     on("#bookmarksSort", "change", event => {
@@ -5591,6 +5597,11 @@
         const profile = payload.profile || {};
         document.querySelector("#shareBookmarksToggle").checked = profile.shareBookmarks !== false;
         document.querySelector("#shareProgressToggle").checked = profile.shareProgress !== false;
+        const publicQueueResponse = await fetch(api("/api/people/public-queue"), { cache: "no-store" });
+        const publicQueue = publicQueueResponse.ok ? await publicQueueResponse.json() : { enabled: false };
+        document.querySelector("#sharePublicQueueToggle").checked = publicQueue.enabled === true;
+        document.querySelector("#publicQueueLinkRow").hidden = !publicQueue.enabled;
+        document.querySelector("#publicQueueLink").value = publicQueue.url ? new URL(publicQueue.url, window.location.origin).toString() : "";
         const people = Array.isArray(payload.people) ? payload.people : [];
         document.querySelector("#profilePeopleCount").textContent = String(people.length);
         if (!people.length) {
@@ -5606,6 +5617,28 @@
         content.innerHTML = `<p class="people-empty">${escapeHTML(error.message || "Could not load connected accounts")}</p>`;
       }
       if (!status.dataset.saving) status.textContent = "";
+    }
+
+    async function updatePublicQueueSharing(enabled) {
+      const status = document.querySelector("#peopleSharingStatus");
+      const toggle = document.querySelector("#sharePublicQueueToggle");
+      toggle.disabled = true;
+      status.textContent = enabled ? "Creating your public link…" : "Revoking your public link…";
+      try {
+        const response = await fetch(api("/api/people/public-queue"), {
+          method: "PATCH", headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ enabled }),
+        });
+        const result = await response.json().catch(() => ({}));
+        if (!response.ok) throw new Error(result.error || "Could not update public queue sharing");
+        toggle.checked = result.enabled === true;
+        document.querySelector("#publicQueueLinkRow").hidden = !result.enabled;
+        document.querySelector("#publicQueueLink").value = result.url ? new URL(result.url, window.location.origin).toString() : "";
+        status.textContent = result.enabled ? "Public reading link is ready." : "Public link revoked.";
+      } catch (error) {
+        toggle.checked = !enabled;
+        status.textContent = error.message || "Could not update public queue sharing";
+      } finally { toggle.disabled = false; }
     }
 
     async function updatePeopleSharing(field, value) {

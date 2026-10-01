@@ -48,24 +48,26 @@ type accountFile struct {
 }
 
 type accountRecord struct {
-	Salt           string    `json:"salt"`
-	PasswordHash   string    `json:"passwordHash"`
-	CreatedAt      time.Time `json:"createdAt"`
-	InviteCode     string    `json:"inviteCode"`
-	ReferredBy     string    `json:"referredBy,omitempty"`
-	ShareBookmarks *bool     `json:"shareBookmarks,omitempty"`
-	ShareProgress  *bool     `json:"shareProgress,omitempty"`
+	Salt             string    `json:"salt"`
+	PasswordHash     string    `json:"passwordHash"`
+	CreatedAt        time.Time `json:"createdAt"`
+	InviteCode       string    `json:"inviteCode"`
+	ReferredBy       string    `json:"referredBy,omitempty"`
+	ShareBookmarks   *bool     `json:"shareBookmarks,omitempty"`
+	ShareProgress    *bool     `json:"shareProgress,omitempty"`
+	PublicQueueToken string    `json:"publicQueueToken,omitempty"`
 }
 
 // Profile contains the account details users have chosen to expose to people
 // connected through their invite links. Invite codes and credentials are never
 // included.
 type Profile struct {
-	Username       string    `json:"username"`
-	CreatedAt      time.Time `json:"createdAt"`
-	ShareBookmarks bool      `json:"shareBookmarks"`
-	ShareProgress  bool      `json:"shareProgress"`
-	Relationship   string    `json:"relationship,omitempty"`
+	Username         string    `json:"username"`
+	SharePublicQueue bool      `json:"sharePublicQueue"`
+	CreatedAt        time.Time `json:"createdAt"`
+	ShareBookmarks   bool      `json:"shareBookmarks"`
+	ShareProgress    bool      `json:"shareProgress"`
+	Relationship     string    `json:"relationship,omitempty"`
 }
 
 // legacyAccountFile is the original single-account on-disk format.
@@ -269,7 +271,7 @@ func boolPointer(value bool) *bool { return &value }
 
 func accountProfile(username string, record accountRecord, relationship string) Profile {
 	profile := Profile{
-		Username: username, CreatedAt: record.CreatedAt,
+		Username: username, SharePublicQueue: record.PublicQueueToken != "", CreatedAt: record.CreatedAt,
 		ShareBookmarks: true, ShareProgress: true, Relationship: relationship,
 	}
 	if record.ShareBookmarks != nil {
@@ -501,6 +503,66 @@ func (s *Store) Profile(username string) (Profile, bool) {
 		return Profile{}, false
 	}
 	return accountProfile(username, record, ""), true
+}
+
+// SetPublicQueue creates or revokes the unlisted public queue link.
+func (s *Store) SetPublicQueue(username string, enabled bool) (string, bool, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.account == nil {
+		return "", false, nil
+	}
+	record, ok := s.account.Accounts[username]
+	if !ok {
+		return "", false, nil
+	}
+	if enabled {
+		if record.PublicQueueToken == "" {
+			raw, err := randomBytes(32)
+			if err != nil {
+				return "", false, err
+			}
+			record.PublicQueueToken = base64.RawURLEncoding.EncodeToString(raw)
+		}
+	} else {
+		record.PublicQueueToken = ""
+	}
+	updated := cloneAccount(s.account)
+	updated.Accounts[username] = record
+	if err := writeAccount(s.path, updated); err != nil {
+		return "", false, err
+	}
+	s.account = updated
+	return record.PublicQueueToken, true, nil
+}
+
+// PublicQueueToken returns the owner’s unlisted public queue capability token.
+func (s *Store) PublicQueueToken(username string) (string, bool) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	if s.account == nil {
+		return "", false
+	}
+	record, ok := s.account.Accounts[username]
+	return record.PublicQueueToken, ok
+}
+
+// PublicQueueOwner resolves an enabled, unlisted queue capability token.
+func (s *Store) PublicQueueOwner(token string) (string, bool) {
+	if token == "" {
+		return "", false
+	}
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	if s.account == nil {
+		return "", false
+	}
+	for username, record := range s.account.Accounts {
+		if record.PublicQueueToken != "" && subtle.ConstantTimeCompare([]byte(record.PublicQueueToken), []byte(token)) == 1 {
+			return username, true
+		}
+	}
+	return "", false
 }
 
 // ConnectedProfiles returns only the inviter and direct invitees of username.

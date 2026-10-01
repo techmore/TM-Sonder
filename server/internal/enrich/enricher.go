@@ -24,6 +24,7 @@ import (
 // the library package.
 type Input struct {
 	Title            string
+	Author           string
 	Kind             string // movie|tvShow|documentary|audiobook|ebook
 	Year             int
 	Studio           string
@@ -91,6 +92,9 @@ func (e *Enricher) Enrich(ctx context.Context, in Input) (*Enrichment, error) {
 	switch in.Kind {
 	case "audiobook":
 		result, err = e.audnexusLookup(ctx, in, cacheJSON, cachePoster)
+		if result == nil && err == nil {
+			result, err = e.openLibraryLookup(ctx, in, cacheJSON, cachePoster)
+		}
 	case "ebook":
 		result, err = e.openLibraryLookup(ctx, in, cacheJSON, cachePoster)
 	default:
@@ -146,9 +150,9 @@ func makeQuery(in Input) string {
 		}
 		return join(show, "television series")
 	case "ebook":
-		return join(in.Title, in.Edition, in.Studio, year, "book", "Wikipedia")
+		return join(in.Title, in.Author, in.Edition, in.Studio, year, "book", "Wikipedia")
 	case "audiobook":
-		return join(in.Title, in.Edition, in.Studio, year, "audiobook", "Wikipedia")
+		return join(in.Title, in.Author, in.Edition, in.Studio, year, "audiobook", "Wikipedia")
 	default:
 		return ""
 	}
