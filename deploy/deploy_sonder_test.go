@@ -39,7 +39,7 @@ func newDeployHarness(t *testing.T) *deployHarness {
 	h := &deployHarness{dir: dir, repo: filepath.Join(dir, "repo"), instanceRoot: filepath.Join(dir, "instance"), version: "abc123def456"}
 	writeELF(t, filepath.Join(h.repo, "bin", ".sonder-linux-amd64.incoming"), emX8664)
 	writeELF(t, filepath.Join(h.instanceRoot, "usr/local/bin/sonder"), emX8664)
-	for _, p := range []string{"etc/sonder", "tmp"} {
+	for _, p := range []string{"etc/sonder", "tmp", "var/lib/sonder"} {
 		if err := os.MkdirAll(filepath.Join(h.instanceRoot, p), 0o755); err != nil {
 			t.Fatal(err)
 		}
@@ -52,6 +52,7 @@ func newDeployHarness(t *testing.T) *deployHarness {
 set -euo pipefail
 op="$1"; shift
 if [[ "$op" == info ]]; then exit 0; fi
+if [[ "$op" == restart ]]; then [[ -z "${FAKE_RESTART_FAILS:-}" ]]; exit; fi
 if [[ "$op" == file ]]; then
   sub="$1"; shift
   while [[ "$1" == --* ]]; do flag="$1"; shift; [[ "$flag" == --create-dirs ]] || shift; done
@@ -64,10 +65,11 @@ cmd="$1"; shift
 case "$cmd" in
   test) [[ -x "$FAKE_INSTANCE_ROOT$2" ]] ;;
   getent) echo 'ubuntu:x:1000:1000:ubuntu:/home/ubuntu:/bin/bash' ;;
+  runuser) exit 0 ;;
   install) while [[ "$1" == -* ]]; do case "$1" in -o|-g) shift 2;; -m) shift 2;; *) shift;; esac; done; cp "$FAKE_INSTANCE_ROOT$1" "$FAKE_INSTANCE_ROOT$2"; chmod 755 "$FAKE_INSTANCE_ROOT$2" ;;
   mv) shift; mv -f "$FAKE_INSTANCE_ROOT$1" "$FAKE_INSTANCE_ROOT$2" ;;
   rm) shift; rm -f "$FAKE_INSTANCE_ROOT$1" ;;
-  systemctl) if [[ "$1" == restart && -n "${FAKE_RESTART_FAILS:-}" ]]; then exit 1; fi; if [[ "$1" == is-active ]]; then echo active; fi ;;
+  systemctl) if [[ "$1" == is-active ]]; then echo active; fi ;;
   /usr/local/bin/sonder) printf '{"version":"%s","status":{"webHealthy":%s,"apiHealthy":%s}}' "$FAKE_VERSION" "${FAKE_WEB_HEALTHY:-true}" "${FAKE_API_HEALTHY:-true}" ;;
   *) echo "unexpected incus exec command: $cmd $*" >&2; exit 91 ;;
 esac

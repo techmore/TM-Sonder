@@ -113,7 +113,8 @@ Merge, and the deploy runs.
 2. **Backs up the binary from the `sonder` Incus container** to a dated file on
    Ser8, never overwriting an earlier backup.
 3. **Stages and swaps the binary inside the container**, preserving the mounted
-   library data and configuration, then restarts its `sonder` systemd service.
+   library data and configuration, then restarts the Incus instance. This
+   clears old processes cleanly in the unprivileged container.
 4. **Health-checks the version and web/API health from inside the container**,
    not merely that a process is listening. If the version or health is wrong,
    it restores the previous binary and restarts the service.
@@ -135,7 +136,7 @@ Every deploy leaves its predecessor on Ser8:
 ls -lt ~/TM-Sonder/bin/sonder-linux-amd64.incus-bak-*
 incus file push --mode 0644 --uid 0 --gid 0 ~/TM-Sonder/bin/sonder-linux-amd64.incus-bak-<timestamp> sonder/tmp/sonder-rollback
 incus exec sonder -- install -o ubuntu -g ubuntu -m 0755 /tmp/sonder-rollback /usr/local/bin/sonder
-incus exec sonder -- systemctl restart sonder
+incus restart sonder --timeout 30
 ```
 
 ## Deploying by hand, without the runner
