@@ -12,11 +12,11 @@ jobs:
     name: Build and publish release artifacts
     runs-on: macos-15
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           fetch-depth: 0
 
-      - uses: actions/setup-go@v5
+      - uses: actions/setup-go@v7
         with:
           go-version: "1.25"
 
@@ -43,7 +43,7 @@ jobs:
           version="${RELEASE_VERSION#v}"
           mkdir -p dist/stage
           ldflags="-s -w -X main.version=${version} -X tm-sonder/server/internal/httpapi.Version=${version} -X tm-sonder/server/internal/httpapi.Build=${RELEASE_BUILD}"
-          for target in "darwin arm64" "linux arm64"; do
+          for target in "darwin arm64" "linux arm64" "linux amd64"; do
             set -- $target
             os="$1"; arch="$2"
             name="tm-sonder-${version}-${os}-${arch}"

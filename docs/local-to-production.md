@@ -105,25 +105,23 @@ Merge, and the deploy runs.
 
 ## What the deploy actually does
 
-`deploy/deploy-sonder.sh`, executed on the server:
+`deploy/deploy-sonder.sh`, executed on Ser8 beside the Incus socket:
 
 1. **Refuses the wrong architecture.** It reads the ELF header directly and
    rejects anything that is not x86-64. Without this, a stray arm64 build fails
    at exec time with a message that reads like a permissions problem.
-2. **Backs up the running binary** to a dated file, never overwriting an earlier
-   backup.
-3. **Swaps and restarts** the systemd user unit.
-4. **Health-checks the version the API reports**, not merely that a process is
-   listening. A process can be up and still serving the previous build; if the
-   reported version is not the one that was installed, it rolls back.
+2. **Backs up the binary from the `sonder` Incus container** to a dated file on
+   Ser8, never overwriting an earlier backup.
+3. **Stages and swaps the binary inside the container**, preserving the mounted
+   library data and configuration, then restarts its `sonder` systemd service.
+4. **Health-checks the version and web/API health from inside the container**,
+   not merely that a process is listening. If the version or health is wrong,
+   it restores the previous binary and restarts the service.
 5. **Rolls back on any failure** — restart refused, no answer from the API, or a
    version mismatch — and exits non-zero so the workflow goes red.
 
 All of that is covered by `deploy/deploy_sonder_test.go`, which drives the script
-against a stub `systemctl`, a stub `curl` and stand-in ELF headers. Two bugs
-were found that way: a backup name that collided within the same second and
-silently overwrote the previous revision, and a `stat -c` that only works with
-GNU coreutils, which meant the script could not be tested off the server at all.
+against a fake Incus instance filesystem and stand-in ELF headers.
 
 ```bash
 cd deploy && go test ./...
@@ -131,31 +129,30 @@ cd deploy && go test ./...
 
 ## Rolling back by hand
 
-Every deploy leaves its predecessor behind:
+Every deploy leaves its predecessor on Ser8:
 
 ```bash
-ls -lt ~/TM-Sonder/bin/sonder-linux-amd64.bak-*
-cp -p ~/TM-Sonder/bin/sonder-linux-amd64.bak-<timestamp> ~/TM-Sonder/bin/sonder-linux-amd64
-systemctl --user restart tm-sonder
+ls -lt ~/TM-Sonder/bin/sonder-linux-amd64.incus-bak-*
+incus file push --mode 0644 --uid 0 --gid 0 ~/TM-Sonder/bin/sonder-linux-amd64.incus-bak-<timestamp> sonder/tmp/sonder-rollback
+incus exec sonder -- install -o ubuntu -g ubuntu -m 0755 /tmp/sonder-rollback /usr/local/bin/sonder
+incus exec sonder -- systemctl restart sonder
 ```
 
 ## Deploying by hand, without the runner
 
-The runner is a convenience, not a dependency. The original path still works and
-is what to use until the runner is registered:
+The self-hosted runner runs on Ser8, so the same Incus deploy script can be used
+manually after copying a Linux amd64 binary to the staging path:
 
 ```bash
 make machine-build-ship                       # builds all three targets in the machine
 scp ~/Projects/TM-Sonder/bin/sonder-linux-amd64 sdolbec@100.127.99.74:~/TM-Sonder/bin/.sonder-linux-amd64.incoming
-ssh sdolbec@100.127.99.74 'cp -p ~/TM-Sonder/bin/sonder-linux-amd64 ~/TM-Sonder/bin/sonder-linux-amd64.bak-manual && mv -f ~/TM-Sonder/bin/.sonder-linux-amd64.incoming ~/TM-Sonder/bin/sonder-linux-amd64 && systemctl --user restart tm-sonder'
 ```
 
 Or let the script do it, which gives you the architecture check and the health
 check as well:
 
 ```bash
-scp ~/Projects/TM-Sonder/bin/sonder-linux-amd64 sdolbec@100.127.99.74:~/TM-Sonder/bin/.sonder-linux-amd64.incoming
-ssh sdolbec@100.127.99.74 '~/TM-Sonder/deploy/deploy-sonder.sh'
+ssh sdolbec@100.127.99.74 '~/TM-Sonder/deploy/deploy-sonder.sh <expected-version>'
 ```
 
 ## The two container targets

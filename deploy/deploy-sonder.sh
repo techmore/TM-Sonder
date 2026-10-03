@@ -1,27 +1,19 @@
 #!/usr/bin/env bash
-# Deploy a built sonder binary to this host, safely.
-#
-# Runs ON the server, executed by the self-hosted GitHub Actions runner, so it
-# needs no inbound network access: Actions cannot reach this box over SSH (it
-# sits behind a NAT with only 80/443/8096 forwarded), which is exactly why the
-# runner is self-hosted.
-#
-# The sequence is deliberately paranoid, because a bad binary on this host takes
-# the library UI down for everyone:
-#
-#   1. refuse to deploy unless the artifact looks like a Linux x86-64 binary
-#   2. keep the running binary until the new one has started successfully
-#   3. health-check the version actually being served, not just that the process
-#      is up -- a process can listen and still be serving the old build
-#   4. roll back automatically on any failure, and say so in the exit code
+# Deploy the built binary into the running Sonder Incus container.
+# The self-hosted runner lives on Ser8 and talks to Incus locally. User data and
+# configuration stay in their existing container mounts; only the app binary is
+# replaced. The previous binary is retained on the host and restored if restart
+# or the in-container health/version check fails.
 set -euo pipefail
 
 REPO="${SONDER_REPO:-$HOME/TM-Sonder}"
 BIN_DIR="$REPO/bin"
-TARGET="$BIN_DIR/sonder-linux-amd64"
-STAGED="$BIN_DIR/.sonder-linux-amd64.incoming"
-CONFIG="${SONDER_CONFIG:-$HOME/.config/sonder/server.json}"
-API_PORT="${SONDER_API_PORT:-8097}"
+STAGED="${SONDER_STAGED_BINARY:-$BIN_DIR/.sonder-linux-amd64.incoming}"
+INSTANCE="${SONDER_INCUS_INSTANCE:-sonder}"
+TARGET="${SONDER_CONTAINER_BINARY:-/usr/local/bin/sonder}"
+CONFIG="${SONDER_CONTAINER_CONFIG:-/etc/sonder/server.json}"
+SERVICE="${SONDER_CONTAINER_SERVICE:-sonder}"
+SERVICE_USER="${SONDER_CONTAINER_USER:-ubuntu}"
 EXPECTED_VERSION="${1:-}"
 HEALTH_ATTEMPTS="${SONDER_HEALTH_ATTEMPTS:-20}"
 HEALTH_INTERVAL="${SONDER_HEALTH_INTERVAL:-3}"
@@ -29,89 +21,79 @@ HEALTH_INTERVAL="${SONDER_HEALTH_INTERVAL:-3}"
 log() { printf '%s deploy: %s\n' "$(date -u +%H:%M:%S)" "$*"; }
 die() { printf '%s deploy: FAILED: %s\n' "$(date -u +%H:%M:%S)" "$*" >&2; exit 1; }
 
-export XDG_RUNTIME_DIR="${XDG_RUNTIME_DIR:-/run/user/$(id -u)}"
-
-# --- 1. the artifact must be what we think it is --------------------------
 [[ -f "$STAGED" ]] || die "no staged binary at $STAGED"
 [[ -x "$STAGED" ]] || chmod +x "$STAGED"
 
-# `file` may be absent; fall back to reading the ELF header directly, because
-# deploying an arm64 binary onto an x86_64 host fails at exec time with a
-# message that looks like a permissions problem.
+# Refuse the wrong architecture before touching the live container.
 elf_machine() {
   local machine
   machine=$(od -An -tx1 -j18 -N2 "$STAGED" 2>/dev/null | tr -d ' \n')
   case "$machine" in
-    3e00) echo x86-64 ;;   # EM_X86_64
-    b700) echo aarch64 ;;  # EM_AARCH64
-    *)    echo "unknown($machine)" ;;
+    3e00) echo x86-64 ;;
+    b700) echo aarch64 ;;
+    *) echo "unknown($machine)" ;;
   esac
 }
 detected="$(elf_machine)"
-[[ "$detected" == "x86-64" ]] || die "artifact is $detected; this host is x86_64"
+[[ "$detected" == x86-64 ]] || die "artifact is $detected; this instance requires x86_64"
 
-# --- backup the binary currently in service --------------------------------
-[[ -f "$TARGET" ]] || die "no existing binary at $TARGET to replace"
-# Never clobber an existing backup. A second-resolution timestamp collides when
-# two deploys land in the same second, and `cp` would then quietly overwrite the
-# only way back to the previous revision. A counter suffix costs nothing.
-BACKUP="$TARGET.bak-$(date -u +%Y%m%dT%H%M%SZ)"
+incus info "$INSTANCE" >/dev/null 2>&1 || die "Incus instance '$INSTANCE' is unavailable"
+incus exec "$INSTANCE" -- test -x "$TARGET" || die "no existing binary at $INSTANCE:$TARGET to replace"
+incus exec "$INSTANCE" -- getent passwd "$SERVICE_USER" >/dev/null || die "service user '$SERVICE_USER' is missing in $INSTANCE"
+
+install -d -m 0755 "$BIN_DIR"
+BACKUP="$BIN_DIR/sonder-linux-amd64.incus-bak-$(date -u +%Y%m%dT%H%M%SZ)"
 if [[ -e "$BACKUP" ]]; then
   n=2
   while [[ -e "$BACKUP.$n" ]]; do n=$((n + 1)); done
   BACKUP="$BACKUP.$n"
 fi
-cp -p "$TARGET" "$BACKUP"
-log "backed up current binary to ${BACKUP##*/}"
+incus file pull "$INSTANCE$TARGET" "$BACKUP" || die "could not back up the current container binary"
+chmod 0755 "$BACKUP"
+log "backed up current container binary to ${BACKUP##*/}"
 
-# --- swap and restart ------------------------------------------------------
-mv -f "$STAGED" "$TARGET"
-# `wc -c` rather than `stat -c %s`: the -c form is GNU-only, and a script that
-# only runs correctly on the deploy target is a script nobody can test anywhere
-# else. This runs the same way on a Mac as on the server.
-log "installed new binary ($(wc -c < "$TARGET" | tr -d ' ') bytes)"
+remote_stage="/tmp/sonder-linux-amd64.incoming.$$"
+remote_backup="/tmp/sonder-linux-amd64.rollback.$$"
+rollback() {
+  log "restoring prior binary in Incus instance '$INSTANCE'"
+  incus file push --mode 0644 --uid 0 --gid 0 "$BACKUP" "$INSTANCE$remote_backup" || return 1
+  incus exec "$INSTANCE" -- install -o "$SERVICE_USER" -g "$SERVICE_USER" -m 0755 "$remote_backup" "$TARGET.rollback" || return 1
+  incus exec "$INSTANCE" -- mv -f "$TARGET.rollback" "$TARGET" || return 1
+  incus exec "$INSTANCE" -- systemctl restart "$SERVICE" || return 1
+  incus exec "$INSTANCE" -- rm -f "$remote_backup" || true
+}
+fail_with_rollback() {
+  local reason="$1"
+  if rollback; then die "$reason; rolled back to ${BACKUP##*/}"; fi
+  die "$reason; rollback failed, recovery binary is $BACKUP"
+}
 
-if ! systemctl --user restart tm-sonder; then
-  log "restart failed; rolling back"
-  cp -p "$BACKUP" "$TARGET"
-  systemctl --user restart tm-sonder || true
-  die "rolled back to ${BACKUP##*/}"
+incus file push --create-dirs --mode 0644 --uid 0 --gid 0 "$STAGED" "$INSTANCE$remote_stage" || die "could not stage binary in $INSTANCE"
+incus exec "$INSTANCE" -- install -o "$SERVICE_USER" -g "$SERVICE_USER" -m 0755 "$remote_stage" "$TARGET.incoming" || die "could not install staged binary"
+incus exec "$INSTANCE" -- mv -f "$TARGET.incoming" "$TARGET" || fail_with_rollback "could not atomically replace binary"
+rm -f "$STAGED"
+log "installed new binary in $INSTANCE:$TARGET ($(wc -c < "$BACKUP" | tr -d ' ') bytes in previous binary)"
+
+if ! incus exec "$INSTANCE" -- systemctl restart "$SERVICE"; then
+  fail_with_rollback "service restart failed"
 fi
 
-# --- 3. health-check what is actually being served -------------------------
-token="$(python3 -c "import json,os,sys;print(json.load(open(os.path.expanduser(sys.argv[1]))).get('pairingToken',''))" "$CONFIG" 2>/dev/null || true)"
 served=""
 for ((i = 1; i <= HEALTH_ATTEMPTS; i++)); do
-  # The token goes in via curl's config on stdin rather than in the URL argument.
-  # Anything can read another process's argv, so a credential in the command line
-  # is readable by every other user on the host, and this script runs on a
-  # machine that also runs a media server for other people.
-  body="$(printf 'url = "http://127.0.0.1:%s/api/status?token=%s"\n' "$API_PORT" "$token" \
-    | curl -sS --max-time 10 -K - 2>/dev/null || true)"
-  if [[ -n "$body" ]]; then
-    served="$(printf '%s' "$body" | python3 -c 'import json,sys; print(json.load(sys.stdin).get("version",""))' 2>/dev/null || true)"
-    [[ -n "$served" ]] && break
+  status="$(incus exec "$INSTANCE" -- "$TARGET" app status --json --config "$CONFIG" 2>/dev/null || true)"
+  if [[ -n "$status" ]]; then
+    served="$(printf '%s' "$status" | python3 -c 'import json,sys; print(json.load(sys.stdin).get("version", ""))' 2>/dev/null || true)"
+    healthy="$(printf '%s' "$status" | python3 -c 'import json,sys; d=json.load(sys.stdin); s=d.get("status",{}); print(str(bool(s.get("webHealthy")) and bool(s.get("apiHealthy"))).lower())' 2>/dev/null || true)"
+    if [[ -n "$served" && "$healthy" == true ]] && incus exec "$INSTANCE" -- systemctl is-active --quiet "$SERVICE"; then break; fi
+    served=""
   fi
   sleep "$HEALTH_INTERVAL"
 done
 
-if [[ -z "$served" ]]; then
-  log "no healthy response from :${API_PORT}; rolling back"
-  systemctl --user stop tm-sonder || true
-  cp -p "$BACKUP" "$TARGET"
-  systemctl --user restart tm-sonder || true
-  die "rolled back to ${BACKUP##*/}"
-fi
-
-# A process can be up and still serving a stale build, so compare what it
-# reports against what we were asked to install.
+[[ -n "$served" ]] || fail_with_rollback "container app health check failed"
 if [[ -n "$EXPECTED_VERSION" && "$served" != "$EXPECTED_VERSION" ]]; then
-  log "serving version '$served' but expected '$EXPECTED_VERSION'; rolling back"
-  cp -p "$BACKUP" "$TARGET"
-  systemctl --user restart tm-sonder || true
-  die "version mismatch after restart"
+  fail_with_rollback "serving version '$served' but expected '$EXPECTED_VERSION'"
 fi
 
-log "healthy: serving $served"
-systemctl --user is-active tm-sonder >/dev/null && log "tm-sonder is active"
-log "done (previous binary kept at ${BACKUP##*/})"
+log "healthy: $INSTANCE is serving $served (web and API healthy)"
+log "done (previous binary kept at $BACKUP)"
