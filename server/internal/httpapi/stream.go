@@ -2,6 +2,7 @@ package httpapi
 
 import (
 	"io"
+	"mime"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -9,10 +10,38 @@ import (
 	"strings"
 	"time"
 
+	"tm-sonder/server/internal/api"
 	"tm-sonder/server/internal/library"
 	"tm-sonder/server/internal/mediacache"
 	"tm-sonder/server/internal/transcode"
 )
+
+// handleAudiobookDownload saves the original file without a transcode. ServeContent
+// retains HEAD and Range support so download managers can resume interrupted files.
+func (s *Server) handleAudiobookDownload(w http.ResponseWriter, r *http.Request) {
+	item, ok := s.store.Get(r.PathValue("id"))
+	if !ok || item.Kind != api.KindAudiobook {
+		writeError(w, http.StatusNotFound, "Audiobook not found")
+		return
+	}
+	st, err := mediaInfo(item)
+	if err != nil {
+		writeError(w, http.StatusNotFound, "Media file missing")
+		return
+	}
+	f, info, release, err := s.openMedia(item, st)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "Cannot open media")
+		return
+	}
+	defer release()
+	defer f.Close()
+	w.Header().Set("Content-Type", item.Format.ContentType())
+	w.Header().Set("Content-Disposition", mime.FormatMediaType("attachment", map[string]string{"filename": filepath.Base(item.FilePath)}))
+	w.Header().Set("Cache-Control", "private, no-cache")
+	w.Header().Set("Accept-Ranges", "bytes")
+	http.ServeContent(w, r, filepath.Base(item.FilePath), info.ModTime(), f)
+}
 
 // handleStream serves /stream/{id}: kernel-fast ServeContent for direct play,
 // or an fMP4 transcode session when ?transcode=1.

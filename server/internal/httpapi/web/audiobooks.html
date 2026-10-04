@@ -71,6 +71,10 @@
     let books = [];
     let selectedID = null;
     let saveTimer = null;
+    let lastSavedAt = 0;
+    let activeBookID = null;
+    let metadataReady = false;
+    let allowResume = true;
     // Ordered files of the currently open multi-file book, if any.
     let currentParts = null;
     let partIndex = 0;
@@ -125,6 +129,8 @@
     }
 
     async function openBook(id) {
+      flushProgress();
+      metadataReady = false;
       selectedID = id;
       renderList();
       detail.innerHTML = `<p>Loading...</p>`;
@@ -134,10 +140,15 @@
         return;
       }
       const data = await response.json();
+      if (selectedID !== id) return;
       renderDetail(data.item, data.chapters ?? []);
     }
 
     function renderDetail(book, chapters) {
+      activeBookID = book.id;
+      allowResume = true;
+      metadataReady = false;
+      lastSavedAt = Date.now();
       // A book delivered as many files is one entry with an ordered parts
       // list. The player walks the parts in order so the whole book plays,
       // instead of stopping at the end of the first file.
@@ -177,10 +188,17 @@
           if (partIndex + 1 < currentParts.length) playPart(partIndex + 1, true);
         });
       }
+      player.addEventListener("pause", flushProgress);
+      player.addEventListener("ended", flushProgress);
       player.addEventListener("loadedmetadata", () => {
+        metadataReady = true;
+        if (!allowResume) return;
+        const source = player.src;
+        const expectedPart = partIndex;
         const id = currentParts ? currentParts[partIndex].id : book.id;
         fetch(api(`/api/playback/${id}`)).then(r => r.ok ? r.json() : null).then(session => {
           const resume = session?.seconds ?? 0;
+          if (player.src !== source || expectedPart !== partIndex || !player.isConnected || !player.paused || player.currentTime > 1) return;
           if (resume > 5 && resume < Math.max(player.duration - 8, 0)) player.currentTime = resume;
         }).catch(() => {});
       });
@@ -194,6 +212,9 @@
     // playback automatically when the previous file ended.
     function playPart(index, autoplay) {
       if (!currentParts || !currentParts[index]) return;
+      flushProgress();
+      metadataReady = false;
+      allowResume = !autoplay;
       partIndex = index;
       const player = document.querySelector("#player");
       if (!player) return;
@@ -221,9 +242,9 @@
       if (progress && duration > 0) progress.value = Math.min(Math.max(seconds / duration, 0), 1);
       if (nowPlaying) nowPlaying.textContent = `${current?.title ?? "Chapter"} • ${formatTime(seconds)} / ${formatTime(duration)}`;
       document.querySelectorAll(".chapter").forEach(row => row.classList.toggle("current", Number(row.dataset.chapter) === current?.index));
-      if (duration > 0) {
-        clearTimeout(saveTimer);
-        saveTimer = setTimeout(() => saveProgress(id, seconds, duration), 500);
+      if (metadataReady && Number.isFinite(duration) && duration > 0 && Date.now() - lastSavedAt >= 10000) {
+        lastSavedAt = Date.now();
+        saveProgress(id, seconds, duration).catch(() => {});
       }
     }
 
@@ -239,8 +260,19 @@
     }
 
     async function saveProgress(id, seconds, duration) {
-      await fetch(api(`/api/progress/${id}`), { method:"POST", headers:{"Content-Type":"application/json"}, body:JSON.stringify({ seconds, duration }) });
+      await fetch(api(`/api/progress/${id}`), { method:"POST", headers:{"Content-Type":"application/json"}, keepalive:true, body:JSON.stringify({ seconds, duration }) });
     }
+
+    function flushProgress() {
+      const player = document.querySelector("#player");
+      if (!metadataReady || !player || !Number.isFinite(player.duration) || player.duration <= 0) return;
+      const id = currentParts ? currentParts[partIndex]?.id : activeBookID;
+      if (!id) return;
+      lastSavedAt = Date.now();
+      saveProgress(id, player.currentTime || 0, player.duration).catch(() => {});
+    }
+    window.addEventListener("pagehide", flushProgress);
+    document.addEventListener("visibilitychange", () => { if (document.hidden) flushProgress(); });
 
     let debounce = null;
     q.addEventListener("input", () => {

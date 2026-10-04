@@ -1239,3 +1239,53 @@ test('a book is filtered by the watched filter using its whole progress', () => 
   assert.equal(get('($("#watched").value = "watched", visibleItems().length)'), 1);
   assert.equal(get('($("#watched").value = "unwatched", visibleItems().length)'), 0);
 });
+
+test('listening shelves prioritize saved progress and exclude finished bookmarks', () => {
+  const books = [part('p1','book',1,100), part('p2','book',2,100),
+    {id:'new',title:'New',kind:'audiobook',durationSeconds:100},
+    {id:'done',title:'Done',kind:'audiobook',durationSeconds:100},
+    {id:'old',title:'Old',kind:'audiobook',durationSeconds:100}];
+  const get = catalog(books, [
+    {id:'p2',seconds:30,duration:100,updatedAt:'2026-10-03T12:00:00Z'},
+    {id:'old',seconds:30,duration:100,updatedAt:'2026-10-02T12:00:00Z'},
+    {id:'done',seconds:100,duration:100}]);
+  get('readingState.queue = ["new", "done", "p1"]; 0');
+  assert.deepEqual(get('listeningShelves(visibleItems()).continuing.map(i=>i.id)'), ['p1','old']);
+  assert.deepEqual(get('listeningShelves(visibleItems()).bookmarked.map(i=>i.id)'), ['new']);
+  assert.match(get('listeningCardHTML(items[0])'), /aria-label="Resume/);
+});
+
+test('downloads enumerate every source part in playback order', () => {
+  const get = catalog([part('p2','book',2,100),part('p1','book',1,100)]);
+  const markup = get('audiobookDownloadsMarkup(items[0])');
+  assert.ok(markup.indexOf('/p1/download') < markup.indexOf('/p2/download'));
+  assert.match(markup, /does not make the browser player available offline/);
+  const detail = librarySource.slice(librarySource.indexOf('function renderBookDetail('), librarySource.indexOf('function openBookPage('));
+  assert.ok(detail.indexOf('id="bookDetailResume"') < detail.indexOf('${bookProgressMarkup(item)}'));
+});
+
+test('alternate audiobook players checkpoint continuously and on suspend', () => {
+  for (const name of ['audiobooks.html','audiobooks-beta.html']) {
+    const source = fs.readFileSync(`${__dirname}/${name}`, 'utf8');
+    const code = source.slice(source.indexOf('    function updatePlayback('), source.indexOf('\n    }', source.indexOf('    function updatePlayback(')) + 6);
+    let clock = 10000;
+    const writes = [];
+    const player = {duration:100,currentTime:20};
+    const context = vm.createContext({metadataReady:true,lastSavedAt:0,
+      Date:{now:()=>clock},document:{querySelector:()=>null,querySelectorAll:()=>[]},
+      formatTime:String,currentChapter:()=>null,saveProgress:(...args)=>{writes.push(args);return Promise.resolve();}});
+    vm.runInContext(code,context);
+    context.player = player;
+    vm.runInContext('updatePlayback("part", [], player)',context);
+    clock = 10500;
+    vm.runInContext('updatePlayback("part", [], player)',context);
+    assert.equal(writes.length,1,name);
+    clock = 20000;
+    vm.runInContext('updatePlayback("part", [], player)',context);
+    assert.equal(writes.length,2,name);
+    assert.match(source,/window.addEventListener\("pagehide", flushProgress\)/);
+    assert.match(source,/player.addEventListener\("pause", flushProgress\)/);
+    assert.match(source,/player.src !== source \|\| expectedPart !== partIndex/);
+    assert.match(source,/keepalive:\s*true/);
+  }
+});

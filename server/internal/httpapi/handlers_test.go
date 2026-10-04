@@ -1157,3 +1157,68 @@ func getBody(t *testing.T, url string) string {
 }
 
 var _ = time.Now
+
+func TestAudiobookDownload(t *testing.T) {
+	f := newFixture(t, nil)
+	item := f.addItem(t, "book", "A book")
+	item.Kind = api.KindAudiobook
+	f.store.Upsert(item)
+	url := f.ts.URL + "/api/audiobooks/book/download"
+	resp, body := get(t, url)
+	if resp.StatusCode != http.StatusOK || body != "0123456789abcdef" {
+		t.Fatalf("download: %d %q", resp.StatusCode, body)
+	}
+	if !strings.HasPrefix(resp.Header.Get("Content-Disposition"), "attachment;") || !strings.Contains(resp.Header.Get("Content-Disposition"), "A book.mp4") {
+		t.Fatalf("disposition: %q", resp.Header.Get("Content-Disposition"))
+	}
+	if strings.Contains(resp.Header.Get("Content-Disposition"), filepath.Dir(item.FilePath)) {
+		t.Fatal("download leaks server path")
+	}
+	req, _ := http.NewRequest(http.MethodGet, url, nil)
+	req.Header.Set("Range", "bytes=4-7")
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	body = readAll(t, resp)
+	if resp.StatusCode != http.StatusPartialContent || body != "4567" || resp.Header.Get("Content-Range") != "bytes 4-7/16" {
+		t.Fatalf("range: %d %q %q", resp.StatusCode, body, resp.Header.Get("Content-Range"))
+	}
+	req, _ = http.NewRequest(http.MethodHead, url, nil)
+	resp, err = http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if body = readAll(t, resp); resp.StatusCode != http.StatusOK || body != "" || resp.ContentLength != 16 {
+		t.Fatalf("head: %d %q length %d", resp.StatusCode, body, resp.ContentLength)
+	}
+	f.addItem(t, "movie", "Movie")
+	resp, _ = get(t, f.ts.URL+"/api/audiobooks/movie/download")
+	if resp.StatusCode != http.StatusNotFound {
+		t.Fatal("movie accepted as audiobook")
+	}
+}
+
+func TestAudiobookDownloadRequiresRemoteAuthentication(t *testing.T) {
+	f := newFixture(t, func(c *config.Config) { c.AllowLAN = true; c.PairingToken = "download-test-token" })
+	item := f.addItem(t, "book", "Book")
+	item.Kind = api.KindAudiobook
+	f.store.Upsert(item)
+	for _, token := range []string{"", "download-test-token"} {
+		req := httptest.NewRequest(http.MethodGet, "/api/audiobooks/book/download", nil)
+		req.RemoteAddr = "192.168.1.50:1234"
+		req.Host = "192.168.1.20:8797"
+		if token != "" {
+			req.Header.Set("Authorization", "Bearer "+token)
+		}
+		rec := httptest.NewRecorder()
+		f.s.Handler().ServeHTTP(rec, req)
+		want := http.StatusOK
+		if token == "" {
+			want = http.StatusUnauthorized
+		}
+		if rec.Code != want {
+			t.Fatalf("authenticated=%v status=%d want=%d", token != "", rec.Code, want)
+		}
+	}
+}

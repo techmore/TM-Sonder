@@ -1762,3 +1762,52 @@ body:not(.mobile-filters-open) #filterRow { display:none !important; }
   :root { --tabbar-h: 52px; }
   .nowplaying:not(.np-audio-mode) .np-video { max-height: 26vh; }
 }
+
+/* Audiobooks: listening first, with catalog controls available on demand. */
+.audiobook-mode #filterRow:not(.audiobook-filters-open) { display:none; }
+.audiobook-mode .listening-intro { padding:20px 0 28px; }
+.listening-intro > p { margin:0 0 10px; font-size:11px; letter-spacing:.15em; color:var(--accent); }
+.listening-intro h1 { margin:0 0 12px; font-size:clamp(25px,3vw,38px); line-height:1.15; font-weight:600; }
+.listening-intro > span { color:var(--muted); font-size:13px; }
+.listening-section { margin-bottom:32px; }
+.listening-grid { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:12px; }
+.listening-card { min-width:0; display:grid; grid-template-columns:64px minmax(0,1fr) auto; gap:14px; align-items:center; padding:16px; border:1px solid var(--line); border-radius:12px; background:var(--panel); }
+.listening-art { padding:0; width:64px; height:88px; display:grid; place-items:center; border:0; border-radius:6px; background:var(--panel2); color:var(--accent); cursor:pointer; overflow:hidden; }
+.listening-art img { width:100%; height:100%; object-fit:contain; }
+.listening-copy { min-width:0; }
+.listening-copy h3 { margin:0; font-size:15px; line-height:1.35; }
+.listening-copy h3 button { border:0; padding:0; background:none; color:var(--text); font:inherit; text-align:left; cursor:pointer; }
+.listening-copy p { margin:5px 0 10px; color:var(--muted); font-size:12px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.listening-copy progress { display:block; width:100%; height:4px; border:0; border-radius:8px; accent-color:var(--accent); }
+.listening-copy > span { display:block; margin-top:7px; color:var(--muted); font-size:11px; }
+.listening-resume { min-height:44px; padding:10px 14px; border:1px solid var(--line); border-radius:8px; background:var(--panel2); color:var(--text); font:inherit; font-size:12px; cursor:pointer; }
+.listening-resume:hover, .listening-resume:focus-visible { border-color:var(--accent); }
+.book-cover-fallback { position:absolute; inset:0; display:grid; place-items:center; color:var(--accent); font-size:38px; background:var(--panel2); }
+.audiobook-mode .card img.poster { position:relative; object-fit:contain; }
+.book-card-narrator { margin:3px 10px 10px; font-size:11px; color:var(--muted); overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.audiobook-mode .card h3 { display:-webkit-box; -webkit-line-clamp:2; -webkit-box-orient:vertical; overflow:hidden; white-space:normal; min-height:2.7em; }
+.audiobook-mode .book-detail-hero { grid-template-columns:190px minmax(0,1fr); gap:32px; }
+.audiobook-mode .book-detail-cover img { object-fit:contain; }
+.audiobook-mode .book-detail-actions { margin-top:16px; }
+.audiobook-mode .book-detail-progress { margin-top:16px; padding:12px; }
+.book-downloads { margin-top:24px; border-top:1px solid var(--line); padding-top:18px; }
+.book-downloads summary { min-height:44px; cursor:pointer; color:var(--text); }
+.book-downloads p { max-width:65ch; font-size:13px; line-height:1.6; color:var(--muted); }
+.book-downloads li { margin:12px 0; }
+.book-downloads a { color:var(--accent); }
+@media (max-width:850px) { .listening-grid { grid-template-columns:minmax(0,1fr); } }
+@media (max-width:600px) {
+  .listening-card { grid-template-columns:48px minmax(0,1fr) auto; padding:12px; gap:10px; }
+  .listening-art { width:48px; height:68px; }
+  .listening-resume { padding:10px; }
+  .listening-resume span { display:none; }
+  .audiobook-mode .book-detail-hero { grid-template-columns:92px minmax(0,1fr); gap:16px; }
+  .audiobook-mode .book-detail-copy h2 { font-size:24px; }
+  .audiobook-mode .book-detail-actions { align-items:flex-start; }
+  .audiobook-mode .book-detail-progress, .audiobook-mode .book-chapter-support { font-size:12px; }
+}
+.book-series-setup { margin-top:22px; }
+.book-series-setup > summary { min-height:44px; color:var(--muted); cursor:pointer; }
+.book-detail-mode #mobileGenreBtn, .book-detail-mode #mobileSearchBtn { display:none; }
+body.audiobook-mode #mobileFilterToggle { display:none !important; }
+body.audiobook-mode:not(.book-detail-mode) #filterRow.audiobook-filters-open:not([hidden]) { display:flex !important; }

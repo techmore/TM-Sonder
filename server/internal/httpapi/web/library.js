@@ -3318,19 +3318,21 @@
       const partsBit = parts ? `${parts.length} files` : "";
       const metaBits = [bookContext, item.year || "", runtimeLabel(item), partsBit, qualityBit].filter(Boolean).join(" • ");
       const badge = watched
-        ? `<span class="badge watched">WATCHED</span>`
-        : (pct > 0 ? `<span class="badge unwatched">${formatProgressPercent(100-pct)}% LEFT</span>` : "");
+        ? `<span class="badge watched">${item.kind === "audiobook" ? "FINISHED" : "WATCHED"}</span>`
+        : (pct > 0 ? `<span class="badge unwatched">${formatProgressPercent(item.kind === "audiobook" ? pct : 100-pct)}% ${item.kind === "audiobook" ? "LISTENED" : "LEFT"}</span>` : "");
       const card = `
       <button class="card" data-id="${item.id}" data-action="open-detail"
               aria-label="${escapeHTML(item.title)}${metaBits ? ", " + metaBits : ""}">
         <div class="frame">
+          ${item.kind === "audiobook" ? `<span class="book-cover-fallback" aria-hidden="true">${escapeHTML((item.title || "A").slice(0,1).toUpperCase())}</span>` : ""}
           ${poster}
           <span class="play-glyph" aria-hidden="true">▶</span>
           ${badge}
           ${pct > 0 ? `<span class="bar"><i style="width:${pct}%"></i></span>` : ""}
         </div>
         <h3>${escapeHTML(opts.showTitle ? (item.showTitle || item.title) : item.title)}</h3>
-        <p class="meta">${escapeHTML(metaBits || kindLabel(item.kind))}</p>
+        <p class="meta">${escapeHTML(item.kind === "audiobook" ? [item.author, runtimeLabel(item)].filter(Boolean).join(" · ") : metaBits || kindLabel(item.kind))}</p>
+        ${item.kind === "audiobook" && item.narrator ? `<p class="book-card-narrator">Read by ${escapeHTML(item.narrator)}</p>` : ""}
       </button>`;
       if (!item.isPlaceholder && ["audiobook", "ebook"].includes(item.kind)) {
         const recordID = readingRecordID(item);
@@ -3350,6 +3352,29 @@
     let movieDetailCollapsed = true;
     let movieShelfExpanded = false;
     let libraryShelfLimit = 96;
+    let audiobookFiltersExpanded = false;
+
+    function listeningShelves(source) {
+      const continuing = source.filter(item => inProgress(progressForItem(item), item))
+        .sort((a,b) => String(progressForItem(b)?.updatedAt || "").localeCompare(String(progressForItem(a)?.updatedAt || "")) || (a.title || "").localeCompare(b.title || "")).slice(0,8);
+      const bookmarked = source.filter(item => readingState.queue.includes(readingRecordID(item)) && !inProgress(progressForItem(item), item) && !isWatched(progressForItem(item), item)).slice(0,8);
+      return { continuing, bookmarked };
+    }
+
+    function audiobookDownloadsMarkup(item) {
+      const parts = partsOf(item) || [item];
+      return `<details class="book-downloads"><summary>Download audio files</summary><p>Save the original audio to Files or your computer, then open it in a compatible player. This does not make the browser player available offline.</p><ul>${parts.map((part, index) => `<li><a href="${escapeHTML(api('/api/audiobooks/' + encodeURIComponent(part.id) + '/download'))}">Download ${parts.length > 1 ? `part ${index + 1}` : 'audio'} · ${escapeHTML(part.title || item.title)}</a></li>`).join('')}</ul></details>`;
+    }
+
+    function listeningCardHTML(item) {
+      const progress = progressForItem(item);
+      const duration = Number(progress?.duration) || Number(item.durationSeconds) || 0;
+      const seconds = Math.min(duration, Math.max(0, Number(progress?.seconds) || 0));
+      const percent = duration > 0 ? Math.min(100, seconds / duration * 100) : 0;
+      const remaining = Math.max(0, duration - seconds);
+      const left = duration > 0 ? `${Math.floor(remaining/3600)}h ${Math.floor(remaining%3600/60)}m left` : "Listening in progress";
+      return `<article class="listening-card"><button type="button" class="listening-art" data-action="open-detail" data-id="${escapeHTML(item.id)}" aria-label="Details for ${escapeHTML(item.title)}">${item.posterURL ? `<img src="${escapeHTML(api(item.posterURL))}" alt="" loading="lazy">` : escapeHTML((item.title || "A").slice(0,1))}</button><div class="listening-copy"><h3><button type="button" data-action="open-detail" data-id="${escapeHTML(item.id)}">${escapeHTML(item.title)}</button></h3><p>${escapeHTML(item.author || item.narrator || "Audiobook")}</p><progress max="100" value="${percent}" aria-label="${Math.round(percent)} percent listened"></progress><span>${escapeHTML(left)}</span></div><button type="button" class="listening-resume" data-action="play-item" data-id="${escapeHTML(item.id)}" aria-label="Resume ${escapeHTML(item.title)}">Resume <span aria-hidden="true">▶</span></button></article>`;
+    }
     const movieMetadataByID = new Map();
     const movieMetadataLoading = new Set();
     const movieMetadataErrors = new Map();
@@ -3663,6 +3688,7 @@
       syncHash(true);
       window.scrollTo({ top: 0, behavior: "smooth" });
     });
+    on("#audiobookFilterToggle", "click", () => { audiobookFiltersExpanded = !audiobookFiltersExpanded; render(); });
 
     async function refreshLists() {
       const response = await fetch(api("/api/lists"));
@@ -4385,7 +4411,7 @@
     function renderReadingLists() {
       const panel = $("#listsPanel");
       if (!panel) return;
-      const visible = listsPageOpen || !["storage", "optimize", "bookmarks"].includes(activeTab);
+      const visible = listsPageOpen || !["storage", "optimize", "bookmarks", "audiobooks"].includes(activeTab);
       panel.hidden = !visible;
       if (visible) renderLists();
     }
@@ -4396,8 +4422,15 @@
       const bookmarksPage = activeTab === "bookmarks";
       const bookTab = ["audiobooks", "books"].includes(activeTab);
       const listsPage = listsPageOpen && bookTab;
+      document.body.classList.toggle("audiobook-mode", activeTab === "audiobooks");
+      const filtersOpen = audiobookFiltersExpanded || selectedFacetValues.size > 0 || ($("#coverFilter")?.value || "all") !== "all";
+      const filterToggle = $("#audiobookFilterToggle");
+      if (filterToggle) { filterToggle.hidden = activeTab !== "audiobooks" || listsPage; filterToggle.setAttribute("aria-expanded", String(filtersOpen)); filterToggle.textContent = filtersOpen ? "Hide filters" : "Filters"; }
+      $("#filterRow")?.classList.toggle("audiobook-filters-open", filtersOpen);
+      const watchedFilter = $("#watched");
+      if (watchedFilter?.options) { const labels = activeTab === "audiobooks" ? ["All books", "Not finished", "Finished"] : ["All", "Unwatched", "Watched"]; [...watchedFilter.options].forEach((option,index)=>{if(labels[index])option.textContent=labels[index]}); watchedFilter.setAttribute("aria-label", activeTab === "audiobooks" ? "Listening status" : "Watched filter"); }
       const coverFilter = $("#coverFilter");
-      if (coverFilter) coverFilter.hidden = activeTab !== "audiobooks" || listsPage || bookmarksPage;
+      if (coverFilter) coverFilter.hidden = activeTab !== "audiobooks" || listsPage || bookmarksPage || !filtersOpen;
       for (const selector of ["#q", "#watched", "#sort"]) {
         const control = $(selector);
         if (control) control.hidden = listsPage || bookmarksPage;
@@ -4426,6 +4459,7 @@
       document.body.classList.toggle("book-detail-mode", !!bookPage);
       $("#bookDetailPage").hidden = !bookPage;
       if (bookPage) {
+        for (const selector of ["#q", "#watched", "#sort", "#coverFilter"]) { const control=$(selector); if(control)control.hidden=true; }
         if (bookAreaNav) bookAreaNav.hidden = true;
         document.body.classList.remove("storage-mode", "optimize-mode", "mobile-filters-open");
         $("#storagePanel").hidden = true;
@@ -4516,8 +4550,8 @@
         return;
       }
       if (railsActive) {
-        const byUpdated = (a, b) => (progressByID.get(b.id)?.updatedAt || "")
-          .localeCompare(progressByID.get(a.id)?.updatedAt || "");
+        const byUpdated = (a, b) => (progressForItem(b)?.updatedAt || "")
+          .localeCompare(progressForItem(a)?.updatedAt || "");
         const shelfHeading = (title, sub, control = "") => `
           <div class="web-rail-heading">
             <div><h2>${escapeHTML(title)}</h2><p class="sub">${escapeHTML(sub)}</p></div>
@@ -4581,6 +4615,12 @@
                    railStrip("Unstarted", "nothing played yet", unstarted.map(showCardHTML)) +
                    curatedRails(CURATED_KINDS.tv) +
                    fullShelf("All TV shows", `${shows.length.toLocaleString()} shows in your catalog`, shows, showCardHTML);
+        } else if (activeTab === "audiobooks") {
+          const { continuing, bookmarked } = listeningShelves(visible);
+          blocks = `<section class="listening-intro"><p>YOUR AUDIOBOOKS</p><h1>A little time. A good book.</h1><span>${visible.length.toLocaleString()} titles in your library${continuing.length ? ` · ${continuing.length} in progress` : ""}</span></section>` +
+            (continuing.length ? `<section class="listening-section"><div class="web-rail-heading"><div><h2>Continue listening</h2><p class="sub">Pick up where you left off.</p></div></div><div class="listening-grid">${continuing.map(listeningCardHTML).join("")}</div></section>` : "") +
+            railStrip("Saved for later", "Your bookmarks, ready when you are.", bookmarked.map(cardHTML)) +
+            fullShelf("All audiobooks", "Choose a title to see its details, or use search to find your next listen.", visible, cardHTML, "audiobook-catalog");
         } else {
           const cont = visible.filter(i => inProgress(progressForItem(i), i)).sort(byUpdated).slice(0, 10);
           const picks = fresh(visible).slice(0, 12);
@@ -5100,7 +5140,8 @@
         seriesFact ? `<span class="book-detail-fact">${escapeHTML(seriesFact)}</span>` : "",
         partsOf(item) ? `<span class="book-detail-fact">${partsOf(item).length} audio parts</span>` : "",
       ].filter(Boolean).join("");
-      const seriesHTML = bookSeriesNavigationHTML(item, seriesContexts);
+      const seriesNavigation = bookSeriesNavigationHTML(item, seriesContexts);
+      const seriesHTML = series ? seriesNavigation : `<details class="book-series-setup"><summary>Series & reading order</summary>${seriesNavigation}</details>`;
       const genres = (Array.isArray(item.genres) ? item.genres : []).filter(Boolean).slice(0, 8);
       const tags = (Array.isArray(item.tags) ? item.tags : []).filter(Boolean).slice(0, 12);
       const genreTags = genres.map(genre => `<span class="tag">${escapeHTML(genre)}</span>`).join("");
@@ -5129,11 +5170,11 @@
             ${item.subtitle ? `<p class="book-detail-subtitle">${escapeHTML(item.subtitle)}</p>` : ""}
             ${item.author ? `<p class="book-detail-byline">By <button class="book-author-tag" type="button" data-action="browse-author-books" data-id="${escapeHTML(item.id)}" aria-label="See more books by ${escapeHTML(item.author)}">${escapeHTML(item.author)}</button></p>` : ""}
             ${facts ? `<div class="book-detail-facts" aria-label="Book details">${facts}</div>` : ""}
-            ${bookChapterSupportMarkup(item)}
-            ${bookProgressMarkup(item)}
             <div class="book-detail-actions">
               ${plan ? `<button id="bookDetailResume" type="button" class="book-resume-button" data-action="play-item" data-id="${escapeHTML(item.id)}" aria-label="${escapeHTML(playState.label)}: ${escapeHTML(title)}">${escapeHTML(playState.label)}</button><span id="bookDetailResumeNote" class="muted">${escapeHTML(playState.note)}</span>` : `<a class="book-resume-button" href="${api("/stream/" + item.id)}" target="_blank" rel="noopener">Open in a player</a>`}
             </div>
+            ${bookProgressMarkup(item)}
+            ${bookChapterSupportMarkup(item)}
             <div class="book-actions" aria-label="Book actions">
               <button type="button" data-action="toggle-reading-queue" data-id="${escapeHTML(recordID)}" aria-pressed="${queued}">${queued ? "✓ Bookmarked" : "+ Bookmark for later"}</button>
               <button type="button" data-action="toggle-book-like" data-id="${escapeHTML(recordID)}" aria-pressed="${liked}">${liked ? "♥ Liked" : "♡ Like"}</button>
@@ -5144,6 +5185,7 @@
         </section>
         ${seriesHTML}
         ${details ? `<section class="book-detail-meta" aria-label="About this book">${details}</section>` : ""}
+        ${audiobookDownloadsMarkup(item)}
         ${item.summary ? `<section class="book-detail-description"><h3>About this book</h3><p class="summary">${escapeHTML(item.summary)}</p></section>` : ""}
         ${genreTags || regularTags ? `<div class="book-detail-tags" aria-label="Book tags">${genreTags}${regularTags}</div>` : ""}
         ${readHistoryHTML(readingRecord) ? `<div class="book-detail-history">${readHistoryHTML(readingRecord)}</div>` : ""}
