@@ -159,3 +159,25 @@ lifetimes and must be tested independently.
 - [Apple: Downloading files in the background](https://developer.apple.com/documentation/foundation/downloading-files-in-the-background): reconnect background sessions using the same session identifier on relaunch.
 - [Apple: AVAssetDownloadURLSession](https://developer.apple.com/documentation/avfoundation/avassetdownloadurlsession): dedicated background HLS asset downloads; original M4B/MP3 files use URLSession instead.
 - [WebKit: Safari 26 features](https://webkit.org/blog/17333/webkit-features-in-safari-26-0/): published browser capabilities; no unverified iOS/macOS 27 guarantees are asserted here.
+
+## Native client follow-up (2026-10-03)
+
+The iOS source is now part of this repository, with pinned dependency versions
+and unsigned Xcode 27 CI coverage. Its previous embedded Git metadata and local
+source were backed up before conversion.
+
+- A model-owned audiobook player survives dismissing the player screen and
+  navigating the library. A mini player reopens it without restarting playback.
+- Ordered multipart playback, current-part canonical chapters, sleep timers,
+  headphones/interruption handling, and lock-screen commands are implemented.
+- Checkpoints are persisted before network awaits, scoped to the selected
+  server, and replayed with timestamps. Stale acknowledgements cannot remove
+  newer pending updates; cached library loading merges pending local progress.
+- Original-file background downloads retain server-scoped resume data, retry
+  stale resume data once, and replace existing saved files atomically. Multipart
+  books are only labeled fully offline when every part is present.
+
+Persistence tests and an unsigned local build cover code and file behavior.
+Real-device calls, lock-screen controls, suspension, sleep/wake, airplane-mode
+playback, and OS-driven background download recovery have not been tested.
+This change publishes source; it does not install a new app on a device.

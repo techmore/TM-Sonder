@@ -73,3 +73,7 @@ server/sonder
 /server/.ab-av1-*/
 /status.txt
 __pycache__/
+
+# Native dependency versions must survive a fresh checkout.
+!IOS_Client_Xcode/TM_Sonder_Client/Package.resolved
+!IOS_Client_Xcode/TM_Sonder_Client/TM_Sonder_Client.xcodeproj/project.xcworkspace/xcshareddata/swiftpm/Package.resolved

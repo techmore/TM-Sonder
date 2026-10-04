@@ -122,19 +122,22 @@ public struct SonderPlaybackStateUpdate: Codable, Sendable, Hashable {
     public var audioTrackID: String?
     public var subtitleTrackID: String?
     public var subtitlesEnabled: Bool?
+    public var updatedAt: Date?
 
     public init(
         seconds: Double,
         duration: Double,
         audioTrackID: String? = nil,
         subtitleTrackID: String? = nil,
-        subtitlesEnabled: Bool? = nil
+        subtitlesEnabled: Bool? = nil,
+        updatedAt: Date? = nil
     ) {
         self.seconds = seconds
         self.duration = duration
         self.audioTrackID = audioTrackID
         self.subtitleTrackID = subtitleTrackID
         self.subtitlesEnabled = subtitlesEnabled
+        self.updatedAt = updatedAt
     }
 }
 
