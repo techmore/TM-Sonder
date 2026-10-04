@@ -3,7 +3,7 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const vm = require('node:vm');
 
-function catalog(items, progress = []) {
+function catalog(items, progress = [], detailTools = false) {
   const source = fs.readFileSync(`${__dirname}/library.js`, 'utf8');
   // A minimal DOM: visibleItems() reads the filter selects through $, and the
   // book-part tests need to drive them ("watched" / "unwatched").
@@ -39,7 +39,7 @@ function catalog(items, progress = []) {
   } }, $, document: { createElement: () => ({ canPlayType: () => 'probably' }),
                      addEventListener(){}, querySelector: $, querySelectorAll(){ return []; },
                      body: { classList: { add(){}, remove(){}, contains(){ return false; } } } },
-    navigator: {}, setTimeout: () => 1, clearTimeout(){},
+    URL, navigator: {}, setTimeout: () => 1, clearTimeout(){},
     localStorage: {
       getItem: key => preferences.get(key) ?? null,
       setItem: (key, value) => preferences.set(key, String(value)),
@@ -49,6 +49,7 @@ function catalog(items, progress = []) {
   context.performance = { now: () => fakeNow };
   context.fields = fields;
   vm.runInContext(source.slice(0, source.indexOf('    function seasonLabel')), context);
+  if (detailTools) vm.runInContext(source.slice(source.indexOf('    const bookConversionCache'), source.indexOf('    function renderBookDetail(item)')), context);
   context.input = items;
   context.progress = progress;
   vm.runInContext('items = input; for (const p of progress) progressByID.set(p.id, p); rebuildCopyGroups();', context);
@@ -1288,4 +1289,36 @@ test('alternate audiobook players checkpoint continuously and on suspend', () =>
     assert.match(source,/player.src !== source \|\| expectedPart !== partIndex/);
     assert.match(source,/keepalive:\s*true/);
   }
+});
+
+
+test('audiobook cover frames contain artwork independently of intrinsic size', () => {
+  assert.match(libraryCSS, /\.audiobook-mode \.card img\.poster \{ position:absolute; inset:0; width:100%; height:100%; object-fit:contain;/);
+  assert.match(libraryCSS, /book-detail-cover \{ position:relative; width:220px; height:330px;/);
+});
+
+test('recording tools detect all MP3 parts and avoid duplicate book tags', () => {
+  const get = catalog([part('p1','book',1,100), {...part('p2','book',2,100),format:'mp3'}], [], true);
+  assert.equal(get('bookIsMP3(items[0])'), true);
+  assert.deepEqual(get('distinctBookTags({author:"Author", genres:["Fiction", "Audiobook"], tags:["fiction", "Author", "open-library", "Space"]})'), ['Fiction','Space']);
+  assert.equal(get('bookEditionASIN({metadataIDSource:"audible",metadataID:"b08g9prs1k"})'), 'B08G9PRS1K');
+  assert.equal(get('safeBookSourceURL("javascript:alert(1)")'), '');
+});
+
+test('chapter preview requires compatible runtime and edition review', () => {
+  const get = catalog([{id:'book',title:'Book',kind:'audiobook',format:'mp3',durationSeconds:100}], [], true);
+  get('bookChapterPreviews.set("book", {title:"Other edition", matchConfidence:"runtime-mismatch", runtimeSeconds:200, localDurationSeconds:100, chapters:[]}); 0');
+  assert.match(get('chapterPreviewMarkup(items[0])'), /Runtime does not match/);
+  assert.match(get('chapterPreviewMarkup(items[0])'), /data-action="apply-book-chapters"[^>]+disabled/);
+  get('bookChapterPreviews.set("book", {title:"Book", matchConfidence:"runtime-compatible-needs-edition-review", runtimeSeconds:100, localDurationSeconds:100, chapters:[]}); 0');
+  assert.match(get('chapterPreviewMarkup(items[0])'), /I checked the title, narrator and edition/);
+  assert.doesNotMatch(get('chapterPreviewMarkup(items[0])'), /data-action="apply-book-chapters"[^>]+disabled/);
+});
+
+test('detail chapter jump starts the correct part at explicit local time', () => {
+  const get = catalog([part('p1','book',1,100),part('p2','book',2,100)], [], true);
+  get('playBookDetailChapter("p1", 102); 0');
+  assert.equal(get('nowPlayingPartIndex'), 1);
+  get('npMedia().duration = 100; npMedia().listeners.loadedmetadata(); 0');
+  assert.equal(get('npMedia().currentTime'), 2);
 });

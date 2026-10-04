@@ -9,6 +9,7 @@ import (
 	"errors"
 	"io"
 	"net/http"
+	"os"
 	"sort"
 	"strconv"
 	"strings"
@@ -878,6 +879,10 @@ type audiobookChapterTimeline struct {
 	PartCount       int                        `json:"partCount"`
 	DurationSeconds float64                    `json:"durationSeconds"`
 	Chapters        []audiobookTimelineChapter `json:"chapters"`
+	Source          string                     `json:"source,omitempty"`
+	SourceURL       string                     `json:"sourceURL,omitempty"`
+	ImportedAt      *time.Time                 `json:"importedAt,omitempty"`
+	ImportWarning   string                     `json:"importWarning,omitempty"`
 }
 
 func (s *Server) toCatalogItem(it *library.Item) catalogItem {
@@ -1331,6 +1336,13 @@ func (s *Server) handleAudiobookChapters(w http.ResponseWriter, r *http.Request)
 		}
 		timeline.DurationSeconds += duration
 	}
+	if imported, err := s.loadImportedChapterMap(parts); err == nil {
+		writeJSON(w, http.StatusOK, importedChapterTimeline(it.ID, parts, imported))
+		return
+	} else if !os.IsNotExist(err) {
+		timeline.ImportWarning = "Saved chapter timings no longer match this recording. Review and import them again."
+	}
+	timeline.Source = "embedded"
 	if !timeline.Available {
 		writeJSON(w, http.StatusOK, timeline)
 		return

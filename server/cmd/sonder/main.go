@@ -341,6 +341,19 @@ func run(configFlag, plexDB, exportPath, importPath, importMode, importPathMap s
 		srv.SetAudiobookOptimizer(audiobookOptimizer)
 		logger.Printf("audiobook optimization worker ready; local workspace=%s", filepath.Join(cfg.DataDir, "audiobook-optimization"))
 	}
+	if ffmpegErr == nil && ffprobeErr == nil {
+		mp3Converter, err := audiobookopt.NewMP3(store, cfg.Libraries, cfg.DataDir, ffmpegForJobs, ffprobeForJobs)
+		if err != nil {
+			logger.Printf("MP3 audiobook conversion unavailable: %v", err)
+		} else {
+			srv.SetMP3Converter(mp3Converter)
+			defer func() {
+				ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+				defer cancel()
+				_ = mp3Converter.Close(ctx)
+			}()
+		}
+	}
 	// Populate the /api/library mediaDirectories table from config.
 	dirs := make([]api.MediaDirectory, 0, len(cfg.Libraries))
 	for _, l := range cfg.Libraries {

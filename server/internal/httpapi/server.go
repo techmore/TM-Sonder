@@ -66,6 +66,7 @@ type Server struct {
 	chapters           ChapterProvider
 	movieMetadata      *enrich.Enricher
 	audiobookOptimizer *audiobookopt.Manager
+	mp3Converter       *audiobookopt.MP3Manager
 	runtimeControl     *runtimecontrol.Controller
 	mediaCache         *mediacache.Manager
 	accounts           *auth.Store
@@ -325,7 +326,13 @@ func (s *Server) routes() {
 	m.HandleFunc("GET /api/audiobooks", s.handleAudiobooks)
 	m.HandleFunc("GET /api/audiobooks/{id}", s.handleAudiobookDetail)
 	m.HandleFunc("GET /api/audiobooks/{id}/chapters", s.handleAudiobookChapters)
+	m.HandleFunc("POST /api/audiobooks/{id}/chapter-lookup", s.handleAudiobookChapterLookup)
+	m.HandleFunc("POST /api/audiobooks/{id}/chapter-map", s.handleAudiobookChapterMap)
+	m.HandleFunc("DELETE /api/audiobooks/{id}/chapter-map", s.handleAudiobookChapterMap)
 	m.HandleFunc("GET /api/audiobooks/{id}/download", s.handleAudiobookDownload)
+	m.HandleFunc("GET /api/audiobooks/{id}/conversion", s.handleAudiobookConversion)
+	m.HandleFunc("POST /api/audiobooks/{id}/conversion", s.handleAudiobookConversionStart)
+	m.HandleFunc("GET /api/audiobooks/{id}/conversion/{conversionMedia}", s.handleAudiobookConversionMedia)
 	m.HandleFunc("GET /audiobooks", s.handleAudiobookBrowser)
 	m.HandleFunc("GET /audiobooks-classic", s.handleAudiobookClassic)
 	m.HandleFunc("GET /audiobooks-beta", s.handleAudiobookBeta)

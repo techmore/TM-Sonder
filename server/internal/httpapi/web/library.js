@@ -862,7 +862,7 @@
       startPlayback(item, record && record.seconds > 5 ? record.seconds : 0);
     }
 
-    function startBookPlayback(item, parts, index) {
+    function startBookPlayback(item, parts, index, seekTo = null) {
       const media = npMedia();
       if (!media) return;
       saveProgress(true);
@@ -876,13 +876,13 @@
       npSeeking = false;
       prepareNowPlayingShell(item, "audio");
       loadBookChapters(item);
-      loadBookPart(true);
+      loadBookPart(true, seekTo);
       closeDetailOnMobile();
     }
 
     // Move to a part of the current book. A deliberate part jump preserves the
     // current play/pause state; automatic advancement always resumes playback.
-    function loadBookPart(autoplay) {
+    function loadBookPart(autoplay, seekTo = null) {
       const media = npMedia();
       const part = nowPlayingParts && nowPlayingParts[nowPlayingPartIndex];
       if (!media || !part) return;
@@ -897,14 +897,15 @@
       renderNowPlaying();
       const initial = bookTimeline();
       const rec = progressByID.get(part.id);
-      const resume = (rec && rec.seconds) || 0;
-      const start = resume > 5 && resume < Math.max((part.durationSeconds || 0) - 8, 0) ? resume : 0;
+      const explicitSeek = seekTo !== null && Number.isFinite(seekTo);
+      const resume = explicitSeek ? Math.max(0, seekTo) : (rec && rec.seconds) || 0;
+      const start = explicitSeek ? resume : resume > 5 && resume < Math.max((part.durationSeconds || 0) - 8, 0) ? resume : 0;
       renderPlaybackProgress({ ...initial, position: initial.offset + start });
       updateMediaSession(nowPlayingItem);
       media.addEventListener("loadedmetadata", () => {
         if (media.src !== expectedSrc) return;
         syncPlaybackRate(media);
-        if (resume > 5 && resume < Math.max((media.duration || 0) - 8, 0)) {
+        if (explicitSeek ? resume < (media.duration || 0) : resume > 5 && resume < Math.max((media.duration || 0) - 8, 0)) {
           media.currentTime = resume;
         }
         onTimeUpdate();
@@ -955,7 +956,7 @@
             Number.isFinite(Number(chapter.endSeconds)) &&
             Number(chapter.endSeconds) > Number(chapter.startSeconds)
           ) : [];
-          const info = { available, chapters, error:false };
+          const info = { ...result, available, chapters, error:false };
           audiobookChapterCache.set(item.id, info);
           return info;
         })
@@ -981,7 +982,7 @@
           renderNowPlaying();
           renderPlaybackProgress(bookTimeline());
         }
-        if (selectedBookID === item.id) renderBookDetailByID(item.id);
+        if (selectedBookID === item.id) refreshBookChapterPanels(item);
       });
     }
 
@@ -1022,7 +1023,8 @@
       const item = items.find(candidate => candidate.id === id && candidate.kind === "audiobook");
       if (!item) return;
       audiobookChapterCache.delete(item.id);
-      renderBookDetailByID(item.id);
+      requestBookDetailChapterInfo(item);
+      refreshBookChapterPanels(item);
     }
 
     function loadBookChapters(item) {
@@ -1509,7 +1511,7 @@
       updateMediaSession(item);
     }
 
-    function startPlayback(item, resumeAt = 0) {
+    function startPlayback(item, resumeAt = 0, explicitSeek = false) {
       const plan = playbackPlan(item);
       const media = npMedia();
       if (!plan || !media) return;
@@ -1552,7 +1554,7 @@
         if (media.src !== expectedSrc) return;
         syncPlaybackRate(media);
         const duration = media.duration || 0;
-        if (resumeAt > 5 && resumeAt < Math.max(duration - 8, 0)) media.currentTime = resumeAt;
+        if (explicitSeek ? resumeAt >= 0 && resumeAt < duration : resumeAt > 5 && resumeAt < Math.max(duration - 8, 0)) media.currentTime = resumeAt;
         onTimeUpdate();
       }, { once: true });
       requestPlayback(media);
@@ -4854,6 +4856,8 @@
         window.scrollTo({ top: 0, behavior: "smooth" });
       }
       else if (act === "retry-book-chapters" && btn.dataset.id) retryBookChapterCheck(btn.dataset.id);
+      else if (["convert-book-m4b", "lookup-book-chapters", "apply-book-chapters", "reset-book-chapters"].includes(act) && btn.dataset.id) void runBookTool(act, btn.dataset.id);
+      else if (act === "play-book-chapter" && btn.dataset.id) void playBookDetailChapter(btn.dataset.id, Number(btn.dataset.seconds));
       else if (act === "play-item" && btn.dataset.id) startPlaybackById(btn.dataset.id);
       else if (act === "expand-movie-shelf") { movieShelfExpanded = true; renderMovieCatalog(visibleItems()); }
       else if (act === "collapse-movie-shelf") { movieShelfExpanded = false; renderMovieCatalog(visibleItems()); }
@@ -5119,6 +5123,149 @@
       if (item) renderBookDetail(item);
     }
 
+    const bookConversionCache = new Map();
+    const bookConversionRequests = new Map();
+    const bookChapterPreviews = new Map();
+    const bookToolMessages = new Map();
+    const bookToolBusy = new Set();
+
+    function audiobookSourceParts(item) { return partsOf(item) || (item.bookGroupID && bookGroupByID.get(item.bookGroupID)) || [item]; }
+    function bookIsMP3(item) { return audiobookSourceParts(item).some(part => String(part.format).toLowerCase() === "mp3"); }
+    function bookEditionASIN(item) {
+      const source = String(item.metadataIDSource || "").toLowerCase();
+      const value = String(item.metadataID || "").trim().toUpperCase();
+      return /audible|asin/.test(source) && /^[A-Z0-9]{10}$/.test(value) ? value : "";
+    }
+    function safeBookSourceURL(value) {
+      try { const url = new URL(value); return ["https:", "http:"].includes(url.protocol) ? url.href : ""; } catch { return ""; }
+    }
+    function distinctBookTags(item) {
+      const seen = new Set();
+      return [...(item.genres || []), ...(item.tags || [])].filter(value => {
+        const key = String(value).trim().toLowerCase();
+        if (!key || seen.has(key) || ["audiobook", "open-library", String(item.author || "").toLowerCase()].includes(key)) return false;
+        seen.add(key); return true;
+      }).slice(0, 12);
+    }
+    function bookChapterPanelMarkup(item) {
+      const info = audiobookChapterCache.get(item.id);
+      const parts = audiobookSourceParts(item);
+      if (!info) return `<section class="book-content-panel book-chapter-panel"><h3>Chapters & track order</h3><p class="muted">Reading the chapter timeline…</p></section>`;
+      const chapters = info.chapters || [];
+      const imported = info.source === "reviewed-import";
+      const source = safeBookSourceURL(info.sourceURL);
+      const rows = chapters.map((chapter, index) => `<li><button type="button" data-action="play-book-chapter" data-id="${escapeHTML(item.id)}" data-seconds="${Number(chapter.startSeconds)}" aria-label="Play ${escapeHTML(chapter.title)} at ${escapeHTML(formatTime(chapter.startSeconds))}"><span class="book-chapter-index">${index + 1}</span><span class="book-chapter-name">${escapeHTML(chapter.title || `Chapter ${index + 1}`)}${parts.length > 1 ? `<small>Audio part ${Number(chapter.partIndex) || 1}</small>` : ""}</span><time>${escapeHTML(formatTime(chapter.startSeconds))}</time><span class="book-chapter-length">${escapeHTML(formatTime(chapter.endSeconds - chapter.startSeconds))}</span><span aria-hidden="true">▶</span></button></li>`).join("");
+      let offset = 0;
+      const tracks = parts.map((part, index) => {
+        const start = offset; offset += Math.max(0, Number(part.durationSeconds) || 0);
+        return `<li><button type="button" data-action="play-book-chapter" data-id="${escapeHTML(item.id)}" data-seconds="${start}"><span class="book-chapter-index">${index + 1}</span><span class="book-chapter-name">${escapeHTML(part.title || `Audio part ${index + 1}`)}</span><time>${escapeHTML(formatTime(start))}</time><span class="book-chapter-length">${escapeHTML(formatTime(part.durationSeconds || 0))}</span><span aria-hidden="true">▶</span></button></li>`;
+      }).join("");
+      return `<section class="book-content-panel book-chapter-panel" aria-labelledby="bookChaptersHeading"><div class="book-panel-heading"><div><p class="book-section-kicker">THE RECORDING</p><h3 id="bookChaptersHeading">${chapters.length ? "Chapter timeline" : "Audio track order"}</h3></div><span>${chapters.length || parts.length} ${chapters.length ? "chapters" : parts.length === 1 ? "track" : "tracks"}</span></div><p class="book-panel-note">${imported ? "Reviewed chapter timings · original files unchanged" : chapters.length ? "Chapter markers from your audio files · times measured across the whole book" : "No verified chapter markers available. These are file boundaries, not chapter breaks."}${source ? ` · <a href="${escapeHTML(source)}" target="_blank" rel="noopener noreferrer">Timing source ↗</a>` : ""}</p><div class="book-chapter-column-labels" aria-hidden="true"><span>CHAPTER / TRACK</span><span>START</span><span>LENGTH</span></div><ol class="book-chapter-list">${rows || tracks}</ol>${info.importWarning ? `<p class="book-tool-error" role="status">${escapeHTML(info.importWarning)}</p>` : ""}${info.error ? `<p role="status">Could not read embedded markers. <button type="button" data-action="retry-book-chapters" data-id="${escapeHTML(item.id)}">Retry</button></p>` : ""}</section>`;
+    }
+    function bookRelatedMarkup(item) {
+      if (!item.author) return "";
+      const related = items.filter(candidate => candidate.kind === "audiobook" && candidate.id !== item.id && !candidate.isPlaceholder && !isSameBook(candidate, item) && seriesTextKey(candidate.author) === seriesTextKey(item.author) && (!candidate.bookGroupID || Number(candidate.bookPartIndex) <= 1)).slice(0, 4);
+      if (!related.length) return "";
+      return `<section class="book-content-panel book-related"><div class="book-panel-heading"><div><p class="book-section-kicker">IN YOUR LIBRARY</p><h3>More by ${escapeHTML(item.author)}</h3></div><button type="button" data-action="browse-author-books" data-id="${escapeHTML(item.id)}">See all →</button></div><div class="book-related-grid">${related.map(book => `<button type="button" class="book-related-card" data-action="open-detail" data-id="${escapeHTML(book.id)}"><span class="book-related-cover">${book.posterURL ? `<img loading="lazy" src="${escapeHTML(api(book.posterURL))}" alt="">` : `<span aria-hidden="true">${escapeHTML((book.title || "B").slice(0,1))}</span>`}</span><strong>${escapeHTML(book.title)}</strong><small>${escapeHTML(runtimeLabel(book))}</small></button>`).join("")}</div></section>`;
+    }
+    function conversionMarkup(item) {
+      if (!bookIsMP3(item)) return `<p class="book-format-note">${escapeHTML(String(item.format || "audio").toUpperCase())} recording · ${audiobookSourceParts(item).length} ${audiobookSourceParts(item).length === 1 ? "file" : "files"}. Download the original audio below.</p>`;
+      const state = bookConversionCache.get(item.id), job = state?.job;
+      const ready = ["staged-for-review", "ready"].includes(job?.status);
+      const busy = job && !["staged-for-review", "ready", "failed", "interrupted", "canceled"].includes(job.status);
+      return `<section class="book-conversion"><div class="book-tool-label">MP3 RECORDING</div><h4>A single M4B for your audiobook</h4><p>Combine ordered MP3 files into an AAC audiobook with chapter markers. The original files stay in your library.</p>${!state ? `<p class="muted">Checking conversion availability…</p>` : `<p class="book-panel-note">${escapeHTML(state.reason || `${state.partCount || audiobookSourceParts(item).length} source files · AAC in M4B`)}</p>`}${state?.needsCoverApproval && !job ? `<label class="book-tool-check"><input id="bookConversionCover" type="checkbox"> I checked that this cover belongs to this recording. Embed it in the M4B.</label>` : ""}${busy ? `<p role="status">${escapeHTML(job.phase || (job.status === "queued" ? "Waiting in the conversion queue" : "Encoding and validating the recording"))}</p><p class="book-panel-note">You can leave this page; conversion continues on the server.</p>` : ready ? `<p class="book-tool-success">Ready for listening review. Originals retained.</p><audio controls preload="none" aria-label="Review converted audiobook" src="${escapeHTML(api(`/api/audiobooks/${encodeURIComponent(item.id)}/conversion/stream`))}"></audio><a class="book-tool-button" href="${escapeHTML(api(`/api/audiobooks/${encodeURIComponent(item.id)}/conversion/download`))}">Download converted M4B ↓</a>` : `<button type="button" class="book-tool-button" data-action="convert-book-m4b" data-id="${escapeHTML(item.id)}" ${!state?.eligible ? "disabled" : ""}>${job?.status === "failed" || job?.status === "interrupted" ? "Retry M4B conversion" : "Create M4B for review"}</button>`}${job?.error ? `<p class="book-tool-error">${escapeHTML(job.error)}</p>` : ""}<p class="book-panel-note">Conversion is a new encode; it cannot improve the source audio quality. File boundaries are used when named chapters are missing.</p></section>`;
+    }
+    function chapterPreviewMarkup(item) {
+      const preview = bookChapterPreviews.get(item.id);
+      if (!preview) return "";
+      const compatible = preview.matchConfidence === "runtime-compatible-needs-edition-review";
+      const source = safeBookSourceURL(preview.sourceURL);
+      return `<section class="book-chapter-preview"><h4>${escapeHTML(preview.title || "Chapter lookup")}</h4><p>${escapeHTML((preview.authors || []).join(", "))}<br>Narrated by ${escapeHTML((preview.narrators || []).join(", ") || "not supplied")}</p><dl><div><dt>Listed runtime</dt><dd>${escapeHTML(formatTime(preview.runtimeSeconds))}</dd></div><div><dt>Your recording</dt><dd>${escapeHTML(formatTime(preview.localDurationSeconds))}</dd></div><div><dt>Difference</dt><dd>${escapeHTML(formatTime(Math.abs(preview.durationDifferenceSeconds || 0)))}</dd></div></dl><p class="${compatible ? "book-panel-note" : "book-tool-error"}">${compatible ? (preview.isAccurate === false ? "These timings are approximate. Verify the narrator, edition and boundaries before applying." : "Runtime is compatible. Verify the narrator and edition before applying.") : "Runtime does not match. These timings cannot be applied to this recording."}</p>${source ? `<a href="${escapeHTML(source)}" target="_blank" rel="noopener noreferrer">Open the edition source ↗</a>` : ""}<ol class="book-chapter-preview-list">${(preview.chapters || []).map(chapter => `<li><time>${escapeHTML(formatTime(chapter.startSeconds))}</time> ${escapeHTML(chapter.title)}</li>`).join("")}</ol><label class="book-tool-check"><input id="bookChapterEditionConfirmed" type="checkbox" ${!compatible ? "disabled" : ""}> I checked the title, narrator and edition against this recording.</label><button type="button" class="book-tool-button" data-action="apply-book-chapters" data-id="${escapeHTML(item.id)}" ${!compatible ? "disabled" : ""}>Apply reviewed timings</button></section>`;
+    }
+    function bookToolsMarkup(item) {
+      const info = audiobookChapterCache.get(item.id);
+      const query = encodeURIComponent([item.title, item.author, item.narrator, "audiobook chapters"].filter(Boolean).join(" "));
+      return `<section class="book-content-panel book-tools" aria-labelledby="bookToolsHeading"><p class="book-section-kicker">YOUR AUDIO FILES</p><h3 id="bookToolsHeading">Recording tools</h3><div id="bookConversionPanel">${conversionMarkup(item)}</div><details class="book-chapter-tools"><summary>Find chapter timings</summary><p>Look up an Audible edition using its 10-character ASIN. We show the title, narrator and runtime before you apply anything.</p><a href="https://www.google.com/search?q=${query}" target="_blank" rel="noopener noreferrer">Find this audiobook’s edition ↗</a><label for="bookChapterASIN">Audible ASIN</label><input id="bookChapterASIN" type="text" value="${escapeHTML(bookEditionASIN(item))}" placeholder="e.g. B08G9PRS1K" maxlength="10" autocomplete="off" autocapitalize="characters"><label for="bookChapterRegion">Edition region</label><select id="bookChapterRegion">${["us","uk","au","ca","de","es","fr","in","it","jp"].map(region => `<option value="${region}">${region.toUpperCase()}</option>`).join("")}</select><button type="button" class="book-tool-button" data-action="lookup-book-chapters" data-id="${escapeHTML(item.id)}" >Look up chapter timings</button><p class="book-panel-note">Lookup sends this ASIN and region to Audnexus. It does not upload your audio or change your files.</p><div id="bookChapterPreview">${chapterPreviewMarkup(item)}</div></details>${info?.source === "reviewed-import" || info?.importWarning ? `<button type="button" data-action="reset-book-chapters" data-id="${escapeHTML(item.id)}">Use original chapter markers</button>` : ""}<p id="bookToolsStatus" class="book-tools-status" role="status" aria-live="polite">${escapeHTML(bookToolMessages.get(item.id) || "")}</p></section>`;
+    }
+    async function bookToolJSON(itemID, suffix, body, method = "POST") {
+      const response = await fetch(api(`/api/audiobooks/${encodeURIComponent(itemID)}/${suffix}`), {method, headers:{"Content-Type":"application/json"}, ...(body ? {body:JSON.stringify(body)} : {})});
+      const result = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(response.status === 403 ? "A library administrator must run this tool." : (typeof result.error === "string" ? result.error : result.error?.message) || result.message || `Request failed (${response.status})`);
+      return result;
+    }
+    function bookToolsStatus(id, message) {
+      bookToolMessages.set(id, message);
+      if (selectedBookID === id) { const node = $("#bookToolsStatus"); if (node) node.textContent = message; }
+    }
+    function refreshBookChapterPanels(item) {
+      if (selectedBookID !== item.id) return;
+      const summary = $("#bookChapterSummary"), panel = $("#bookChapterPanel");
+      if (summary) summary.innerHTML = bookChapterSupportMarkup(item);
+      if (panel) panel.innerHTML = bookChapterPanelMarkup(item);
+    }
+    async function refreshBookConversion(item) {
+      if (!bookIsMP3(item) || bookConversionRequests.has(item.id) || typeof fetch !== "function") return;
+      const request = bookToolJSON(item.id, "conversion", null, "GET").then(state => {
+        bookConversionCache.set(item.id, state);
+        if (selectedBookID === item.id) { const panel = $("#bookConversionPanel"); if (panel) panel.innerHTML = conversionMarkup(item); }
+        if (state.job && !["staged-for-review","ready","failed","interrupted","canceled"].includes(state.job.status)) {
+          setTimeout(() => { if (selectedBookID === item.id) refreshBookConversion(item); }, 4000);
+        }
+      }).catch(error => { bookToolsStatus(item.id, error.message); }).finally(() => bookConversionRequests.delete(item.id));
+      bookConversionRequests.set(item.id, request);
+      return request;
+    }
+    async function runBookTool(action, id) {
+      const item = items.find(book => book.id === id && book.kind === "audiobook");
+      if (!item || bookToolBusy.has(id)) return;
+      if (action === "apply-book-chapters" && !$("#bookChapterEditionConfirmed")?.checked) { bookToolsStatus(id, "Confirm the title, narrator and edition first."); return; }
+      const asin = String($("#bookChapterASIN")?.value || "").trim().toUpperCase();
+      const region = $("#bookChapterRegion")?.value || "us";
+      const approveCatalogCover = $("#bookConversionCover")?.checked === true;
+      if (action === "lookup-book-chapters" && !/^[A-Z0-9]{10}$/.test(asin)) { bookToolsStatus(id, "Enter a 10-character Audible ASIN from the edition’s product page."); return; }
+      bookToolBusy.add(id);
+      const button = document.querySelector(`[data-action="${action}"][data-id="${CSS.escape(id)}"]`);
+      if (button) button.disabled = true;
+      bookToolsStatus(id, action === "lookup-book-chapters" ? "Looking up this edition…" : "Saving…");
+      try {
+        if (action === "convert-book-m4b") {
+          await bookToolJSON(id, "conversion", {approveCatalogCover});
+          bookToolsStatus(id, "M4B conversion queued. Original MP3 files retained.");
+          await refreshBookConversion(item);
+        } else if (action === "lookup-book-chapters") {
+          const preview = await bookToolJSON(id, "chapter-lookup", {asin,region});
+          bookChapterPreviews.set(id, preview);
+          if (selectedBookID === id) $("#bookChapterPreview").innerHTML = chapterPreviewMarkup(item);
+          bookToolsStatus(id, "Compare this edition with your recording before applying timings.");
+        } else {
+          await bookToolJSON(id, "chapter-map", action === "reset-book-chapters" ? null : {...bookChapterPreviews.get(id), editionConfirmed:true}, action === "reset-book-chapters" ? "DELETE" : "POST");
+          audiobookChapterCache.delete(id);
+          bookChapterPreviews.delete(id);
+          await fetchAudiobookChapterInfo(item);
+          refreshBookChapterPanels(item);
+          if (nowPlayingItem?.id === id) loadBookChapters(item);
+          if (selectedBookID === id) $("#bookToolsPanel").innerHTML = bookToolsMarkup(item);
+          bookToolsStatus(id, action === "reset-book-chapters" ? "Original chapter markers restored." : "Reviewed timings saved. Original audio files unchanged.");
+        }
+      } catch (error) { bookToolsStatus(id, error.message || "Could not complete this action."); }
+      finally { bookToolBusy.delete(id); if (button?.isConnected) button.disabled = false; }
+    }
+    function playBookDetailChapter(id, seconds) {
+      const item = items.find(book => book.id === id && book.kind === "audiobook");
+      if (!item || !Number.isFinite(seconds) || seconds < 0) return;
+      const parts = partsOf(item);
+      if (!parts) { startPlayback(item, seconds, true); return; }
+      let offset = 0;
+      for (let index = 0; index < parts.length; index++) {
+        const duration = Number(parts[index].durationSeconds) || 0;
+        if (seconds < offset + duration || index === parts.length - 1) {
+          startBookPlayback(item, parts, index, Math.max(0, seconds - offset));
+          return;
+        }
+        offset += duration;
+      }
+    }
+
     function renderBookDetail(item) {
       const host = $("#bookDetailPage");
       if (!host || !item) return;
@@ -5142,8 +5289,8 @@
       ].filter(Boolean).join("");
       const seriesNavigation = bookSeriesNavigationHTML(item, seriesContexts);
       const seriesHTML = series ? seriesNavigation : `<details class="book-series-setup"><summary>Series & reading order</summary>${seriesNavigation}</details>`;
-      const genres = (Array.isArray(item.genres) ? item.genres : []).filter(Boolean).slice(0, 8);
-      const tags = (Array.isArray(item.tags) ? item.tags : []).filter(Boolean).slice(0, 12);
+      const genres = distinctBookTags(item);
+      const tags = [];
       const genreTags = genres.map(genre => `<span class="tag">${escapeHTML(genre)}</span>`).join("");
       const regularTags = tags.map(tag => `<span class="tag">${escapeHTML(tag)}</span>`).join("");
       const recordID = readingRecordID(item);
@@ -5152,13 +5299,7 @@
       const liked = !!readingRecord?.likedAt;
       const plan = playbackPlan(item);
       const playState = bookPlaybackState(item);
-      const details = [
-        item.author ? `<div><strong>Author</strong><span>${escapeHTML(item.author)}</span></div>` : "",
-        item.narrator ? `<div><strong>Narrated by</strong><span>${escapeHTML(item.narrator)}</span></div>` : "",
-        series ? `<div><strong>Series</strong><span>${escapeHTML(series)}${seriesFact ? ` · ${escapeHTML(seriesFact)}` : ""}</span></div>` : "",
-        item.year ? `<div><strong>Published</strong><span>${escapeHTML(String(item.year))}</span></div>` : "",
-        item.format ? `<div><strong>Audio format</strong><span>.${escapeHTML(String(item.format).toUpperCase())}</span></div>` : "",
-      ].filter(Boolean).join("");
+
 
       host.innerHTML = `
         <div class="book-detail-nav"><button type="button" data-action="back-book-page" aria-label="Back to library">← Library</button><span>${escapeHTML(kindLabel(item.kind))}</span></div>
@@ -5167,14 +5308,14 @@
           <div class="book-detail-copy">
             <p class="book-detail-kicker">Your audiobook</p>
             <h2 id="bookDetailTitle">${escapeHTML(title)}</h2>
-            ${item.subtitle ? `<p class="book-detail-subtitle">${escapeHTML(item.subtitle)}</p>` : ""}
+            ${item.subtitle && !/^(audiobook|audio book)$/i.test(item.subtitle) ? `<p class="book-detail-subtitle">${escapeHTML(item.subtitle)}</p>` : ""}
             ${item.author ? `<p class="book-detail-byline">By <button class="book-author-tag" type="button" data-action="browse-author-books" data-id="${escapeHTML(item.id)}" aria-label="See more books by ${escapeHTML(item.author)}">${escapeHTML(item.author)}</button></p>` : ""}
             ${facts ? `<div class="book-detail-facts" aria-label="Book details">${facts}</div>` : ""}
             <div class="book-detail-actions">
               ${plan ? `<button id="bookDetailResume" type="button" class="book-resume-button" data-action="play-item" data-id="${escapeHTML(item.id)}" aria-label="${escapeHTML(playState.label)}: ${escapeHTML(title)}">${escapeHTML(playState.label)}</button><span id="bookDetailResumeNote" class="muted">${escapeHTML(playState.note)}</span>` : `<a class="book-resume-button" href="${api("/stream/" + item.id)}" target="_blank" rel="noopener">Open in a player</a>`}
             </div>
             ${bookProgressMarkup(item)}
-            ${bookChapterSupportMarkup(item)}
+            <div id="bookChapterSummary">${bookChapterSupportMarkup(item)}</div>
             <div class="book-actions" aria-label="Book actions">
               <button type="button" data-action="toggle-reading-queue" data-id="${escapeHTML(recordID)}" aria-pressed="${queued}">${queued ? "✓ Bookmarked" : "+ Bookmark for later"}</button>
               <button type="button" data-action="toggle-book-like" data-id="${escapeHTML(recordID)}" aria-pressed="${liked}">${liked ? "♥ Liked" : "♡ Like"}</button>
@@ -5183,14 +5324,22 @@
             </div>
           </div>
         </section>
-        ${seriesHTML}
-        ${details ? `<section class="book-detail-meta" aria-label="About this book">${details}</section>` : ""}
-        ${audiobookDownloadsMarkup(item)}
-        ${item.summary ? `<section class="book-detail-description"><h3>About this book</h3><p class="summary">${escapeHTML(item.summary)}</p></section>` : ""}
-        ${genreTags || regularTags ? `<div class="book-detail-tags" aria-label="Book tags">${genreTags}${regularTags}</div>` : ""}
-        ${readHistoryHTML(readingRecord) ? `<div class="book-detail-history">${readHistoryHTML(readingRecord)}</div>` : ""}
+        <div class="book-detail-body">
+          <div class="book-detail-main">
+            <section class="book-content-panel book-detail-description"><p class="book-section-kicker">THE STORY</p><h3>About this book</h3>${item.summary ? `<p class="summary">${escapeHTML(item.summary)}</p>` : `<p class="muted">A synopsis hasn’t been added to this edition yet.</p>`}${genreTags || regularTags ? `<div class="book-detail-tags" aria-label="Book tags">${genreTags}${regularTags}</div>` : ""}</section>
+            ${seriesHTML}
+            <div id="bookChapterPanel">${bookChapterPanelMarkup(item)}</div>
+            ${bookRelatedMarkup(item)}
+            ${readHistoryHTML(readingRecord) ? `<div class="book-detail-history">${readHistoryHTML(readingRecord)}</div>` : ""}
+          </div>
+          <aside class="book-detail-sidebar" aria-label="Recording information and tools">
+            <section class="book-content-panel book-edition-panel"><p class="book-section-kicker">THIS EDITION</p><h3>Your recording</h3><dl class="book-edition-facts"><div><dt>Narrator</dt><dd>${escapeHTML(item.narrator || "Not recorded")}</dd></div><div><dt>Total listening time</dt><dd>${escapeHTML(runtimeLabel(item))}</dd></div><div><dt>Audio files</dt><dd>${audiobookSourceParts(item).length} · ${escapeHTML([...new Set(audiobookSourceParts(item).map(part => String(part.format || "audio").toUpperCase()))].join(" / "))}</dd></div>${item.edition ? `<div><dt>Edition</dt><dd>${escapeHTML(item.edition)}</dd></div>` : ""}${item.publicationYear || item.year ? `<div><dt>Publication year</dt><dd>${escapeHTML(String(item.publicationYear || item.year))}</dd></div>` : ""}</dl>${audiobookDownloadsMarkup(item)}</section>
+            <div id="bookToolsPanel">${bookToolsMarkup(item)}</div>
+          </aside>
+        </div>
         `;
       document.title = `${title} · TM Sonder`;
+      void refreshBookConversion(item);
     }
 
     function openBookPage(item) {
