@@ -274,6 +274,7 @@ func (s *Server) routes() {
 	m.HandleFunc("GET /api/health", s.handleHealth)
 	m.HandleFunc("GET /api/discovery", s.handleDiscovery)
 	m.HandleFunc("GET /api/library", s.handleLibrary)
+	m.HandleFunc("GET /api/library/insights", s.handleLibraryInsights)
 	m.HandleFunc("GET /library.json", s.handleLibrary)
 	m.HandleFunc("GET /api/movies/{id}/metadata", s.handleMovieMetadata)
 	m.HandleFunc("GET /api/status", s.handleStatus)

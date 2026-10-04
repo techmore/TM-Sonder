@@ -3,7 +3,7 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const vm = require('node:vm');
 
-function catalog(items, progress = [], detailTools = false) {
+function catalog(items, progress = [], detailTools = false, insightsTools = false) {
   const source = fs.readFileSync(`${__dirname}/library.js`, 'utf8');
   // A minimal DOM: visibleItems() reads the filter selects through $, and the
   // book-part tests need to drive them ("watched" / "unwatched").
@@ -50,6 +50,11 @@ function catalog(items, progress = [], detailTools = false) {
   context.fields = fields;
   vm.runInContext(source.slice(0, source.indexOf('    function seasonLabel')), context);
   if (detailTools) vm.runInContext(source.slice(source.indexOf('    const bookConversionCache'), source.indexOf('    function renderBookDetail(item)')), context);
+  if (insightsTools) {
+    vm.runInContext('let storageScanStatus = "";', context);
+    vm.runInContext(source.slice(source.indexOf('    let insightsData = null;'), source.indexOf('    on("#storagePanel", "change"')), context);
+    vm.runInContext(source.slice(source.indexOf('    function insightsFolderScope('), source.indexOf('    async function renderStorageFolders()')), context);
+  }
   context.input = items;
   context.progress = progress;
   vm.runInContext('items = input; for (const p of progress) progressByID.set(p.id, p); rebuildCopyGroups();', context);
@@ -1321,4 +1326,41 @@ test('detail chapter jump starts the correct part at explicit local time', () =>
   assert.equal(get('nowPlayingPartIndex'), 1);
   get('npMedia().duration = 100; npMedia().listeners.loadedmetadata(); 0');
   assert.equal(get('npMedia().currentTime'), 2);
+});
+
+
+test('catalog insights uses measured units and honest empty states', () => {
+  const evaluate = catalog([], [], false, true);
+  assert.equal(evaluate('insightsBytes(1024 ** 3)'), '1.00 GiB');
+  assert.equal(evaluate('insightsLatency(0, 0)'), '—');
+  assert.equal(evaluate('insightsLatency(0.025, 1)'), '25.0 µs');
+  const markup = evaluate('insightsMarkup({})');
+  assert.match(markup, /No recorded listening or reading sessions/);
+  assert.match(markup, /No read timing samples yet/);
+  assert.match(markup, /not SQL query or disk-write timings/);
+  assert.match(markup, /Activity before session recording is unavailable/);
+  assert.doesNotMatch(markup, /NaN|undefined/);
+});
+
+test('catalog insights preserves genre totals and clickable multipart rankings', () => {
+  const evaluate = catalog([], [], false, true);
+  const markup = evaluate(`insightsMarkup({totalGenreCount:25, genres:[{name:"Fantasy",titles:12}], totals:{titles:20,files:55,bytes:1024}, largestTitles:[{id:"first-part", title:"Book",kind:"audiobook",files:9,bytes:100}], largestFiles:[{id:"part-2",name:"02.mp3",title:"Book",bytes:50}],catalogAccess:{operations:[{operation:"get",count:4,averageMs:2,maxMs:3,lastMs:1}]}})`);
+  assert.match(markup, /<strong>25<\/strong><span>Recorded genres/);
+  assert.match(markup, /15 most common of 25 genres/);
+  assert.match(markup, /data-action="open-detail" data-id="first-part"/);
+  assert.match(markup, /9 files/);
+  assert.match(markup, /02.mp3/);
+  assert.match(markup, /2.00 ms/);
+  assert.match(markup, /<th scope="col">Average/);
+});
+
+test('catalog folder scope filters mixed libraries and recalculates sizes', () => {
+  const evaluate = catalog([], [], false, true);
+  const result = evaluate(`insightsFolderScope({name:"root",itemCount:3,sizeBytes:60,files:[{kind:"movie",sizeBytes:10}],children:[{name:"mixed",files:[{kind:"audiobook",sizeBytes:20},{kind:"movie",sizeBytes:30}],children:[]}]},"audiobook")`);
+  assert.equal(result.itemCount, 1);
+  assert.equal(result.sizeBytes, 20);
+  assert.equal(result.files.length, 0);
+  assert.equal(result.children[0].files.length, 1);
+  assert.match(libraryHTML, /id="catalogInsightsBtn"[^>]*data-settings-tab="storage"/);
+  assert.match(librarySource, /generation !== insightsRequestGeneration/);
 });

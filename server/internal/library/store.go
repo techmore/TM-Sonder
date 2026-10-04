@@ -146,6 +146,7 @@ func cloneIntPtr(p *int) *int {
 // Store is a concurrency-safe catalog guarded by an RWMutex.
 type Store struct {
 	mu           sync.RWMutex
+	readMetrics  catalogReadMetrics
 	items        map[string]*Item
 	progress     map[string]*api.ProgressRecord
 	reading      map[string]*api.BookReadingRecord
@@ -165,9 +166,10 @@ type Store struct {
 
 func New() *Store {
 	return &Store{
-		items:    make(map[string]*Item),
-		progress: make(map[string]*api.ProgressRecord),
-		reading:  make(map[string]*api.BookReadingRecord),
+		readMetrics: catalogReadMetrics{startedAt: time.Now().UTC()},
+		items:       make(map[string]*Item),
+		progress:    make(map[string]*api.ProgressRecord),
+		reading:     make(map[string]*api.BookReadingRecord),
 	}
 }
 
@@ -282,6 +284,8 @@ func (s *Store) CountByLibrary() map[string]int {
 
 // Get returns a copy of one item including filesystem-only fields.
 func (s *Store) Get(id string) (*Item, bool) {
+	started := time.Now()
+	defer func() { s.readMetrics.record(readGet, time.Since(started)) }()
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	it, ok := s.items[id]
@@ -310,7 +314,9 @@ func (s *Store) FindByStableKey(key string) (*Item, bool) {
 
 // Items returns wire-shaped copies sorted by title then ID.
 func (s *Store) Items() []api.MediaItem {
-	internal := s.InternalItems()
+	started := time.Now()
+	defer func() { s.readMetrics.record(readItems, time.Since(started)) }()
+	internal := s.internalItems()
 	out := make([]api.MediaItem, len(internal))
 	for i, it := range internal {
 		out[i] = it.MediaItem
@@ -329,6 +335,12 @@ func (s *Store) Items() []api.MediaItem {
 
 // InternalItems returns full copies (including file paths), title-sorted.
 func (s *Store) InternalItems() []*Item {
+	started := time.Now()
+	defer func() { s.readMetrics.record(readInternalItems, time.Since(started)) }()
+	return s.internalItems()
+}
+
+func (s *Store) internalItems() []*Item {
 	s.mu.RLock()
 	out := make([]*Item, 0, len(s.items))
 	for _, it := range s.items {
@@ -409,6 +421,8 @@ func (s *Store) SetProgress(rec api.ProgressRecord) bool {
 
 // Progress returns all progress records, itemID-sorted for stable output.
 func (s *Store) Progress() []api.ProgressRecord {
+	started := time.Now()
+	defer func() { s.readMetrics.record(readProgress, time.Since(started)) }()
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	out := make([]api.ProgressRecord, 0, len(s.progress))

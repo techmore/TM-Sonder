@@ -3674,6 +3674,10 @@
     for (const button of document.querySelectorAll("[data-settings-tab]")) {
       button.addEventListener("click", () => {
         document.querySelector("#settingsDlg").close();
+        if (button.dataset.settingsTab === "storage") {
+          insightsKind = {movies:"movie",tvshows:"tvShow",documentaries:"documentary",audiobooks:"audiobook",books:"ebook"}[activeTab] || "";
+          insightsLibraryID = ""; insightsData = null; insightsRequestGeneration++; insightsLoading = false;
+        }
         selectLibraryTab(button.dataset.settingsTab);
       });
     }
@@ -4725,8 +4729,110 @@
     let storageData = null;
     let storageLoading = false;
     let storageScanStatus = "";
-    async function renderStorage() {
+    let insightsData = null;
+    let insightsLibraryID = "";
+    let insightsKind = "";
+    let insightsRequestGeneration = 0;
+    let insightsLoadedAt = 0;
+    let insightsLoading = false;
+    const insightsKindLabels = {movie:"Movies",tvShow:"TV episodes",documentary:"Documentaries",audiobook:"Audiobooks",ebook:"Books"};
+    function insightsBytes(value) {
+      let n = Math.max(0, Number(value) || 0);
+      if (n < 1024) return `${n.toFixed(0)} B`;
+      const units = ["KiB","MiB","GiB","TiB","PiB"];
+      let i = -1; do { n /= 1024; i++; } while (n >= 1024 && i < units.length - 1);
+      return `${n.toFixed(n >= 100 ? 0 : n >= 10 ? 1 : 2)} ${units[i]}`;
+    }
+    function insightsCount(value) { return Math.max(0, Number(value) || 0).toLocaleString(); }
+    function insightsTime(value) {
+      const n = Math.max(0, Number(value) || 0);
+      return n >= 3600 ? `${(n / 3600).toFixed(1)} h` : n >= 60 ? `${Math.round(n / 60)} min` : `${Math.round(n)} s`;
+    }
+    function insightsLatency(value, count) {
+      if (!count) return "—";
+      const n = Math.max(0, Number(value) || 0);
+      return n < 1 ? `${(n * 1000).toFixed(1)} µs` : `${n.toFixed(2)} ms`;
+    }
+    function insightItemButton(row) {
+      return `<button type="button" class="insights-item" data-action="open-detail" data-id="${escapeHTML(row.id)}">${escapeHTML(row.title || "Untitled")}</button><small>${escapeHTML(insightsKindLabels[row.kind] || row.kind)}${row.files > 1 ? ` · ${row.files} files` : ""}</small>`;
+    }
+    function insightsTable(headers, rows, empty) {
+      return rows.length ? `<div class="insights-table-wrap"><table class="insights-table"><thead><tr>${headers.map(label => `<th scope="col">${escapeHTML(label)}</th>`).join("")}</tr></thead><tbody>${rows.join("")}</tbody></table></div>` : `<p class="insights-empty">${escapeHTML(empty)}</p>`;
+    }
+    function insightsMarkup(data) {
+      const totals = data.totals || {}, activity = data.activity || {}, metrics = data.catalogAccess || {};
+      const libraries = data.configuredLibraries || data.libraries || [];
+      const sizes = data.kinds || [];
+      const allBytes = Math.max(1, Number(totals.bytes) || 0);
+      const topGenres = (data.genres || []).slice(0, 15);
+      const maxGenre = Math.max(1, ...topGenres.map(genre => Number(genre.titles) || 0));
+      const largest = (data.largestTitles || []).slice(0, 10).map(row => `<tr><td>${insightItemButton(row)}</td><td class="insights-number">${insightsBytes(row.bytes)}</td></tr>`);
+      const files = (data.largestFiles || []).slice(0, 10).map(row => `<tr><td>${insightItemButton(row)}${row.name ? `<small>${escapeHTML(row.name)}</small>` : ""}</td><td class="insights-number">${insightsBytes(row.bytes)}</td></tr>`);
+      const accessed = (activity.mostAccessed || []).slice(0, 10).map(row => `<tr><td>${insightItemButton(row)}</td><td class="insights-number">${insightsCount(row.sessions)}</td><td class="insights-number">${insightsTime(row.activeSeconds)}</td></tr>`);
+      const operationLabels = {get:"Read one entry",items:"Read public catalog",internalItems:"Read catalog snapshot",progress:"Read progress"};
+      const metricRows = (metrics.operations || []).map(row => `<tr><th scope="row">${escapeHTML(operationLabels[row.operation] || row.operation)}</th><td class="insights-number">${insightsCount(row.count)}</td><td class="insights-number">${insightsLatency(row.averageMs,row.count)}</td><td class="insights-number">${insightsLatency(row.maxMs,row.count)}</td><td class="insights-number">${insightsLatency(row.lastMs,row.count)}</td></tr>`);
+      const byLibrary = (data.libraries || []).filter(row => (!insightsLibraryID || row.id === insightsLibraryID) && (!insightsKind || row.kind === insightsKind || row.files > 0)).map(row => `<tr><th scope="row">${escapeHTML(row.name || "Library")}</th><td class="insights-number">${insightsCount(row.titles)}</td><td class="insights-number">${insightsCount(row.files)}</td><td class="insights-number">${insightsBytes(row.bytes)}</td></tr>`);
+      return `<div class="storage-heading"><div><p class="insights-kicker">YOUR CATALOG</p><h2>Catalog insights</h2><p>See what you have, what takes space, and what you return to.</p></div><div class="insights-actions"><button type="button" data-action="refresh-insights">Refresh</button><button id="storageScanBtn" class="storage-scan" data-action="scan-storage">Scan libraries</button></div></div>
+        <div class="insights-scope"><label>Library<select id="insightsLibrary"><option value="">All libraries</option>${libraries.map(lib => `<option value="${escapeHTML(lib.id)}"${insightsLibraryID === lib.id ? " selected" : ""}>${escapeHTML(lib.name)}</option>`).join("")}</select></label><label>Media type<select id="insightsKind"><option value="">All media</option>${Object.entries(insightsKindLabels).map(([key,label]) => `<option value="${key}"${insightsKind === key ? " selected" : ""}>${escapeHTML(label)}</option>`).join("")}</select></label><p id="insightsStatus" role="status" aria-live="polite">Updated ${escapeHTML(data.generatedAt ? new Date(data.generatedAt).toLocaleTimeString() : "just now")}</p></div>
+        <p id="storageScanStatus" role="status">${escapeHTML(storageScanStatus)}</p>
+        <div class="storage-metrics insights-metrics"><div><strong>${insightsCount(totals.titles)}</strong><span>Catalog entries</span></div><div><strong>${insightsCount(totals.files)}</strong><span>Indexed files</span></div><div><strong>${insightsBytes(totals.bytes)}</strong><span>Indexed media</span></div><div><strong>${insightsCount(data.totalGenreCount || (data.genres || []).length)}</strong><span>Recorded genres</span></div><div><strong>${insightsCount(activity.sessions)}</strong><span>Your recorded sessions</span></div><div><strong>${insightsTime(activity.activeSeconds)}</strong><span>Your listening & reading time</span></div></div>
+        <p class="insights-note">Audiobook parts count as one entry. Film versions and TV episodes count separately. Sizes come from the catalog index, not a fresh disk scan.${totals.unknownSizeFiles ? ` Size is missing for ${insightsCount(totals.unknownSizeFiles)} files.` : ""}</p>
+        <div class="insights-grid">
+          <section class="insights-panel"><div class="insights-panel-head"><h3>Storage by media type</h3><span>${insightsBytes(totals.bytes)}</span></div><div class="insights-bars">${sizes.map(row => `<div class="insights-bar"><div><strong>${escapeHTML(insightsKindLabels[row.kind] || row.kind)}</strong><span>${insightsBytes(row.bytes)} · ${insightsCount(row.files)} files</span></div><meter min="0" max="${allBytes}" value="${Math.max(0,Number(row.bytes) || 0)}" aria-label="${escapeHTML(insightsKindLabels[row.kind] || row.kind)} storage"></meter></div>`).join("") || `<p class="insights-empty">No indexed media in this selection.</p>`}</div><details class="insights-details"><summary>Library breakdown</summary>${insightsTable(["Library","Entries","Files","Size"],byLibrary,"No libraries in this selection.")}</details></section>
+          <section class="insights-panel"><div class="insights-panel-head"><h3>Genres in this catalog</h3><span>Entries · not files</span></div><div class="insights-bars">${topGenres.map(genre => `<div class="insights-bar"><div><strong>${escapeHTML(genre.name)}</strong><span>${insightsCount(genre.titles)}</span></div><meter min="0" max="${maxGenre}" value="${Math.max(0, Number(genre.titles)||0)}" aria-label="${escapeHTML(genre.name)} entries"></meter></div>`).join("") || `<p class="insights-empty">No curated genre metadata in this selection.</p>`}</div><p class="insights-note">${insightsCount(totals.missingGenreTitles)} entries have no recorded genre. Entries may have several genres, so counts overlap.${(data.totalGenreCount || data.genres?.length || 0) > 15 ? ` Showing the 15 most common of ${insightsCount(data.totalGenreCount || data.genres.length)} genres.` : ""}</p></section>
+          <section class="insights-panel"><div class="insights-panel-head"><h3>Largest entries</h3><span>Top 10 · total source size</span></div>${insightsTable(["Entry","Size"],largest,"No indexed sizes in this selection.")}<details class="insights-details"><summary>Largest individual files</summary>${insightsTable(["File","Size"],files,"No indexed files in this selection.")}</details></section>
+          <section class="insights-panel"><div class="insights-panel-head"><h3>Most accessed by you</h3><span>Recorded sessions</span></div>${insightsTable(["Entry","Sessions","Time spent"],accessed,"No recorded listening or reading sessions in this selection yet.")}<p class="insights-note">${escapeHTML(activity.label || "Your recorded listening & reading")}. Counts use saved playback/reading sessions, not streaming requests. Time spent uses active wall-clock time. Activity before session recording is unavailable.</p></section>
+        </div>
+        <section class="insights-panel insights-performance"><div class="insights-panel-head"><div><p class="insights-kicker">SERVER PERFORMANCE</p><h3>Catalog read latency</h3></div><span>Server-wide · since startup</span></div><p class="insights-note">In-memory catalog backed by JSON files. Measured reads include lock wait and copying; these are not SQL query or disk-write timings. ${metrics.startedAt ? `Counters started ${escapeHTML(new Date(metrics.startedAt).toLocaleString())}.` : ""}</p>${insightsTable(["Operation","Reads","Average","Maximum","Last"],metricRows,"No read timing samples yet.")}</section>
+        <details class="insights-panel insights-folder-details"><summary>Browse indexed folders</summary><p class="insights-note">Folder sizes are from the last scan. Only the selected library and media type are shown.</p><div id="insightsFolders"></div></details>`;
+    }
+    async function renderStorage(force = false) {
       const panel = $("#storagePanel");
+      if (insightsLoading && !force) return;
+      if (!force && insightsData && Date.now() - insightsLoadedAt < 15000) { panel.innerHTML = insightsMarkup(insightsData); return; }
+      const generation = ++insightsRequestGeneration;
+      insightsLoading = true;
+      if (!insightsData) panel.innerHTML = '<p class="insights-empty" role="status">Reading catalog insights…</p>';
+      else { const status = $("#insightsStatus"); if (status) status.textContent = "Refreshing insights…"; }
+      panel.setAttribute("aria-busy", "true");
+      const query = new URLSearchParams();
+      if (insightsLibraryID) query.set("libraryID",insightsLibraryID);
+      if (insightsKind) query.set("kind",insightsKind);
+      try {
+        const response = await fetch(api(`/api/library/insights${query.size ? `?${query}` : ""}`));
+        if (!response.ok) throw new Error("Could not load catalog insights.");
+        const data = await response.json();
+        if (generation !== insightsRequestGeneration) return;
+        insightsData = data; insightsLoadedAt = Date.now();
+        panel.innerHTML = insightsMarkup(data);
+        if (activeTab === "storage") document.title = "Catalog insights · TM Sonder";
+      } catch (error) {
+        if (generation !== insightsRequestGeneration) return;
+        if (insightsData) { const status = $("#insightsStatus"); if (status) status.textContent = "Refresh failed. Previous snapshot is still shown."; }
+        else panel.innerHTML = `<p class="insights-empty" role="alert">${escapeHTML(error.message)}</p><button type="button" data-action="refresh-insights">Retry</button>`;
+      } finally { if (generation === insightsRequestGeneration) { insightsLoading = false; panel.setAttribute("aria-busy","false"); } }
+    }
+    on("#storagePanel", "change", event => {
+      if (event.target.id === "insightsLibrary") insightsLibraryID = event.target.value;
+      else if (event.target.id === "insightsKind") insightsKind = event.target.value;
+      else return;
+      insightsLoadedAt = 0;
+      void renderStorage(true);
+    });
+    $("#storagePanel").addEventListener("toggle", event => {
+      if (event.target.classList.contains("insights-folder-details") && event.target.open) void renderStorageFolders();
+    }, true);
+
+    function insightsFolderScope(node, kind) {
+      if (!kind) return node;
+      const files = (node.files || []).filter(file => file.kind === kind);
+      const children = (node.children || []).map(child => insightsFolderScope(child, kind)).filter(child => child.itemCount > 0);
+      return {...node, files, children,
+        itemCount: files.length + children.reduce((sum, child) => sum + child.itemCount, 0),
+        sizeBytes: files.reduce((sum, file) => sum + (Number(file.sizeBytes) || 0), 0) + children.reduce((sum, child) => sum + child.sizeBytes, 0)};
+    }
+    async function renderStorageFolders() {
+      const panel = $("#insightsFolders");
       if (!storageData && !storageLoading) {
         storageLoading = true;
         panel.innerHTML = '<div class="empty-state">Reading indexed storage…</div>';
@@ -4759,20 +4865,8 @@
         ].join("");
         return `<details class="storage-folder"><summary>${summary}</summary><div class="storage-children">${contents || '<p class="storage-empty">No indexed files here.</p>'}</div></details>`;
       };
-      panel.innerHTML = `
-        <div class="storage-heading"><div><h2>Storage breakdown</h2><p>Indexed media only · Folder sizes come from the last scan</p><p id="storageScanStatus" role="status">${escapeHTML(storageScanStatus)}</p></div><button id="storageScanBtn" class="storage-scan" data-action="scan-storage">Scan now</button></div>
-        <div class="storage-metrics">
-          <div><strong>${fmt(data.totalBytes)}</strong><span>Indexed media</span></div>
-          <div><strong>${Number(data.itemCount || 0).toLocaleString()}</strong><span>Files</span></div>
-          <div><strong>${Number(data.folderCount || 0).toLocaleString()}</strong><span>Folders</span></div>
-          <div><strong>${Number(data.showCount || 0).toLocaleString()}</strong><span>TV shows</span></div>
-          <div><strong>${Number(data.artistCount || 0).toLocaleString()}</strong><span>Creators & studios</span></div>
-        </div>
-        <div class="storage-libraries">${(data.libraries || []).map(lib => `
-          <section class="storage-library"><div class="storage-library-head">
-            <strong>${escapeHTML(lib.name)}</strong><span>${escapeHTML(lib.kind)} · ${fmt(lib.root.sizeBytes)} · ${Number(lib.root.itemCount || 0).toLocaleString()} files</span>
-          </div>${folderHTML(lib.root)}</section>`).join("") || '<div class="empty-state">No libraries are configured.</div>'}
-        </div>`;
+      const libraries = (data.libraries || []).filter(lib => !insightsLibraryID || lib.id === insightsLibraryID).map(lib => ({...lib,root: insightsFolderScope(lib.root, insightsKind)})).filter(lib => !insightsKind || lib.root.itemCount > 0);
+      panel.innerHTML = `<div class="storage-libraries">${libraries.map(lib => `<section class="storage-library"><div class="storage-library-head"><strong>${escapeHTML(lib.name)}</strong><span>${fmt(lib.root.sizeBytes)} · ${Number(lib.root.itemCount || 0).toLocaleString()} files</span></div>${folderHTML(lib.root)}</section>`).join("") || '<p class="insights-empty">No indexed folders in this selection.</p>'}</div>`;
     }
 
     function gotoPage(n) { currentPage = n; render(); syncHash(true); window.scrollTo({ top:0 }); }
@@ -4822,7 +4916,9 @@
             pollStorageScan(attempt + 1, false);
             return;
           }
+          storageData = null; insightsData = null;
           await refreshLibrary();
+          if (activeTab === "storage") await renderStorage(true);
           const result = state.lastResult || {};
           setStorageScanStatus(`Scan complete · ${Number(state.itemCount || 0).toLocaleString()} items · ${Number(result.added || 0)} added · ${Number(result.updated || 0)} updated · ${Number(result.removed || 0)} removed`);
         } catch {
@@ -4842,6 +4938,7 @@
       if (!btn) return;
       const act = btn.dataset.action;
       if (act === "scan-storage") scanStorageNow();
+      else if (act === "refresh-insights") { storageData = null; void renderStorage(true); }
       else if (act === "toggle-movie-detail") toggleMovieDetail();
       else if (act === "back-book-page") closeBookPage();
       else if (act === "open-series-lists") {
