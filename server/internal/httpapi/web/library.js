@@ -5819,6 +5819,8 @@
       const name = document.querySelector("#profileName");
       const signIn = document.querySelector("#profileSignInLink");
       const peopleButton = document.querySelector("#profilePeopleBtn");
+      const googleLink = document.querySelector("#profileGoogleLink");
+      const googleStatus = document.querySelector("#profileGoogleStatus");
       try {
         const response = await fetch(api("/api/auth/session"), { cache: "no-store" });
         const session = await response.json().catch(() => ({}));
@@ -5829,12 +5831,16 @@
         profileButton.title = username ? `Profile: ${username}` : "Profile";
         signIn.hidden = !!username;
         peopleButton.hidden = !username;
+        googleLink.hidden = !username || !!session.googleLinked;
+        googleStatus.hidden = !username || !session.googleLinked;
       } catch (_) {
         name.textContent = "Library profile";
         profileButton.setAttribute("aria-label", "Profile");
         profileButton.title = "Profile";
         signIn.hidden = false;
         peopleButton.hidden = true;
+        googleLink.hidden = true;
+        googleStatus.hidden = true;
       }
       refreshProfileBookmarkCount();
     }

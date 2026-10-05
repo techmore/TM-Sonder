@@ -93,6 +93,8 @@ type Config struct {
 	// such as BookPlayer without writing a plaintext password to server.json.
 	CompatibilityUsername string     `json:"-"`
 	CompatibilityPassword string     `json:"-"`
+	GoogleClientID        string     `json:"-"`
+	GoogleClientSecret    string     `json:"-"`
 	MediaCache            MediaCache `json:"mediaCache"`
 	ThemePreset           string     `json:"themePreset"`
 	LibraryLayout         string     `json:"libraryLayout"`
@@ -279,6 +281,12 @@ func (c *Config) applyEnv() {
 	}
 	if v := os.Getenv("SONDER_COMPAT_PASSWORD"); v != "" {
 		c.CompatibilityPassword = v
+	}
+	if v := os.Getenv("SONDER_GOOGLE_CLIENT_ID"); v != "" {
+		c.GoogleClientID = v
+	}
+	if v := os.Getenv("SONDER_GOOGLE_CLIENT_SECRET"); v != "" {
+		c.GoogleClientSecret = v
 	}
 	if v := os.Getenv("SONDER_MEDIA_CACHE_ENABLED"); v != "" {
 		c.MediaCache.Enabled = parseBool(v)

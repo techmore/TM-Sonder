@@ -56,6 +56,7 @@ type accountRecord struct {
 	ShareBookmarks   *bool     `json:"shareBookmarks,omitempty"`
 	ShareProgress    *bool     `json:"shareProgress,omitempty"`
 	PublicQueueToken string    `json:"publicQueueToken,omitempty"`
+	GoogleSubject    string    `json:"googleSubject,omitempty"`
 }
 
 // Profile contains the account details users have chosen to expose to people
@@ -201,6 +202,7 @@ func validateAccount(account *accountFile) error {
 		return errors.New("auth: stored owner account is missing")
 	}
 	inviteCodes := make(map[string]struct{}, len(account.Accounts))
+	googleSubjects := make(map[string]struct{}, len(account.Accounts))
 	for username, record := range account.Accounts {
 		if !validUsername(username) {
 			return errors.New("auth: invalid stored username")
@@ -215,6 +217,15 @@ func validateAccount(account *accountFile) error {
 			return errors.New("auth: duplicate stored invite code")
 		}
 		inviteCodes[record.InviteCode] = struct{}{}
+		if record.GoogleSubject != "" {
+			if len(record.GoogleSubject) > 255 {
+				return errors.New("auth: invalid stored Google subject")
+			}
+			if _, exists := googleSubjects[record.GoogleSubject]; exists {
+				return errors.New("auth: duplicate stored Google subject")
+			}
+			googleSubjects[record.GoogleSubject] = struct{}{}
+		}
 		if record.ReferredBy != "" {
 			if record.ReferredBy == username {
 				return errors.New("auth: account cannot refer itself")
@@ -225,6 +236,64 @@ func validateAccount(account *accountFile) error {
 		}
 	}
 	return nil
+}
+
+// LinkGoogle associates a verified Google subject with an existing account.
+// A subject can belong to only one local account.
+func (s *Store) LinkGoogle(username, subject string) error {
+	if subject == "" || len(subject) > 255 {
+		return errors.New("auth: invalid Google subject")
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.account == nil {
+		return ErrNoAccount
+	}
+	record, ok := s.account.Accounts[username]
+	if !ok {
+		return ErrNoAccount
+	}
+	for other, item := range s.account.Accounts {
+		if item.GoogleSubject == subject && other != username {
+			return errors.New("auth: Google account is linked to another user")
+		}
+	}
+	if record.GoogleSubject != "" && record.GoogleSubject != subject {
+		return errors.New("auth: account already has a linked Google account")
+	}
+	record.GoogleSubject = subject
+	updated := cloneAccount(s.account)
+	updated.Accounts[username] = record
+	if err := writeAccount(s.path, updated); err != nil {
+		return err
+	}
+	s.account = updated
+	return nil
+}
+
+// GoogleUsername returns the local account linked to a verified Google subject.
+func (s *Store) GoogleUsername(subject string) (string, bool) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	if s.account == nil || subject == "" {
+		return "", false
+	}
+	for username, record := range s.account.Accounts {
+		if record.GoogleSubject == subject {
+			return username, true
+		}
+	}
+	return "", false
+}
+
+// GoogleLinked reports whether username has connected a Google identity.
+func (s *Store) GoogleLinked(username string) bool {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	if s.account == nil {
+		return false
+	}
+	return s.account.Accounts[username].GoogleSubject != ""
 }
 
 func validatePasswordRecord(saltText, hashText string) error {

@@ -25,7 +25,7 @@ type accountCredentials struct {
 
 func isAccountPath(path string) bool {
 	switch path {
-	case "/account/login", "/account/setup", "/account/signup", "/api/auth/session", "/api/auth/login", "/api/auth/setup", "/api/auth/signup", "/api/auth/logout":
+	case "/account/login", "/account/setup", "/account/signup", "/oauth2/start", "/oauth2/link", "/oauth2/callback", "/api/auth/session", "/api/auth/login", "/api/auth/setup", "/api/auth/signup", "/api/auth/logout":
 		return true
 	default:
 		return false
@@ -103,6 +103,7 @@ func (s *Server) handleAuthSession(w http.ResponseWriter, r *http.Request) {
 		"setupRequired": !s.accounts.HasAccount(),
 		"authenticated": authenticated || s.tokenMatches(r),
 		"username":      username,
+		"googleLinked":  authenticated && s.accounts.GoogleLinked(username),
 	})
 }
 
@@ -429,10 +430,11 @@ func renderAccountForm(w http.ResponseWriter, setup, signup bool, next, message,
 		form += `<p class="secondary">When you join, you and the person who invited you can see each other’s bookmarks and playback progress. You can change either sharing setting anytime from Profile → People.</p>`
 		form += `<p class="secondary">Already have an account? <a href="/account/login">Sign in</a>.</p>`
 	} else if !setup {
+		form += `<a class="google-button" href="/oauth2/start?next=` + url.QueryEscape(safeNext(next)) + `"><span aria-hidden="true">G</span>Continue with Google</a>`
 		form += `<p class="secondary">Need an account? Use the one-time setup link from the server owner to create the first account. After that, ask an existing user for an invite link.</p>`
 	}
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	w.WriteHeader(http.StatusOK)
 	_, _ = w.Write([]byte(`<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="application-name" content="TM Sonder"><meta name="apple-mobile-web-app-title" content="TM Sonder"><link rel="icon" type="image/png" href="/favicon.png?v=asset"><link rel="alternate icon" type="image/svg+xml" href="/favicon.svg"><link rel="apple-touch-icon" href="/favicon.png?v=asset"><title>` + html.EscapeString(title) + `</title><style>
-:root{color-scheme:dark;font-family:system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;background:#101713;color:#edf5ed}body{min-height:100vh;display:grid;place-items:center;margin:0;background:radial-gradient(circle at top,#274331,#101713 62%)}main{width:min(92vw,420px);padding:34px;border:1px solid #4f755c;border-radius:18px;background:#17231b;box-shadow:0 20px 70px #0008}h1{font-size:1.45rem;margin:0 0 24px}label{display:grid;gap:8px;margin:16px 0;font-weight:600}input{box-sizing:border-box;width:100%;padding:12px;border:1px solid #66866d;border-radius:9px;background:#0e1711;color:inherit;font:inherit}button{width:100%;margin-top:14px;padding:12px;border:0;border-radius:9px;background:#b6d9ad;color:#102014;font:inherit;font-weight:700;cursor:pointer}.message{padding:11px;border-radius:9px;background:#552d2d;color:#ffd7d7}.secondary,small{display:block;margin-top:18px;color:#b9c9bc;font-size:.86rem;line-height:1.45}a{color:#c5e6bb}</style></head><body><main><h1>` + html.EscapeString(heading) + `</h1>` + messageHTML + form + `</main></body></html>`))
+:root{color-scheme:dark;font-family:system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;background:#101713;color:#edf5ed}body{min-height:100vh;display:grid;place-items:center;margin:0;background:radial-gradient(circle at top,#274331,#101713 62%)}main{width:min(92vw,420px);padding:34px;border:1px solid #4f755c;border-radius:18px;background:#17231b;box-shadow:0 20px 70px #0008}h1{font-size:1.45rem;margin:0 0 24px}label{display:grid;gap:8px;margin:16px 0;font-weight:600}input{box-sizing:border-box;width:100%;padding:12px;border:1px solid #66866d;border-radius:9px;background:#0e1711;color:inherit;font:inherit}button{width:100%;margin-top:14px;padding:12px;border:0;border-radius:9px;background:#b6d9ad;color:#102014;font:inherit;font-weight:700;cursor:pointer}.google-button{display:flex;align-items:center;justify-content:center;gap:10px;margin-top:14px;padding:12px;border:1px solid #66866d;border-radius:9px;background:#0e1711;color:inherit;text-decoration:none;font-weight:650}.google-button span{font-size:1.2rem;color:#b6d9ad}.message{padding:11px;border-radius:9px;background:#552d2d;color:#ffd7d7}.secondary,small{display:block;margin-top:18px;color:#b9c9bc;font-size:.86rem;line-height:1.45}a{color:#c5e6bb}</style></head><body><main><h1>` + html.EscapeString(heading) + `</h1>` + messageHTML + form + `</main></body></html>`))
 }
