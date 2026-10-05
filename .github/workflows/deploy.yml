@@ -118,7 +118,7 @@ jobs:
           ls -l "$staged"
 
       - name: Deploy (with automatic rollback on failure)
-        run: ./deploy/deploy-sonder.sh "${{ needs.build.outputs.version }}"
+        run: SONDER_CONFIGURE_GOOGLE_OAUTH=1 ./deploy/deploy-sonder.sh "${{ needs.build.outputs.version }}"
 
       - name: Confirm the Incus service is serving
         run: |

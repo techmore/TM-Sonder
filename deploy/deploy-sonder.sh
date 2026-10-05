@@ -47,9 +47,12 @@ if incus exec "$INSTANCE" -- test -e "$DATA_DIR/runtime-state.json"; then
   incus exec "$INSTANCE" -- runuser -u "$SERVICE_USER" -- test -w "$DATA_DIR/runtime-state.json" || die "service user '$SERVICE_USER' cannot write $DATA_DIR/runtime-state.json; refusing restart"
 fi
 
-# Refresh the OAuth client from the existing Tasks/Homeboard profile. The
-# helper transfers secrets directly between Incus containers without logging.
-"$SCRIPT_DIR/configure-google-oauth.sh" || die "could not configure Sonder Google sign-in"
+# Refresh the OAuth client from the existing Tasks/Homeboard profile when the
+# production workflow requests it. The helper transfers secrets directly
+# between Incus containers without logging.
+if [[ "${SONDER_CONFIGURE_GOOGLE_OAUTH:-0}" == "1" ]]; then
+  "$SCRIPT_DIR/configure-google-oauth.sh" || die "could not configure Sonder Google sign-in"
+fi
 
 install -d -m 0755 "$BIN_DIR"
 BACKUP="$BIN_DIR/sonder-linux-amd64.incus-bak-$(date -u +%Y%m%dT%H%M%SZ)"
