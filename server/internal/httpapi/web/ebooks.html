@@ -114,7 +114,8 @@
             <p>${escapeHTML([book.author, book.series].filter(Boolean).join(" • "))}</p>
             ${book.summary ? `<p style="margin-top:12px; max-width:60ch;">${escapeHTML(book.summary)}</p>` : ""}
             <div class="actions">
-              <a class="button" href="${api("/stream/" + book.id)}" target="_blank">Open / Download</a>
+              <a class="button" href="${api("/read/" + encodeURIComponent(book.id) + "?title=" + encodeURIComponent(book.title || "Ebook"))}">Read in browser</a>
+              <a class="button" href="${api("/stream/" + encodeURIComponent(book.id))}" download>Download EPUB</a>
             </div>
           </div>
         </div>`;

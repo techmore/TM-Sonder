@@ -1,0 +1,9 @@
+epub.js 0.3.93
+Copyright (c) 2013, FuturePress
+License: BSD-2-Clause
+See EPUBJS-LICENSE.txt.
+
+JSZip 3.10.1
+Copyright (c) 2009-2016 Stuart Knightley, David Duponchel, François Chouinard, Antonio Mauroy
+License: MIT
+See JSZIP-LICENSE.txt.

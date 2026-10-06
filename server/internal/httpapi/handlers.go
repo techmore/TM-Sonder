@@ -1433,3 +1433,21 @@ func (s *Server) handleAudiobookBeta(w http.ResponseWriter, r *http.Request) {
 func (s *Server) handleEbookBrowser(w http.ResponseWriter, r *http.Request) {
 	serveGzippableHTML(w, r, ebooksPage)
 }
+
+// handleEbookReader serves the in-browser reader for one cataloged EPUB.
+func (s *Server) handleEbookReader(w http.ResponseWriter, r *http.Request) {
+	item, ok := s.store.Get(r.PathValue("id"))
+	if !ok || item.Kind != api.KindEbook || item.Format != api.FormatEPUB {
+		writeError(w, http.StatusNotFound, "EPUB book not found")
+		return
+	}
+	serveGzippableHTML(w, r, ebookReaderPage)
+}
+
+func (s *Server) handleEpubJS(w http.ResponseWriter, r *http.Request) {
+	serveAsset(w, r, epubJS, "text/javascript; charset=utf-8")
+}
+
+func (s *Server) handleJSZipJS(w http.ResponseWriter, r *http.Request) {
+	serveAsset(w, r, jszipJS, "text/javascript; charset=utf-8")
+}

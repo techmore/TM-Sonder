@@ -17,7 +17,7 @@ import (
 // JSON routes the iOS client uses. When opened with ?token= (LAN pairing),
 // the embedded JS propagates the token to every same-origin request.
 
-//go:embed web/library.html web/library.css web/library.js web/audiobooks.html web/audiobooks-beta.html web/ebooks.html web/shared.js web/favicon.svg web/favicon.png
+//go:embed web/library.html web/library.css web/library.js web/audiobooks.html web/audiobooks-beta.html web/ebooks.html web/ebook-reader.html web/shared.js web/vendor/epub.min.js web/vendor/jszip.min.js web/vendor/LICENSES.txt web/favicon.svg web/favicon.png
 var webFS embed.FS
 
 func mustReadWeb(name string) []byte {
@@ -35,6 +35,9 @@ var (
 	audiobooksPage     = newGzippedPage(func() []byte { return mustReadWeb("web/audiobooks.html") })
 	audiobooksBetaPage = newGzippedPage(func() []byte { return mustReadWeb("web/audiobooks-beta.html") })
 	ebooksPage         = newGzippedPage(func() []byte { return mustReadWeb("web/ebooks.html") })
+	ebookReaderPage    = newGzippedPage(func() []byte { return mustReadWeb("web/ebook-reader.html") })
+	epubJS             = newGzippedPage(func() []byte { return mustReadWeb("web/vendor/epub.min.js") })
+	jszipJS            = newGzippedPage(func() []byte { return mustReadWeb("web/vendor/jszip.min.js") })
 	sharedJS           = newGzippedPage(func() []byte { return mustReadWeb("web/shared.js") })
 	faviconSVG         = newGzippedPage(func() []byte { return mustReadWeb("web/favicon.svg") })
 	faviconPNG         = newGzippedPage(func() []byte { return mustReadWeb("web/favicon.png") })

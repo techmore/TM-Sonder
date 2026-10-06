@@ -342,6 +342,9 @@ func (s *Server) routes() {
 	m.HandleFunc("GET /audiobooks-beta", s.handleAudiobookBeta)
 	m.HandleFunc("GET /api/ebooks", s.handleEbooks)
 	m.HandleFunc("GET /ebooks", s.handleEbookBrowser)
+	m.HandleFunc("GET /read/{id}", s.handleEbookReader)
+	m.HandleFunc("GET /epub.js", s.handleEpubJS)
+	m.HandleFunc("GET /jszip.js", s.handleJSZipJS)
 	m.HandleFunc("GET /api/settings", s.handleSettingsGet)
 	m.HandleFunc("GET /api/settings/browse", s.handleSettingsBrowse)
 	m.HandleFunc("PUT /api/settings", s.handleSettingsPut)
@@ -443,9 +446,10 @@ func (s *Server) withGzip(next http.Handler) http.Handler {
 		if strings.HasPrefix(path, "/stream/") ||
 			strings.HasPrefix(path, "/artwork/") ||
 			strings.HasPrefix(path, "/subtitles/") ||
+			strings.HasPrefix(path, "/read/") ||
 			path == "/api/library" || path == "/library.json" ||
 			path == "/" || path == "/audiobooks" || path == "/audiobooks-classic" || path == "/audiobooks-beta" || path == "/ebooks" ||
-			path == "/shared.js" || path == "/library.css" || path == "/library.js" || path == "/favicon.ico" ||
+			path == "/shared.js" || path == "/library.css" || path == "/library.js" || path == "/epub.js" || path == "/jszip.js" || path == "/favicon.ico" ||
 			path == "/favicon.svg" || path == "/favicon.png" {
 			// These routes manage their own cached gzip.
 			next.ServeHTTP(w, r)
@@ -510,6 +514,14 @@ func (s *Server) withAccessLog(next http.Handler) http.Handler {
 		if r.URL.Path != "/api/health" {
 			s.logger.Printf("%s %s %d %s", r.Method, r.URL.Path, sw.code, time.Since(start).Round(time.Millisecond))
 		}
+	})
+}
+
+func (s *Server) withAccountAudit(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		sw := &statusWriter{ResponseWriter: w, code: http.StatusOK}
+		next.ServeHTTP(sw, r)
+		s.recordRequestAudit(r, sw.code)
 	})
 }
 
@@ -686,12 +698,12 @@ func isJellyfinPrimaryImagePath(path string) bool {
 
 func isBrowserPage(path string) bool {
 	return path == "/" || path == "/audiobooks" || path == "/audiobooks-beta" ||
-		path == "/audiobooks-classic" || path == "/ebooks"
+		path == "/audiobooks-classic" || path == "/ebooks" || strings.HasPrefix(path, "/read/")
 }
 
 func isPublicWebAsset(path string) bool {
 	switch path {
-	case "/shared.js", "/library.css", "/library.js", "/favicon.svg", "/favicon.png", "/favicon.ico":
+	case "/shared.js", "/library.css", "/library.js", "/epub.js", "/jszip.js", "/favicon.svg", "/favicon.png", "/favicon.ico":
 		return true
 	default:
 		return false

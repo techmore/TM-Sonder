@@ -1,0 +1,135 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="application-name" content="TM Sonder">
+  <title>Read · TM Sonder</title>
+  <link rel="icon" type="image/png" href="/favicon.png">
+  <style>
+    :root { color-scheme: light; --bg:#e9e5da; --panel:#f8f6f0; --line:#d4cfbf; --text:#292a23; --muted:#727367; --accent:#576c44; }
+    * { box-sizing:border-box; }
+    body { margin:0; min-height:100vh; color:var(--text); background:var(--bg); font:15px/1.5 system-ui,-apple-system,"Segoe UI",sans-serif; }
+    header { position:sticky; top:0; z-index:2; display:grid; grid-template-columns:minmax(120px,1fr) minmax(160px,360px) minmax(120px,1fr); gap:12px; align-items:center; padding:12px 18px; background:rgba(248,246,240,.96); border-bottom:1px solid var(--line); }
+    header a, button, select { color:var(--text); background:var(--panel); border:1px solid var(--line); border-radius:8px; padding:8px 11px; font:inherit; }
+    header a { justify-self:start; text-decoration:none; }
+    header select { width:100%; min-width:0; }
+    #title { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; text-align:right; color:var(--muted); font-size:13px; }
+    main { min-height:calc(100vh - 60px); display:grid; grid-template-columns:52px minmax(0,1fr) 52px; align-items:stretch; gap:14px; padding:20px clamp(8px,3vw,36px); }
+    #viewer { min-height:calc(100vh - 100px); overflow:hidden; background:var(--panel); border:1px solid var(--line); border-radius:12px; box-shadow:0 8px 28px #27281b12; }
+    #viewer iframe { border:0; }
+    .turn { align-self:center; width:48px; height:56px; padding:0; font-size:24px; cursor:pointer; }
+    button:disabled { opacity:.45; cursor:default; }
+    #status { position:fixed; z-index:3; left:50%; bottom:14px; transform:translateX(-50%); max-width:min(640px,calc(100vw - 24px)); padding:9px 14px; border:1px solid var(--line); border-radius:9px; background:#f8f6f0; color:var(--muted); box-shadow:0 4px 18px #27281b15; }
+    #status[hidden] { display:none; }
+    @media(max-width:650px) {
+      header { grid-template-columns:auto minmax(0,1fr); }
+      #title { display:none; }
+      main { grid-template-columns:38px minmax(0,1fr) 38px; gap:6px; padding:10px 5px; }
+      .turn { width:36px; }
+      #viewer { min-height:calc(100vh - 84px); }
+    }
+  </style>
+  <script src="/shared.js"></script>
+  <script src="/jszip.js"></script>
+  <script src="/epub.js"></script>
+</head>
+<body>
+  <header>
+    <a id="back" href="/ebooks">← Books</a>
+    <select id="toc" aria-label="Table of contents" disabled><option>Loading book…</option></select>
+    <div id="title">TM Sonder reader</div>
+  </header>
+  <main>
+    <button class="turn" id="previous" type="button" aria-label="Previous page" disabled>‹</button>
+    <div id="viewer" aria-label="Book pages"></div>
+    <button class="turn" id="next" type="button" aria-label="Next page" disabled>›</button>
+  </main>
+  <div id="status" role="status">Loading book…</div>
+  <script>
+    (() => {
+      "use strict";
+      const { api, escapeHTML } = window.Sonder;
+      const id = decodeURIComponent(location.pathname.split("/").filter(Boolean).pop() || "");
+      const title = document.querySelector("#title");
+      const status = document.querySelector("#status");
+      const toc = document.querySelector("#toc");
+      const previous = document.querySelector("#previous");
+      const next = document.querySelector("#next");
+      document.querySelector("#back").href = api("/ebooks");
+      let rendition;
+      let book;
+      const positionKey = `sonder:epub-position:${id}`;
+
+      function showStatus(message, hide = false) {
+        status.textContent = message;
+        status.hidden = hide;
+      }
+
+      function flattenTOC(entries, depth = 0, out = []) {
+        for (const entry of entries || []) {
+          out.push({ label: `${"　".repeat(Math.min(depth, 4))}${entry.label || "Untitled section"}`, href: entry.href });
+          flattenTOC(entry.subitems, depth + 1, out);
+        }
+        return out;
+      }
+
+      async function openBook() {
+        if (!id) throw new Error("No book was selected.");
+        const bookTitle = new URLSearchParams(location.search).get("title") || "Ebook reader";
+        title.textContent = bookTitle;
+        document.title = `${bookTitle} · TM Sonder`;
+        showStatus("Opening book…");
+
+        const file = await fetch(api(`/stream/${encodeURIComponent(id)}`));
+        if (!file.ok) throw new Error(file.status === 404 ? "The book file is missing." : "Could not open the book file.");
+        const bytes = await file.arrayBuffer();
+        if (!bytes.byteLength) throw new Error("The book file is empty.");
+        book = ePub(bytes);
+        rendition = book.renderTo("viewer", { width:"100%", height:"100%", flow:"paginated", manager:"default", spread:"none", allowScriptedContent:false });
+        rendition.themes.default({ body: { color:"#292a23", "font-family":"Georgia, serif", "line-height":"1.65", "font-size":"1.05em", "padding":"1em 1.5em" }, a: { color:"#576c44" }, img: { "max-width":"100%", height:"auto" } });
+
+        const navigation = await book.loaded.navigation;
+        const sections = flattenTOC(navigation.toc);
+        toc.replaceChildren();
+        for (const section of sections) {
+          const option = document.createElement("option");
+          option.value = section.href;
+          option.textContent = section.label;
+          toc.append(option);
+        }
+        toc.disabled = sections.length === 0;
+
+        rendition.on("relocated", location => {
+          const page = location?.start?.displayed?.page;
+          const total = location?.start?.displayed?.total;
+          showStatus(page && total ? `Page ${page} of ${total}` : "Book opened", true);
+          if (location?.start?.cfi) localStorage.setItem(positionKey, location.start.cfi);
+          previous.disabled = !location?.atStart;
+          next.disabled = !location?.atEnd;
+          if (location?.start?.href && sections.length) {
+            const selected = sections.find(section => section.href === location.start.href);
+            if (selected) toc.value = selected.href;
+          }
+        });
+        await rendition.display(localStorage.getItem(positionKey) || undefined);
+      }
+
+      previous.addEventListener("click", () => rendition?.prev());
+      next.addEventListener("click", () => rendition?.next());
+      toc.addEventListener("change", () => { if (toc.value) rendition?.display(toc.value); });
+      document.addEventListener("keydown", event => {
+        if (event.altKey || event.ctrlKey || event.metaKey || event.target.matches("select,input,textarea,button")) return;
+        if (event.key === "ArrowLeft") rendition?.prev();
+        if (event.key === "ArrowRight") rendition?.next();
+      });
+
+      openBook().catch(error => {
+        showStatus(error.message || "Could not open this book.");
+        previous.disabled = true;
+        next.disabled = true;
+      });
+    })();
+  </script>
+</body>
+</html>
