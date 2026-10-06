@@ -517,14 +517,6 @@ func (s *Server) withAccessLog(next http.Handler) http.Handler {
 	})
 }
 
-func (s *Server) withAccountAudit(next http.Handler) http.Handler {
-	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		sw := &statusWriter{ResponseWriter: w, code: http.StatusOK}
-		next.ServeHTTP(sw, r)
-		s.recordRequestAudit(r, sw.code)
-	})
-}
-
 type statusWriter struct {
 	http.ResponseWriter
 	code int
