@@ -116,7 +116,15 @@
           }
         });
         const savedPosition = localStorage.getItem(positionKey);
-        await rendition.display(savedPosition || undefined);
+        if (savedPosition) {
+          const savedSection = book.spine.get(savedPosition);
+          if (savedSection) {
+            await rendition.display(savedSection.href);
+            await rendition.display(savedPosition);
+            return;
+          }
+        }
+        await rendition.display();
       }
 
       previous.addEventListener("click", () => rendition?.prev());
