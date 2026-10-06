@@ -15,8 +15,9 @@ reading view.
   epub.js 0.3.93 and JSZip 3.10.1. Their licenses are in
   `server/internal/httpapi/web/vendor/`.
 - Readers can move page by page or use the EPUB table of contents. The current
-  EPUB CFI is saved in browser local storage per book and restored on the next
-  visit from that browser.
+  EPUB section and page are saved in browser local storage per book and restored
+  on the next visit from that browser. Older saved CFI positions are migrated
+  to the containing section on the next open.
 - Reader sources are embedded in the Go binary with the existing web assets.
 
 ## Files changed
@@ -30,6 +31,19 @@ reading view.
 
 ## Current release status
 
-Implementation and deployment verification are tracked in the Codex task. Update
-this section with the release commit and production smoke-check result before
-closing the work.
+The reader was deployed to the browser-facing `tm-sonder` service on SER8. A
+smoke check opened “The Republic of Plato (Allan Bloom)” in the browser, rendered
+the EPUB, turned to the next section, reloaded the reader, and confirmed it
+returned to the saved section. The service health endpoint reported version
+`0.2.23+browser-epub`.
+
+The first catalog entry, “StarCraft - It Will End in Fire,” could not be used in
+the same check because its NAS file is unreadable by the service account. The
+Republic EPUB was readable and verified end to end.
+
+Reader changes are on `main` in commits `f84ecb2` through `d391520`; the saved
+section and page restoration follow-up is pending its final commit and CI
+deployment. GitHub CI and the Incus deploy workflow both passed through
+`d391520`. The host service was built from the current working tree so it keeps
+the separate account audit changes already in progress; its preceding binary
+was retained as a dated backup on SER8.

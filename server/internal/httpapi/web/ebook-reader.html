@@ -59,6 +59,8 @@
       document.querySelector("#back").href = api("/ebooks");
       let rendition;
       let book;
+      let currentLocation;
+      let restoringPosition = false;
       const positionKey = `sonder:epub-position:${id}`;
 
       function showStatus(message, hide = false) {
@@ -102,12 +104,15 @@
 
         await book.ready;
         rendition.on("relocated", location => {
+          currentLocation = location;
           const page = location?.start?.displayed?.page;
           const total = location?.start?.displayed?.total;
           const endPage = location?.end?.displayed?.page;
           const endTotal = location?.end?.displayed?.total;
           showStatus(page && total ? `Page ${page} of ${total}` : "Book opened", true);
-          if (location?.start?.cfi) localStorage.setItem(positionKey, location.start.cfi);
+          if (!restoringPosition && location?.start?.href && page) {
+            localStorage.setItem(positionKey, JSON.stringify({ href: location.start.href, page }));
+          }
           previous.disabled = location?.start?.index === 0 && page <= 1;
           next.disabled = location?.end?.index >= book.spine.length - 1 && endPage >= endTotal;
           if (location?.start?.href && sections.length) {
@@ -115,14 +120,28 @@
             if (selected) toc.value = selected.href;
           }
         });
-        const savedPosition = localStorage.getItem(positionKey);
-        if (savedPosition) {
-          const savedSection = book.spine.get(savedPosition);
-          if (savedSection) {
-            await rendition.display(savedSection.href);
-            await rendition.display(savedPosition);
-            return;
+        let savedPosition;
+        const storedPosition = localStorage.getItem(positionKey);
+        try { savedPosition = JSON.parse(storedPosition || "null"); } catch {
+          const savedSection = storedPosition && book.spine.get(storedPosition);
+          if (savedSection) savedPosition = { href: savedSection.href, page: 1 };
+        }
+        if (savedPosition?.href && Number.isInteger(savedPosition.page) && savedPosition.page > 0) {
+          showStatus("Restoring reading position…");
+          restoringPosition = true;
+          const firstLocation = new Promise(resolve => rendition.once("relocated", resolve));
+          await rendition.display(savedPosition.href);
+          currentLocation = await firstLocation;
+          for (let page = 1; page < savedPosition.page && currentLocation?.start?.displayed?.page < savedPosition.page; page += 1) {
+            const nextLocation = new Promise(resolve => rendition.once("relocated", resolve));
+            await rendition.next();
+            currentLocation = await nextLocation;
           }
+          restoringPosition = false;
+          if (currentLocation?.start?.href && currentLocation?.start?.displayed?.page) {
+            localStorage.setItem(positionKey, JSON.stringify({ href: currentLocation.start.href, page: currentLocation.start.displayed.page }));
+          }
+          return;
         }
         await rendition.display();
       }
