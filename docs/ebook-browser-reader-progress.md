@@ -41,9 +41,8 @@ The first catalog entry, “StarCraft - It Will End in Fire,” could not be use
 the same check because its NAS file is unreadable by the service account. The
 Republic EPUB was readable and verified end to end.
 
-Reader changes are on `main` in commits `f84ecb2` through `d391520`; the saved
-section and page restoration follow-up is pending its final commit and CI
-deployment. GitHub CI and the Incus deploy workflow both passed through
-`d391520`. The host service was built from the current working tree so it keeps
-the separate account audit changes already in progress; its preceding binary
-was retained as a dated backup on SER8.
+Reader changes are on `main` in commits `f84ecb2` through `9e7d476`. The Deploy
+workflow for `9e7d476` passed and confirmed the Incus service is serving; the
+broader CI workflow is still running. The host service was built from the
+current working tree so it keeps the separate account audit changes already in
+progress; its preceding binaries were retained as dated backups on SER8.
