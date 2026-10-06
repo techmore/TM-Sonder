@@ -100,6 +100,7 @@
         }
         toc.disabled = sections.length === 0;
 
+        await book.ready;
         rendition.on("relocated", location => {
           const page = location?.start?.displayed?.page;
           const total = location?.start?.displayed?.total;
@@ -114,7 +115,8 @@
             if (selected) toc.value = selected.href;
           }
         });
-        await rendition.display(localStorage.getItem(positionKey) || undefined);
+        const savedPosition = localStorage.getItem(positionKey);
+        await rendition.display(savedPosition || undefined);
       }
 
       previous.addEventListener("click", () => rendition?.prev());
