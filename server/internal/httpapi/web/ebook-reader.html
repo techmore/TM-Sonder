@@ -103,10 +103,12 @@
         rendition.on("relocated", location => {
           const page = location?.start?.displayed?.page;
           const total = location?.start?.displayed?.total;
+          const endPage = location?.end?.displayed?.page;
+          const endTotal = location?.end?.displayed?.total;
           showStatus(page && total ? `Page ${page} of ${total}` : "Book opened", true);
           if (location?.start?.cfi) localStorage.setItem(positionKey, location.start.cfi);
-          previous.disabled = !location?.atStart;
-          next.disabled = !location?.atEnd;
+          previous.disabled = location?.start?.index === 0 && page <= 1;
+          next.disabled = location?.end?.index >= book.spine.length - 1 && endPage >= endTotal;
           if (location?.start?.href && sections.length) {
             const selected = sections.find(section => section.href === location.start.href);
             if (selected) toc.value = selected.href;
