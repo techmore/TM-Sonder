@@ -113,7 +113,7 @@
       const allowedViews = ["fullscreen", "floating", "window", "dock"];
       viewSelect.value = ["fullscreen", "floating", "window"].includes(saved(preferenceKey, "fullscreen")) ? saved(preferenceKey, "fullscreen") : "fullscreen";
       fontSelect.value = ["100", "120", "140"].includes(saved("sonder.readingFont.v1", "100")) ? saved("sonder.readingFont.v1", "100") : "100";
-      let resizeTimer, drag, reflowCFI, lastViewerSize;
+      let resizeTimer, drag, reflowCFI, reflowFraction, lastViewerSize;
       function visibleAnchor() {
         try {
           const visible = viewer.getBoundingClientRect();
@@ -135,8 +135,29 @@
         reader.dataset.anchorSource = "pagination";
         return currentLocation?.start?.cfi;
       }
+      function pageMetrics() {
+        const container = viewer.querySelector(".epub-container");
+        const width = container?.clientWidth || viewer.clientWidth || 1;
+        const total = Math.max(1, Math.round((container?.scrollWidth || width) / width));
+        const index = Math.max(0, Math.round(Math.abs(container?.scrollLeft || 0) / width));
+        return { index, total, fraction:index / total };
+      }
+      function savePosition(cfi = visibleAnchor()) {
+        if (!currentLocation?.start) return;
+        const metrics = pageMetrics();
+        save(positionKey, JSON.stringify({ cfi, href:currentLocation.start.href, page:metrics.index + 1, fraction:metrics.fraction }));
+      }
+      async function restoreFraction(fraction) {
+        if (!Number.isFinite(fraction) || fraction < 0 || fraction >= 1) return;
+        const metrics = pageMetrics(), target = Math.min(metrics.total - 1, Math.floor(fraction * metrics.total + .0001));
+        for (let step = 0; step < metrics.total && pageMetrics().index !== target; step++) {
+          const relocated = new Promise(resolve => rendition.once("relocated", resolve));
+          if (pageMetrics().index < target) await rendition.next(); else await rendition.prev();
+          await relocated;
+        }
+      }
       function preservePosition() {
-        if (!reflowCFI) reflowCFI = visibleAnchor();
+        if (!reflowCFI) { reflowCFI = visibleAnchor(); reflowFraction = pageMetrics().fraction; }
         if (reflowCFI) restoringPosition = true;
       }
       function clampPanel() {
@@ -208,9 +229,12 @@
             const size = `${viewer.clientWidth}:${viewer.clientHeight}`;
             if (size !== lastViewerSize) {
               lastViewerSize = size;
-              rendition.once("relocated", () => {
-                restoringPosition = false;
-                if (cfi && currentLocation?.start) save(positionKey, JSON.stringify({ cfi, href:currentLocation.start.href, page:currentLocation.start.displayed?.page || 1 }));
+              const fraction = reflowFraction; reflowFraction = null;
+              rendition.once("relocated", async () => {
+                // Some converted books contain unwrapped body text whose CFI
+                // resolves to the section head. Keep a measured page fallback.
+                if (fraction > 0 && pageMetrics().index === 0) await restoreFraction(fraction);
+                restoringPosition = false; savePosition();
               });
               // EPUB.js passes this anchor to its own resize/display queue.
               rendition.resize(viewer.clientWidth, viewer.clientHeight, cfi);
@@ -224,7 +248,7 @@
       const storedPositionAtOpen = saved(positionKey, "");
       reader.dataset.savedLocation = storedPositionAtOpen;
       window.addEventListener("pagehide", () => {
-        if (currentLocation?.start?.cfi && !restoringPosition) save(positionKey, JSON.stringify({ cfi:visibleAnchor(), href:currentLocation.start.href, page:currentLocation.start.displayed?.page || 1 }));
+        if (currentLocation?.start?.cfi && !restoringPosition) savePosition();
       });
 
       function showStatus(message, hide = false) {
@@ -294,15 +318,16 @@
         rendition.on("relocated", location => {
           currentLocation = location;
           reader.dataset.location = location?.start?.cfi || "";
-          const page = location?.start?.displayed?.page;
-          const total = location?.start?.displayed?.total;
+          const measured = pageMetrics();
+          const page = measured.index + 1;
+          const total = measured.total;
           const endPage = location?.end?.displayed?.page;
           const endTotal = location?.end?.displayed?.total;
           document.querySelector("#pagePosition").textContent = page && total ? `Section page ${page} of ${total}` : "Reading";
           showStatus(page && total ? `Page ${page} of ${total}` : "Book opened", true);
           if (!restoringPosition && location?.start?.href && page) {
             requestAnimationFrame(() => {
-              if (!restoringPosition) save(positionKey, JSON.stringify({ cfi:visibleAnchor(), href:location.start.href, page }));
+              if (!restoringPosition) savePosition();
             });
           }
           previous.disabled = location?.start?.index === 0 && page <= 1;
@@ -319,7 +344,7 @@
           if (savedSection) savedPosition = { href: savedSection.href, page: 1 };
         }
         if (savedPosition?.cfi && /^epubcfi\(/.test(savedPosition.cfi)) {
-          try { restoringPosition = true; const relocated = new Promise(resolve => rendition.once("relocated", resolve)); await rendition.display(savedPosition.cfi); currentLocation = await relocated; readerReady = true; restoringPosition = false; return; } catch (_) { restoringPosition = false; /* Older section position remains a fallback. */ }
+          try { restoringPosition = true; const relocated = new Promise(resolve => rendition.once("relocated", resolve)); await rendition.display(savedPosition.cfi); currentLocation = await relocated; await restoreFraction(savedPosition.fraction); readerReady = true; restoringPosition = false; savePosition(); return; } catch (_) { restoringPosition = false; /* Older section position remains a fallback. */ }
         }
         if (savedPosition?.href && Number.isInteger(savedPosition.page) && savedPosition.page > 0) {
           showStatus("Restoring reading position…");
