@@ -44,7 +44,7 @@ struct MediaDetailView: View {
 
                 if item.kind == .ebook {
                     ebookActions
-                } else if item.format.isPlayableInAVPlayer {
+                } else if model.supportsPreparedVideo(item) || item.format.isPlayableInAVPlayer {
                     Button {
                         isShowingPlayer = true
                     } label: {
@@ -187,13 +187,13 @@ struct MediaDetailView: View {
 
                 if let download = model.offlineDownloads[item.id] {
                     Label(
-                        "\(model.isFullySavedOffline(item) ? "Saved on this iPhone" : "Part saved · book incomplete") • \(ByteCountFormatter.string(fromByteCount: download.byteCount, countStyle: .file))",
+                        "\(model.isFullySavedOffline(item) ? "Saved on this iPhone" : (model.isVideo(item) ? "Offline copy incomplete" : "Part saved · book incomplete")) • \(ByteCountFormatter.string(fromByteCount: download.byteCount, countStyle: .file))",
                         systemImage: "checkmark.circle.fill"
                     )
                     .font(.caption)
                     .foregroundStyle(SonderPalette.ironGrey)
                     if !model.isFullySavedOffline(item) {
-                        Button("Download remaining parts") { Task { await model.downloadForOffline(item) } }
+                        Button(model.isVideo(item) ? "Download again" : "Download remaining parts") { Task { await model.downloadForOffline(item) } }
                             .buttonStyle(.borderedProminent)
                     }
                     Button(role: .destructive) {
@@ -204,12 +204,21 @@ struct MediaDetailView: View {
                     .buttonStyle(.bordered)
                 } else if model.isDownloadingOffline(item) {
                     OfflineTransferStatus(progress: model.downloadProgress(for: item), isPaused: false)
-                    Button {
-                        model.pauseOfflineDownload(for: item)
-                    } label: {
-                        Label("Pause Download", systemImage: "pause.fill")
+                    if model.preparingOfflineItemIDs.contains(item.id) {
+                        Text("Preparing a complete movie on the server. This continues if you cancel the download.")
+                            .font(.caption).foregroundStyle(SonderPalette.textLight)
+                    } else {
+                        Button {
+                            model.pauseOfflineDownload(for: item)
+                        } label: {
+                            Label("Pause Download", systemImage: "pause.fill")
+                        }
+                        .buttonStyle(.bordered)
                     }
-                    .buttonStyle(.bordered)
+                    if model.supportsPreparedVideo(item) {
+                        Button("Cancel Download", role: .destructive) { model.cancelOfflineDownload(for: item) }
+                            .buttonStyle(.bordered)
+                    }
                 } else if model.isOfflineDownloadPaused(item) {
                     OfflineTransferStatus(progress: model.downloadProgress(for: item), isPaused: true)
                     Button {
@@ -219,6 +228,10 @@ struct MediaDetailView: View {
                     }
                     .buttonStyle(.borderedProminent)
                     .tint(SonderPalette.ironGrey)
+                    if model.supportsPreparedVideo(item) {
+                        Button("Cancel Download", role: .destructive) { model.cancelOfflineDownload(for: item) }
+                            .buttonStyle(.bordered)
+                    }
                 } else {
                     Text("Download a complete copy for playback or reading away from your Sonder server.")
                         .font(.caption)
@@ -341,6 +354,7 @@ struct SonderPlaybackScreen: View {
     @State private var selectedSubtitleTrackID: String?
     @State private var subtitlesEnabled = false
     @State private var isLoading = true
+    @State private var loadingMessage = "Starting playback"
     @State private var playbackMessage: String?
     @State private var playbackObservers: [NSObjectProtocol] = []
     @State private var timeObserver: Any?
@@ -374,9 +388,11 @@ struct SonderPlaybackScreen: View {
                 NativePlayerController(player: player)
                     .ignoresSafeArea()
             } else if isLoading {
-                ProgressView("Starting playback")
-                    .tint(.white)
-                    .foregroundStyle(.white)
+                VStack(spacing: 12) {
+                    ProgressView().tint(.white)
+                    Text(loadingMessage).multilineTextAlignment(.center).foregroundStyle(.white)
+                }
+                .padding(24)
             } else {
                 ContentUnavailableView("Playback unavailable", systemImage: "play.slash", description: Text(playbackMessage ?? "Sonder could not start this stream."))
                     .foregroundStyle(.white)
@@ -471,6 +487,7 @@ struct SonderPlaybackScreen: View {
         guard player == nil else { return }
         model.audiobookPlayer.pause()
         isLoading = true
+        loadingMessage = "Starting playback"
         playbackMessage = nil
 
         if item.kind == .audiobook {
@@ -485,15 +502,29 @@ struct SonderPlaybackScreen: View {
         }
 
         do {
-            let response = try await model.startPlayback(for: item, seconds: seconds, duration: duration)
+            let response: SonderPlaybackResponse
+            if let offline = model.localPlaybackResponse(for: item, duration: duration) {
+                response = offline
+            } else {
+                response = try await model.startPlayback(for: item, seconds: seconds, duration: duration)
+            }
             seconds = response.seconds
             duration = response.duration > 0 ? response.duration : duration
             selectedAudioTrackID = response.audioTrackID
             selectedSubtitleTrackID = response.subtitleTrackID
             subtitlesEnabled = response.subtitlesEnabled ?? (response.subtitleTrackID != nil)
 
-            let url = model.localMediaURL(for: item) ?? model.resolvedServerURL(from: response.streamURL) ?? model.streamURL(for: item)
-            model.logEvent("Playback start", detail: "\(item.title) - \(url.absoluteString)")
+            let fallback = model.resolvedServerURL(from: response.streamURL) ?? model.streamURL(for: item)
+            let url: URL
+            if let local = model.localMediaURL(for: item) {
+                url = local
+            } else {
+                url = try await model.preferredPlaybackURL(for: item, fallback: fallback) {
+                    loadingMessage = "Preparing this movie for your device. You can close this screen; the server will finish preparing it."
+                }
+            }
+            try Task.checkCancellation()
+            model.logEvent("Playback start", detail: "\(item.title) - \(url.path)")
             let asset = url.isFileURL ? AVURLAsset(url: url) : model.streamAsset(for: url)
             let newItem = AVPlayerItem(asset: asset)
             playerItem = newItem

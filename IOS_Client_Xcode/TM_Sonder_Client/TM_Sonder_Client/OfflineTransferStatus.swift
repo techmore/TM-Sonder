@@ -11,7 +11,9 @@ struct OfflineTransferStatus: View {
             if let fraction = progress?.fractionCompleted {
                 ProgressView(value: fraction)
                     .tint(SonderPalette.ironGrey)
-                Text("\(Int((fraction * 100).rounded()))% • \(ByteCountFormatter.string(fromByteCount: progress?.bytesWritten ?? 0, countStyle: .file)) of \(ByteCountFormatter.string(fromByteCount: progress?.bytesExpected ?? 0, countStyle: .file))")
+                Text(progress?.isMediaDuration == true
+                     ? "\(Int((fraction * 100).rounded()))% of movie saved"
+                     : "\(Int((fraction * 100).rounded()))% • \(ByteCountFormatter.string(fromByteCount: progress?.bytesWritten ?? 0, countStyle: .file)) of \(ByteCountFormatter.string(fromByteCount: progress?.bytesExpected ?? 0, countStyle: .file))")
                     .font(.caption.monospacedDigit())
                     .foregroundStyle(SonderPalette.textLight)
             } else {

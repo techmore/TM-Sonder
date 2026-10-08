@@ -8,6 +8,10 @@ final class SonderAppDelegate: NSObject, UIApplicationDelegate {
         handleEventsForBackgroundURLSession identifier: String,
         completionHandler: @escaping () -> Void
     ) {
+        if identifier == SonderHLSDownloadCoordinator.identifier {
+            SonderHLSDownloadCoordinator.shared.setBackgroundEventsCompletionHandler(completionHandler)
+            return
+        }
         guard identifier == "com.techmore.tmsonder.offline-downloads" else {
             completionHandler()
             return

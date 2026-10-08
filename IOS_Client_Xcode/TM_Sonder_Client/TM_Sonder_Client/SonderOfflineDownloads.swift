@@ -12,11 +12,14 @@ nonisolated struct SonderOfflineDownload: Codable, Hashable, Identifiable, Senda
     var downloadedAt: Date
     var byteCount: Int64
     var mediaItem: SonderMediaItem? = nil
+    /// Apple owns the downloaded HLS package location; never move its contents.
+    var hlsRelativePath: String? = nil
 
     var id: UUID { itemID }
 }
 
 nonisolated final class SonderOfflineDownloadStore: @unchecked Sendable {
+    private static let manifestLock = NSRecursiveLock()
     private let fileManager: FileManager
     private let rootDirectory: URL?
 
@@ -26,6 +29,8 @@ nonisolated final class SonderOfflineDownloadStore: @unchecked Sendable {
     }
 
     func downloads(for serverURL: URL) -> [UUID: SonderOfflineDownload] {
+        Self.manifestLock.lock()
+        defer { Self.manifestLock.unlock() }
         let manifestURL = manifestURL(for: serverURL)
         guard let data = try? Data(contentsOf: manifestURL),
               let manifest = try? JSONDecoder.sonder.decode([SonderOfflineDownload].self, from: data) else {
@@ -40,7 +45,10 @@ nonisolated final class SonderOfflineDownloadStore: @unchecked Sendable {
     }
 
     func mediaURL(for download: SonderOfflineDownload, serverURL: URL) -> URL {
-        serverDirectory(for: serverURL).appendingPathComponent(download.fileName)
+        if let path = download.hlsRelativePath {
+            return URL(fileURLWithPath: NSHomeDirectory(), isDirectory: true).appendingPathComponent(path)
+        }
+        return serverDirectory(for: serverURL).appendingPathComponent(download.fileName)
     }
 
     func save(
@@ -87,10 +95,33 @@ nonisolated final class SonderOfflineDownloadStore: @unchecked Sendable {
     }
 
     func saveManifest(_ downloads: [UUID: SonderOfflineDownload], for serverURL: URL) throws {
+        Self.manifestLock.lock()
+        defer { Self.manifestLock.unlock() }
         let url = manifestURL(for: serverURL)
         try fileManager.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
         let ordered = downloads.values.sorted { $0.title.localizedStandardCompare($1.title) == .orderedAscending }
         try JSONEncoder.sonder.encode(ordered).write(to: url, options: .atomic)
+    }
+
+    /// Merge against the latest manifest so concurrent audio and HLS completions
+    /// cannot overwrite one another's saved titles.
+    @discardableResult
+    func record(_ download: SonderOfflineDownload, serverURL: URL) throws -> SonderOfflineDownload? {
+        Self.manifestLock.lock()
+        defer { Self.manifestLock.unlock() }
+        var manifest = downloads(for: serverURL)
+        let previous = manifest.updateValue(download, forKey: download.itemID)
+        try saveManifest(manifest, for: serverURL)
+        return previous
+    }
+
+    func removeSaved(_ download: SonderOfflineDownload, serverURL: URL) throws {
+        Self.manifestLock.lock()
+        defer { Self.manifestLock.unlock() }
+        var manifest = downloads(for: serverURL)
+        try remove(download, serverURL: serverURL)
+        manifest[download.itemID] = nil
+        try saveManifest(manifest, for: serverURL)
     }
 
     func resumeDataURL(itemID: UUID, serverURL: URL) -> URL {

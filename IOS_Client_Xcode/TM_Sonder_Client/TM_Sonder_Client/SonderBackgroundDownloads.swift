@@ -17,6 +17,7 @@ struct SonderOfflineDownloadProgress: Equatable {
     var bytesExpected: Int64
     var bytesPerSecond: Double
     var isPaused: Bool
+    var isMediaDuration: Bool = false
 
     var fractionCompleted: Double? {
         guard bytesExpected > 0 else { return nil }
@@ -178,9 +179,7 @@ final class SonderBackgroundDownloadCoordinator: NSObject, URLSessionDownloadDel
             }
             let store = SonderOfflineDownloadStore()
             let saved = try store.save(temporaryURL: location, item: identity.item, serverURL: identity.serverURL)
-            var manifest = store.downloads(for: identity.serverURL)
-            manifest[saved.itemID] = saved
-            try store.saveManifest(manifest, for: identity.serverURL)
+            try store.record(saved, serverURL: identity.serverURL)
             complete(key, .success(saved))
         } catch {
             complete(key, .failure(error))

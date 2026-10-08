@@ -25,6 +25,7 @@ final class SonderClientModel: ObservableObject {
     @Published var pendingProgressCount = 0
     @Published private(set) var offlineDownloads: [UUID: SonderOfflineDownload] = [:]
     @Published private(set) var downloadingItemIDs = Set<UUID>()
+    @Published private(set) var preparingOfflineItemIDs = Set<UUID>()
     @Published private(set) var offlineDownloadProgress: [UUID: SonderOfflineDownloadProgress] = [:]
     @Published var errorMessage: String?
     @Published var events: [SonderClientEvent] = []
@@ -44,6 +45,8 @@ final class SonderClientModel: ObservableObject {
     private let progressQueue = SonderProgressQueue()
     private let offlineDownloadStore = SonderOfflineDownloadStore()
     private let backgroundDownloads = SonderBackgroundDownloadCoordinator.shared
+    private let hlsDownloads = SonderHLSDownloadCoordinator.shared
+    private var preparationTasks: [UUID: Task<Void, Never>] = [:]
     private var isFlushingProgress = false
 
     init() {
@@ -134,7 +137,7 @@ final class SonderClientModel: ObservableObject {
     }
 
     func streamURL(for item: SonderMediaItem) -> URL {
-        serverBaseURL.appendingPathComponent("stream").appendingPathComponent(item.id.uuidString)
+        serverBaseURL.appendingPathComponent("stream").appendingPathComponent(item.id.uuidString.lowercased())
     }
 
     func audiobookChapters(for item: SonderMediaItem) async throws -> [SonderAudiobookChapter] {
@@ -147,7 +150,7 @@ final class SonderClientModel: ObservableObject {
         }
         let url = serverBaseURL
             .appendingPathComponent("api/audiobooks")
-            .appendingPathComponent(item.id.uuidString)
+            .appendingPathComponent(item.id.uuidString.lowercased())
             .appendingPathComponent("chapters")
         let (data, response) = try await URLSession.shared.data(for: authorizedRequest(for: url, timeout: 15))
         guard let http = response as? HTTPURLResponse, 200..<300 ~= http.statusCode else {
@@ -162,7 +165,9 @@ final class SonderClientModel: ObservableObject {
     func localMediaURL(for item: SonderMediaItem) -> URL? {
         guard let download = offlineDownloads[item.id] else { return nil }
         let url = offlineDownloadStore.mediaURL(for: download, serverURL: serverBaseURL)
-        return FileManager.default.fileExists(atPath: url.path) ? url : nil
+        guard FileManager.default.fileExists(atPath: url.path) else { return nil }
+        if download.hlsRelativePath != nil, AVURLAsset(url: url).assetCache?.isPlayableOffline != true { return nil }
+        return url
     }
 
     func offlineParts(for item: SonderMediaItem) -> [SonderMediaItem] {
@@ -179,7 +184,7 @@ final class SonderClientModel: ObservableObject {
     }
 
     func supportsOfflineDownload(for item: SonderMediaItem) -> Bool {
-        item.format.isPlayableInAVPlayer || item.format == .pdf || item.format == .epub
+        supportsPreparedVideo(item) || item.format.isPlayableInAVPlayer || item.format == .pdf || item.format == .epub
     }
 
     func isDownloadingOffline(_ item: SonderMediaItem) -> Bool {
@@ -218,6 +223,29 @@ final class SonderClientModel: ObservableObject {
         downloadingItemIDs.insert(item.id)
         let downloadServerURL = serverBaseURL
         offlineDownloadProgress[item.id] = SonderOfflineDownloadProgress(bytesWritten: 0, bytesExpected: 0, bytesPerSecond: 0, isPaused: false)
+        if supportsPreparedVideo(item) {
+            persistVideoPreparation(item, serverURL: downloadServerURL, remove: false)
+            preparingOfflineItemIDs.insert(item.id)
+            preparationTasks[item.id] = Task { [weak self] in
+                guard let self else { return }
+                do {
+                    let url = try await self.prepareVideoForOffline(item, serverURL: downloadServerURL)
+                    try Task.checkCancellation()
+                    guard self.serverBaseURL == downloadServerURL else { throw CancellationError() }
+                    self.preparingOfflineItemIDs.remove(item.id)
+                    self.hlsDownloads.start(item: item, serverURL: downloadServerURL, asset: self.streamAsset(for: url), progress: { [weak self] progress in
+                        guard self?.serverBaseURL == downloadServerURL else { return }
+                        self?.offlineDownloadProgress[item.id] = progress
+                    }, completion: { [weak self] result in
+                        self?.finishOfflineTransfer(item, serverURL: downloadServerURL, result: result)
+                    })
+                } catch {
+                    self.finishOfflineTransfer(item, serverURL: downloadServerURL, result: .failure(error))
+                }
+                self.preparationTasks[item.id] = nil
+            }
+            return
+        }
         let request = authorizedRequest(for: streamURL(for: item), timeout: 60)
         if item.kind == .audiobook { _ = try? await audiobookChapters(for: item) }
         if let coverURL = artworkURL(for: item), !coverURL.isFileURL,
@@ -233,27 +261,145 @@ final class SonderClientModel: ObservableObject {
             guard self?.serverBaseURL == downloadServerURL else { return }
             self?.offlineDownloadProgress[item.id] = progress
         }, completion: { [weak self] result in
-            guard let self, self.serverBaseURL == downloadServerURL else { return }
-            self.downloadingItemIDs.remove(item.id)
-            self.offlineDownloadProgress[item.id] = nil
-            switch result {
-            case .success:
-                if self.serverBaseURL == downloadServerURL {
-                    self.offlineDownloads = self.offlineDownloadStore.downloads(for: downloadServerURL)
-                }
-                self.logEvent("Saved for offline", detail: item.title)
-            case let .failure(error):
-                self.downloadingItemIDs.remove(item.id)
-                self.offlineDownloadProgress[item.id] = nil
-                self.errorMessage = "Couldn’t save \(item.title) for offline use: \(error.localizedDescription)"
-                self.logEvent("Offline download failed", detail: "\(item.title): \(error.localizedDescription)")
-            }
+            self?.finishOfflineTransfer(item, serverURL: downloadServerURL, result: result)
         })
+    }
+
+    private func finishOfflineTransfer(_ item: SonderMediaItem, serverURL: URL, result: Result<SonderOfflineDownload, Error>) {
+        persistVideoPreparation(item, serverURL: serverURL, remove: true)
+        guard serverBaseURL == serverURL else { return }
+        preparingOfflineItemIDs.remove(item.id)
+        downloadingItemIDs.remove(item.id)
+        offlineDownloadProgress[item.id] = nil
+        switch result {
+        case .success:
+            offlineDownloads = offlineDownloadStore.downloads(for: serverURL)
+            logEvent("Saved for offline", detail: item.title)
+        case let .failure(error):
+            let nsError = error as NSError
+            if error is CancellationError || (nsError.domain == NSURLErrorDomain && nsError.code == NSURLErrorCancelled) { return }
+            errorMessage = "Couldn’t save \(item.title) for offline use: \(error.localizedDescription)"
+            logEvent("Offline download failed", detail: "\(item.title): \(error.localizedDescription)")
+        }
+    }
+
+    func isVideo(_ item: SonderMediaItem) -> Bool {
+        item.kind == .movie || item.kind == .tvShow || item.kind == .documentary
+    }
+
+    func supportsPreparedVideo(_ item: SonderMediaItem) -> Bool { item.kind == .movie }
+
+    private func videoPreparationKey(_ serverURL: URL) -> String {
+        "sonder.pendingVideoPreparations." + Data(serverURL.absoluteString.utf8).base64EncodedString()
+    }
+
+    private func pendingVideoPreparations(_ serverURL: URL) -> [SonderMediaItem] {
+        guard let data = UserDefaults.standard.data(forKey: videoPreparationKey(serverURL)) else { return [] }
+        return (try? JSONDecoder.sonder.decode([SonderMediaItem].self, from: data)) ?? []
+    }
+
+    private func persistVideoPreparation(_ item: SonderMediaItem, serverURL: URL, remove: Bool) {
+        var pending = pendingVideoPreparations(serverURL).filter { $0.id != item.id }
+        if !remove { pending.append(item) }
+        if let data = try? JSONEncoder.sonder.encode(pending) {
+            UserDefaults.standard.set(data, forKey: videoPreparationKey(serverURL))
+        }
+    }
+
+    private struct VideoPreparation: Decodable {
+        let status: String
+        let error: String?
+        let playlistURL: String?
+    }
+
+    private func videoPreparation(_ item: SonderMediaItem, serverURL: URL) async throws -> VideoPreparation {
+        let url = serverURL.appendingPathComponent("api/movies").appendingPathComponent(item.id.uuidString.lowercased()).appendingPathComponent("preparation")
+        let (data, response) = try await URLSession.shared.data(for: authorizedRequest(for: url, timeout: 20))
+        guard let http = response as? HTTPURLResponse, 200..<300 ~= http.statusCode else {
+            throw HTTPStatusError(statusCode: (response as? HTTPURLResponse)?.statusCode ?? -1)
+        }
+        return try JSONDecoder().decode(VideoPreparation.self, from: data)
+    }
+
+    private func preparedPlaylistURL(_ status: VideoPreparation, serverURL: URL) -> URL? {
+        guard status.status == "ready", let raw = status.playlistURL,
+              let url = URL(string: raw, relativeTo: serverURL)?.absoluteURL,
+              url.scheme == serverURL.scheme, url.host == serverURL.host, url.port == serverURL.port else { return nil }
+        return url
+    }
+
+    private func prepareVideoForOffline(_ item: SonderMediaItem, serverURL: URL) async throws -> URL {
+        let url = serverURL.appendingPathComponent("api/movies").appendingPathComponent(item.id.uuidString.lowercased()).appendingPathComponent("prepare")
+        var request = authorizedRequest(for: url, timeout: 30)
+        request.httpMethod = "POST"
+        let (_, response) = try await URLSession.shared.data(for: request)
+        guard let http = response as? HTTPURLResponse, 200..<300 ~= http.statusCode else {
+            throw HTTPStatusError(statusCode: (response as? HTTPURLResponse)?.statusCode ?? -1)
+        }
+        while true {
+            try Task.checkCancellation()
+            let status = try await videoPreparation(item, serverURL: serverURL)
+            if let url = preparedPlaylistURL(status, serverURL: serverURL) { return url }
+            if status.status == "failed" {
+                throw NSError(domain: "SonderPreparation", code: 1, userInfo: [NSLocalizedDescriptionKey: status.error ?? "The server could not prepare this video."])
+            }
+            try await Task.sleep(for: .seconds(5))
+        }
+    }
+
+    func preferredPlaybackURL(for item: SonderMediaItem, fallback: URL,
+                              onPreparing: @MainActor () -> Void = {}) async throws -> URL {
+        if let local = localMediaURL(for: item) { return local }
+        if supportsPreparedVideo(item) {
+            if let status = try? await videoPreparation(item, serverURL: serverBaseURL),
+               let url = preparedPlaylistURL(status, serverURL: serverBaseURL) { return url }
+            // A raw MKV/WebM URL is not an AVPlayer fallback. Wait for a complete
+            // VOD timeline so native saved-position resume and seeking work.
+            if !item.format.isPlayableInAVPlayer || URLComponents(url: fallback, resolvingAgainstBaseURL: true)?.queryItems?.contains(where: { $0.name == "transcode" && $0.value == "1" }) == true {
+                onPreparing()
+                return try await prepareVideoForOffline(item, serverURL: serverBaseURL)
+            }
+        }
+        if isVideo(item), !item.format.isPlayableInAVPlayer {
+            throw NSError(domain: "SonderPreparation", code: 2, userInfo: [NSLocalizedDescriptionKey: "This video needs conversion before this device can play it. Server preparation currently supports movies only."])
+        }
+        return fallback
+    }
+
+    func cancelOfflineDownload(for item: SonderMediaItem) {
+        persistVideoPreparation(item, serverURL: serverBaseURL, remove: true)
+        preparationTasks.removeValue(forKey: item.id)?.cancel()
+        preparingOfflineItemIDs.remove(item.id)
+        if supportsPreparedVideo(item) {
+            let transferServerURL = serverBaseURL
+            hlsDownloads.control(itemID: item.id, serverURL: transferServerURL, cancel: true) { [weak self] in
+                Task { @MainActor in
+                    guard self?.serverBaseURL == transferServerURL else { return }
+                    self?.downloadingItemIDs.remove(item.id)
+                    self?.offlineDownloadProgress[item.id] = nil
+                }
+            }
+        }
     }
 
     func pauseOfflineDownload(for item: SonderMediaItem) {
         guard downloadingItemIDs.contains(item.id) else { return }
         let transferServerURL = serverBaseURL
+        if supportsPreparedVideo(item) {
+            persistVideoPreparation(item, serverURL: transferServerURL, remove: true)
+            if preparingOfflineItemIDs.contains(item.id) { cancelOfflineDownload(for: item); return }
+            hlsDownloads.control(itemID: item.id, serverURL: transferServerURL, cancel: false) { [weak self] in
+                Task { @MainActor in
+                    guard self?.serverBaseURL == transferServerURL else { return }
+                    self?.downloadingItemIDs.remove(item.id)
+                    if var progress = self?.offlineDownloadProgress[item.id] {
+                        progress.isPaused = true
+                        self?.offlineDownloadProgress[item.id] = progress
+                    }
+                }
+            }
+            return
+        }
         backgroundDownloads.pause(itemID: item.id, serverURL: transferServerURL) { [weak self] in
             Task { @MainActor in
                 guard self?.serverBaseURL == transferServerURL else { return }
@@ -266,12 +412,23 @@ final class SonderClientModel: ObservableObject {
     }
 
     func refreshOfflineDownloads() {
+        for item in pendingVideoPreparations(serverBaseURL) where !downloadingItemIDs.contains(item.id) {
+            Task { await downloadSingleForOffline(item) }
+        }
         offlineDownloads = offlineDownloadStore.downloads(for: serverBaseURL)
         for id in offlineDownloads.keys {
             downloadingItemIDs.remove(id)
             offlineDownloadProgress[id] = nil
         }
         let transferServerURL = serverBaseURL
+        hlsDownloads.activeTransfers(serverURL: transferServerURL) { [weak self] transfers in
+            guard let self, self.serverBaseURL == transferServerURL else { return }
+            for (id, progress) in transfers {
+                if progress.isPaused { self.downloadingItemIDs.remove(id) }
+                else { self.downloadingItemIDs.insert(id) }
+                self.offlineDownloadProgress[id] = progress
+            }
+        }
         backgroundDownloads.activeTransfers(serverURL: transferServerURL) { [weak self] transfers in
             guard let self, self.serverBaseURL == transferServerURL else { return }
             for (id, progress) in transfers {
@@ -284,9 +441,8 @@ final class SonderClientModel: ObservableObject {
     func removeOfflineDownload(for item: SonderMediaItem) {
         guard let download = offlineDownloads[item.id] else { return }
         do {
-            try offlineDownloadStore.remove(download, serverURL: serverBaseURL)
-            offlineDownloads[item.id] = nil
-            try offlineDownloadStore.saveManifest(offlineDownloads, for: serverBaseURL)
+            try offlineDownloadStore.removeSaved(download, serverURL: serverBaseURL)
+            offlineDownloads = offlineDownloadStore.downloads(for: serverBaseURL)
             logEvent("Removed offline copy", detail: item.title)
         } catch {
             errorMessage = "Couldn’t remove the offline copy of \(item.title): \(error.localizedDescription)"
@@ -298,11 +454,19 @@ final class SonderClientModel: ObservableObject {
     }
 
     func streamAsset(for url: URL) -> AVURLAsset {
+        guard url.scheme == serverBaseURL.scheme, url.host == serverBaseURL.host, url.port == serverBaseURL.port else {
+            return AVURLAsset(url: url)
+        }
         let token = accessToken.trimmingCharacters(in: .whitespacesAndNewlines)
-        let options: [String: Any]? = token.isEmpty ? nil : [
-            "AVURLAssetHTTPHeaderFieldsKey": ["Authorization": "Bearer \(token)"]
-        ]
-        return AVURLAsset(url: url, options: options)
+        var components = URLComponents(url: url, resolvingAgainstBaseURL: true)
+        if !token.isEmpty {
+            var query = components?.queryItems ?? []
+            query.removeAll { $0.name == "token" }
+            query.append(URLQueryItem(name: "token", value: token))
+            components?.queryItems = query
+        }
+        let cookies = HTTPCookieStorage.shared.cookies(for: url) ?? []
+        return AVURLAsset(url: components?.url ?? url, options: [AVURLAssetHTTPCookiesKey: cookies])
     }
 
     func resolvedServerURL(from rawValue: String) -> URL? {
@@ -328,18 +492,18 @@ final class SonderClientModel: ObservableObject {
         progressByItemID[item.id] ?? SonderProgress(itemID: item.id, seconds: item.progressSeconds, duration: item.durationSeconds)
     }
 
+    /// Resolve a saved package and local progress before any server request.
+    func localPlaybackResponse(for item: SonderMediaItem, duration: Double) -> SonderPlaybackResponse? {
+        guard let localURL = localMediaURL(for: item) else { return nil }
+        let storedProgress = progress(for: item)
+        let resolvedDuration = duration > 0 ? duration : item.durationSeconds
+        return SonderPlaybackResponse(itemID: item.id, streamURL: localURL.absoluteString,
+            seconds: storedProgress.seconds, duration: resolvedDuration,
+            percent: resolvedDuration > 0 ? storedProgress.seconds / resolvedDuration : 0)
+    }
+
     func startPlayback(for item: SonderMediaItem, seconds: Double, duration: Double) async throws -> SonderPlaybackResponse {
-        if let localURL = localMediaURL(for: item) {
-            let storedProgress = progress(for: item)
-            let resolvedDuration = duration > 0 ? duration : item.durationSeconds
-            return SonderPlaybackResponse(
-                itemID: item.id,
-                streamURL: localURL.absoluteString,
-                seconds: storedProgress.seconds,
-                duration: resolvedDuration,
-                percent: resolvedDuration > 0 ? storedProgress.seconds / resolvedDuration : 0
-            )
-        }
+        if let response = localPlaybackResponse(for: item, duration: duration) { return response }
         var response = try await postPlayback(
             itemID: item.id,
             seconds: seconds,
@@ -479,6 +643,9 @@ final class SonderClientModel: ObservableObject {
         if serverChanged {
             // Validators are meaningful only for the server that issued them.
             libraryETag = nil
+            preparationTasks.values.forEach { $0.cancel() }
+            preparationTasks.removeAll()
+            preparingOfflineItemIDs.removeAll()
             downloadingItemIDs.removeAll()
             offlineDownloadProgress.removeAll()
             progressByItemID.removeAll()
@@ -598,7 +765,7 @@ final class SonderClientModel: ObservableObject {
     private func postProgress(itemID: UUID, seconds: Double, duration: Double) async throws {
         let url = serverBaseURL
             .appendingPathComponent("api/progress")
-            .appendingPathComponent(itemID.uuidString)
+            .appendingPathComponent(itemID.uuidString.lowercased())
         var request = authorizedRequest(for: url)
         request.httpMethod = "POST"
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
@@ -621,7 +788,7 @@ final class SonderClientModel: ObservableObject {
     ) async throws -> SonderPlaybackResponse {
         let url = serverBaseURL
             .appendingPathComponent("api/playback")
-            .appendingPathComponent(itemID.uuidString)
+            .appendingPathComponent(itemID.uuidString.lowercased())
         var request = authorizedRequest(for: url)
         request.httpMethod = "POST"
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
@@ -651,7 +818,7 @@ final class SonderClientModel: ObservableObject {
     ) async throws -> SonderPlaybackResponse {
         let url = serverBaseURL
             .appendingPathComponent("api/playback")
-            .appendingPathComponent(itemID.uuidString)
+            .appendingPathComponent(itemID.uuidString.lowercased())
             .appendingPathComponent("refresh-tracks")
         var request = authorizedRequest(for: url)
         request.httpMethod = "POST"
