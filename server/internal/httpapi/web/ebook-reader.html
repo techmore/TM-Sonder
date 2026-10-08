@@ -201,6 +201,10 @@
       window.addEventListener("resize", () => { preservePosition(); clampPanel(); });
       const positionKey = `sonder:epub-position:${id}`;
       const storedPositionAtOpen = saved(positionKey, "");
+      reader.dataset.savedLocation = storedPositionAtOpen;
+      window.addEventListener("pagehide", () => {
+        if (currentLocation?.start?.cfi && !restoringPosition) save(positionKey, JSON.stringify({ cfi:currentLocation.start.cfi, href:currentLocation.start.href, page:currentLocation.start.displayed?.page || 1 }));
+      });
 
       function showStatus(message, hide = false) {
         status.textContent = message;
@@ -292,7 +296,7 @@
           if (savedSection) savedPosition = { href: savedSection.href, page: 1 };
         }
         if (savedPosition?.cfi && /^epubcfi\(/.test(savedPosition.cfi)) {
-          try { restoringPosition = true; await rendition.display(savedPosition.cfi); readerReady = true; restoringPosition = false; return; } catch (_) { restoringPosition = false; /* Older section position remains a fallback. */ }
+          try { restoringPosition = true; const relocated = new Promise(resolve => rendition.once("relocated", resolve)); await rendition.display(savedPosition.cfi); currentLocation = await relocated; readerReady = true; restoringPosition = false; return; } catch (_) { restoringPosition = false; /* Older section position remains a fallback. */ }
         }
         if (savedPosition?.href && Number.isInteger(savedPosition.page) && savedPosition.page > 0) {
           showStatus("Restoring reading position…");
