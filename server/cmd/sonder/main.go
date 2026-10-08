@@ -429,13 +429,18 @@ func run(configFlag, plexDB, exportPath, importPath, importMode, importPathMap s
 	subtitleWorker := subtitles.New(store, cfg.DataDir, snapshotPath, cfg.FFmpegPath)
 	srv.SetSubtitleManager(subtitleWorker)
 	go func() {
+		// The saved catalog is already loaded. Begin coverage immediately;
+		// large NAS scans can take minutes before discovering new titles.
+		logger.Printf("subtitle maintenance: languages=%v provider-configured=%t", subtitleWorker.Status().Languages, subtitleWorker.Status().ProviderConfigured)
+		subtitleWorker.Run(ctx)
+	}()
+	go func() {
 		select {
 		case <-ctx.Done():
 			return
 		case <-scanDone:
+			subtitleWorker.Trigger()
 		}
-		logger.Printf("subtitle maintenance: languages=%v provider-configured=%t", subtitleWorker.Status().Languages, subtitleWorker.Status().ProviderConfigured)
-		subtitleWorker.Run(ctx)
 	}()
 
 	errCh := make(chan error, 2)

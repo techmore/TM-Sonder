@@ -1,6 +1,7 @@
 # Automatic subtitle maintenance
 
-Sonder checks every movie, documentary and TV episode after the startup scan,
+Sonder checks every movie, documentary and TV episode from the saved catalog
+immediately on startup, again after the startup scan discovers new titles,
 then hourly. English (`en`) is the default target. Existing language-tagged
 sidecars are attached immediately. Embedded tracks in the requested language
 are exported to WebVTT beside the source media where possible, making them
