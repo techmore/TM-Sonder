@@ -4250,7 +4250,7 @@
         return `<section class="movie-meta-loading" aria-live="polite"><span class="catalog-kicker">LOOKING CLOSER</span><p>Loading cast, characters, and ratings…</p></section>`;
       }
       if (movieMetadataErrors.has(item.id)) {
-        return `<section class="movie-meta-loading movie-meta-error"><span class="catalog-kicker">LOCAL METADATA</span><p>Online cast and rating details are unavailable right now. Your movie is still ready to play.</p></section>`;
+        return `<section class="movie-meta-loading movie-meta-error"><span class="catalog-kicker">LOCAL METADATA</span><p>Online cast and rating details are unavailable right now. Your movie is still ready to play.</p><button type="button" data-action="retry-movie-metadata" data-id="${escapeHTML(item.id)}">Try again</button></section>`;
       }
       if (!metadata) return "";
 
@@ -4270,17 +4270,36 @@
         </section>` : "";
       const castHTML = cast.length ? `
         <section class="movie-cast" aria-label="Main cast">
-          <div class="movie-section-head"><h3>Cast &amp; characters</h3><span>Main players</span></div>
+          <div class="movie-section-head"><h3>Cast &amp; characters</h3><span>${cast.length} cast members</span></div>
           <div class="movie-cast-grid">${cast.map(member => `
             <div class="movie-cast-member">
-              <div class="movie-cast-portrait">${member.imageURL ? `<img src="${escapeHTML(member.imageURL)}" alt="" loading="lazy">` : `<span>${escapeHTML(movieMetaInitials(member.name))}</span>`}</div>
+              <div class="movie-cast-portrait"><span aria-hidden="true">${escapeHTML(movieMetaInitials(member.name))}</span>${member.imageURL ? `<img data-movie-portrait src="${escapeHTML(member.imageURL)}" alt="" loading="lazy">` : ""}</div>
               <strong>${escapeHTML(member.name)}</strong>
-              ${member.character ? `<span>${escapeHTML(member.character)}</span>` : `<span class="movie-cast-unknown">Character not indexed</span>`}
+              ${member.character ? `<span>${escapeHTML(member.character)}</span>` : ""}
             </div>`).join("")}</div>
         </section>` : `<p class="movie-meta-muted">No cast details are indexed for this title yet.</p>`;
       const sourceHTML = metadata.wikiURL ? `<a class="movie-meta-source" href="${escapeHTML(metadata.wikiURL)}" target="_blank" rel="noopener">Metadata source: Wikipedia / Wikidata ↗</a>` : "";
       return `${creditsHTML}${ratingsHTML}${castHTML}${sourceHTML}`;
     }
+
+    // Keep an expanded file section open when enrichment finishes or is retried.
+    function refreshMovieDetail(item) {
+      const targets = [];
+      if (selectedMovieID === item.id && !$("#movieCatalog")?.hidden) targets.push($("#movieDetailBody"));
+      if (detailItemID === item.id && $("#detail").open) targets.push($("#detailBody"));
+      for (const target of targets) {
+        const expanded = !!target.querySelector(".movie-file-details")?.open;
+        const scrollTop = target.scrollTop;
+        target.innerHTML = movieDetailMarkup(item);
+        const files = target.querySelector(".movie-file-details");
+        if (files) files.open = expanded;
+        target.scrollTop = scrollTop;
+      }
+    }
+
+    document.addEventListener("error", event => {
+      if (event.target.matches?.("img[data-movie-portrait]")) event.target.hidden = true;
+    }, true);
 
     function requestMovieMetadata(item) {
       if (!item || movieMetadataByID.has(item.id) || movieMetadataLoading.has(item.id) || movieMetadataErrors.has(item.id)) return;
@@ -4297,13 +4316,7 @@
         })
         .finally(() => {
           movieMetadataLoading.delete(item.id);
-          // Update only the selected detail; preserve the shelf scroll position.
-          if (selectedMovieID === item.id && !$("#movieCatalog")?.hidden) {
-            $("#movieDetailBody").innerHTML = movieDetailMarkup(item);
-          }
-          if (detailItemID === item.id && $("#detail").open) {
-            $("#detailBody").innerHTML = movieDetailMarkup(item);
-          }
+          refreshMovieDetail(item);
         });
     }
 
@@ -4332,7 +4345,8 @@
         ["Container", String(item.format || "").toUpperCase()],
         ["Resolution", item.probedHeight ? `${item.probedWidth || "?"} × ${item.probedHeight}` : ""],
         ["Video codec", item.probedCodec],
-        ["Audio", (item.embeddedAudioTracks || []).map(track => track.label || track.languageCode).filter(Boolean).join(" · ")],
+        ["Audio", (item.embeddedAudioTracks || []).map(track => track.label || track.languageCode).filter(Boolean).join(" · ") || (item.probedAudioCodecs || []).join(" · ")],
+        ["Bitrate", item.probedBitrate > 0 ? `${(item.probedBitrate / 1000000).toFixed(1)} Mbps` : ""],
         ["Subtitles", (item.embeddedSubtitleTracks || []).map(track => track.label || track.languageCode).filter(Boolean).join(" · ")],
         ["Studio", item.studio],
         ["Edition", item.edition]
@@ -4959,6 +4973,14 @@
       const act = btn.dataset.action;
       if (act === "scan-storage") scanStorageNow();
       else if (act === "refresh-insights") { storageData = null; void renderStorage(true); }
+      else if (act === "retry-movie-metadata" && btn.dataset.id) {
+        const item = items.find(item => item.id === btn.dataset.id);
+        if (item) {
+          movieMetadataErrors.delete(item.id);
+          requestMovieMetadata(item);
+          refreshMovieDetail(item);
+        }
+      }
       else if (act === "toggle-movie-detail") toggleMovieDetail();
       else if (act === "back-book-page") closeBookPage();
       else if (act === "open-series-lists") {

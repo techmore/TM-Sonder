@@ -2009,3 +2009,17 @@ dialog#detail.movie-dialog { width:min(960px,94vw); background:var(--panel); ove
   .movie-dialog .movie-cast-grid { grid-template-columns:repeat(3,minmax(0,1fr)); }
   .movie-section-head { flex-wrap:wrap; }
 }
+
+.movie-detail-content .movie-cast-portrait { position:relative; }
+.movie-detail-content .movie-cast-portrait img { position:absolute; inset:0; }
+.movie-detail-content .movie-cast-portrait img[hidden] { display:none; }
+.movie-meta-error button { margin-top:12px; min-height:44px; padding:8px 16px; border:1px solid var(--line); border-radius:8px; background:var(--panel); color:var(--text); cursor:pointer; }
+.movie-detail-content button:focus-visible, .movie-file-details > summary:focus-visible, .movie-file-details a:focus-visible { outline:2px solid var(--accent); outline-offset:3px; }
+.movie-dialog .modal-body { overscroll-behavior:contain; max-height:calc(90dvh - 80px); }
+dialog#detail.movie-dialog { max-height:90dvh; }
+@media (max-width:380px) {
+  .movie-dialog .movie-hero { grid-template-columns:80px minmax(0,1fr); gap:12px; }
+  .movie-dialog .catalog-detail-cover { width:80px; }
+  .movie-detail-content h2 { font-size:22px; }
+  .movie-dialog .movie-cast-grid { grid-template-columns:repeat(2,minmax(0,1fr)); }
+}
