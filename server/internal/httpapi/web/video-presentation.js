@@ -43,6 +43,21 @@
     host.style.left = Math.max(0, Math.min(rect.left, innerWidth - Math.min(rect.width, innerWidth))) + "px";
     host.style.top = Math.max(0, Math.min(rect.top, innerHeight - Math.min(rect.height, innerHeight))) + "px";
   }
+  // A fixed z-index cannot rise above modal dialogs. Keep the existing media
+  // element in the browser top layer without moving it or resetting playback.
+  function lowerPlayer() {
+    if (!host.hasAttribute("popover")) return;
+    try { if (host.matches(":popover-open")) host.hidePopover(); } catch (_) {}
+    host.removeAttribute("popover");
+  }
+  function raisePlayer() {
+    if (!active || !["fullscreen", "floating"].includes(mode) || nativeFullscreen()) return;
+    if (typeof host.showPopover !== "function") return;
+    try {
+      host.setAttribute("popover", "manual");
+      if (!host.matches(":popover-open")) host.showPopover();
+    } catch (_) { lowerPlayer(); }
+  }
   function layout(next) {
     mode = next;
     pending = "";
@@ -58,19 +73,27 @@
     }
     toolbar.querySelectorAll("[data-view]").forEach(button => button.setAttribute("aria-pressed", String(button.dataset.view === next)));
     toolbar.querySelector(".np-move").setAttribute("aria-disabled", String(next !== "floating"));
+    if (next === "fullscreen" || next === "floating") raisePlayer();
+    else lowerPlayer();
     if (next === "floating") clampFloating();
   }
   async function fullscreen() {
     layout("fullscreen");
     // The viewport-sized player remains usable if browser fullscreen is denied.
     try {
-      if (host.requestFullscreen && document.fullscreenEnabled) await host.requestFullscreen();
-      else if (host.webkitRequestFullscreen && document.webkitFullscreenEnabled) host.webkitRequestFullscreen();
+      if (host.requestFullscreen && document.fullscreenEnabled) {
+        lowerPlayer(); // requestFullscreen rejects an already-open popover.
+        await host.requestFullscreen();
+      }
+      else if (host.webkitRequestFullscreen && document.webkitFullscreenEnabled) {
+        lowerPlayer(); host.webkitRequestFullscreen();
+      }
       else if (video.webkitEnterFullscreen) {
         if (!video.readyState) { pending = "fullscreen"; return; }
         video.webkitEnterFullscreen();
       } else status.textContent = "Full-window player · browser fullscreen unavailable";
     } catch (_) { status.textContent = "Full-window player · tap Fullscreen to hide browser controls"; }
+    raisePlayer();
   }
   async function pictureInPicture() {
     layout("pip");
@@ -99,12 +122,14 @@
     if (pending === "fullscreen") void fullscreen();
     else if (pending === "pip") void pictureInPicture();
   });
-  video.addEventListener("leavepictureinpicture", () => { if (active && mode === "pip") layout("dock"); });
+  video.addEventListener("leavepictureinpicture", () => { if (active && mode === "pip") layout("floating"); });
   video.addEventListener("webkitpresentationmodechanged", () => {
-    if (active && mode === "pip" && video.webkitPresentationMode === "inline") layout("dock");
+    if (active && mode === "pip" && video.webkitPresentationMode === "inline") layout("floating");
   });
   function fullscreenChanged() {
-    if (active && mode === "fullscreen" && !nativeFullscreen()) layout("dock");
+    // iOS can leave native fullscreen during loading, rotation, or app resume.
+    // Keep the movie visible; only an explicit Dock action should hide it.
+    if (active && mode === "fullscreen" && !nativeFullscreen()) layout("fullscreen");
   }
   document.addEventListener("fullscreenchange", fullscreenChanged);
   document.addEventListener("webkitfullscreenchange", fullscreenChanged);
@@ -159,6 +184,10 @@
     sizePlayer(rect.width + (event.key === "ArrowLeft" ? -delta : event.key === "ArrowRight" ? delta : 0), rect.height + (event.key === "ArrowUp" ? -delta : event.key === "ArrowDown" ? delta : 0));
   });
   window.addEventListener("resize", clampFloating);
+  window.addEventListener("pageshow", raisePlayer);
+  document.addEventListener("visibilitychange", () => {
+    if (document.visibilityState === "visible") raisePlayer();
+  });
   if (window.ResizeObserver) new ResizeObserver(clampFloating).observe(host);
   window.SonderVideoPresentation = {
     start(mediaMode) {
