@@ -8,7 +8,15 @@
   const choices = ["fullscreen", "floating", "pip", "dock"];
   let preference = "fullscreen";
   try { const value = localStorage.getItem(key); if (choices.includes(value)) preference = value; } catch (_) {}
-  let mode = "dock", pending = "", active = false, drag = null;
+  let mode = "dock", pending = "", active = false, drag = null, enteringPiP = false;
+  const iPhonePlayer = typeof navigator !== "undefined" && /iPhone|iPod/.test(navigator.userAgent) && typeof video.webkitEnterFullscreen === "function";
+  function configureNativePlayer(fullscreenVideo) {
+    // iOS owns automatic PiP on app suspension through its native fullscreen
+    // player. Omitting playsinline lets the initial play enter that player even
+    // when metadata arrives after the Play gesture.
+    video.playsInline = !(iPhonePlayer && fullscreenVideo);
+    video.controls = !!(iPhonePlayer && fullscreenVideo);
+  }
   const toolbar = document.createElement("div");
   toolbar.className = "np-presentation";
   toolbar.hidden = true;
@@ -115,20 +123,32 @@
       return;
     }
     if (!video.readyState) { status.textContent = "Tap PiP once video starts"; syncPiPButton(); return; }
+    await enterPictureInPicture(false);
+  }
+  async function enterPictureInPicture(automatic) {
+    if (enteringPiP || nativePiP() || !active) return;
+    enteringPiP = true;
     try {
-      // Request PiP synchronously with the tap. Safari can transition directly
-      // from fullscreen; exiting fullscreen first can consume user activation.
-      if (video.webkitSupportsPresentationMode?.("picture-in-picture")) video.webkitSetPresentationMode("picture-in-picture");
-      else if (video.requestPictureInPicture && document.pictureInPictureEnabled) await video.requestPictureInPicture();
-      else throw new Error("unavailable");
-      layout("pip");
-      exitFullscreen();
-      syncPiPButton();
-    } catch (_) { status.textContent = "Picture in picture could not open. Tap PiP again while video is playing."; syncPiPButton(); }
+      // Keep Safari's request in the original click stack. On suspension Safari
+      // may reject or silently ignore it; its native player handles auto PiP.
+      if (video.webkitSupportsPresentationMode?.("picture-in-picture")) {
+        video.webkitSetPresentationMode("picture-in-picture");
+        // The presentation event confirms entry. Never claim PiP opened just
+        // because WebKit returned without throwing.
+        if (nativePiP()) layout("pip");
+      } else if (video.requestPictureInPicture && document.pictureInPictureEnabled) {
+        await video.requestPictureInPicture();
+        if (active && nativePiP()) { layout("pip"); exitFullscreen(); }
+        else if (!active && nativePiP()) exitPiP();
+      } else throw new Error("unavailable");
+    } catch (_) {
+      if (!automatic) status.textContent = "Picture in picture could not open. Tap PiP again while video is playing.";
+    } finally { enteringPiP = false; syncPiPButton(); }
   }
   function present(next) {
     if (!active) return;
     document.querySelector("#detail")?.close?.();
+    configureNativePlayer(next === "fullscreen");
     if (next !== "fullscreen" && next !== "pip") exitFullscreen();
     if (next !== "pip") exitPiP();
     if (next === "fullscreen") void fullscreen();
@@ -215,12 +235,18 @@
   window.addEventListener("pageshow", raisePlayer);
   document.addEventListener("visibilitychange", () => {
     if (document.visibilityState === "visible") raisePlayer();
+    else if (document.visibilityState === "hidden" && active && !video.paused && !video.ended && video.readyState >= 2 && supportsPiP() && !nativePiP()) {
+      // Best effort on browsers permitting background entry. Do not toggle an
+      // existing PiP window, resume paused media, or disturb playback on denial.
+      void enterPictureInPicture(true);
+    }
   });
   if (window.ResizeObserver) new ResizeObserver(clampFloating).observe(host);
   window.SonderVideoPresentation = {
     start(mediaMode) {
       active = mediaMode === "video";
       toolbar.hidden = !active;
+      configureNativePlayer(active && preference === "fullscreen");
       if (active && preference === "pip") { layout("floating"); status.textContent = "Tap PiP once video starts"; }
       else if (active) present(preference);
       else { exitFullscreen(); exitPiP(); layout("dock"); host.classList.add("np-audio-mode"); }
@@ -228,6 +254,7 @@
     },
     stop() {
       active = false; pending = ""; toolbar.hidden = true;
+      configureNativePlayer(false);
       exitFullscreen(); exitPiP(); layout("dock");
       syncPiPButton();
     },
