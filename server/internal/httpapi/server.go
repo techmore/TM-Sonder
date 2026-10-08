@@ -29,6 +29,7 @@ import (
 	"tm-sonder/server/internal/library"
 	"tm-sonder/server/internal/mediacache"
 	"tm-sonder/server/internal/runtimecontrol"
+	"tm-sonder/server/internal/subtitles"
 	"tm-sonder/server/internal/transcode"
 )
 
@@ -58,6 +59,7 @@ type ChapterProvider interface {
 
 // Server wires the catalog, scanner, and transcoder into the HTTP contract.
 type Server struct {
+	subtitleManager    *subtitles.Manager
 	cfgPtr             atomic.Pointer[config.Config]
 	store              *library.Store
 	scanner            *library.Scanner
@@ -330,6 +332,8 @@ func (s *Server) routes() {
 	m.HandleFunc("GET /api/movies/continue", s.handleMovieContinue)
 	m.HandleFunc("PATCH /api/movies/{id}/continue", s.handleMovieContinue)
 	m.HandleFunc("GET /subtitles/{id}/{index}", s.handleSubtitle)
+	m.HandleFunc("GET /api/settings/subtitles", s.handleSubtitleMaintenance)
+	m.HandleFunc("POST /api/settings/subtitles", s.handleSubtitleMaintenance)
 	m.HandleFunc("GET /artwork/poster/{id}", s.handlePoster)
 	m.HandleFunc("GET /artwork/curated/{id}", s.handleCuratedPoster)
 	m.HandleFunc("GET /artwork/backdrop/{id}", s.handleBackdrop)
@@ -363,6 +367,7 @@ func (s *Server) routes() {
 	m.HandleFunc("GET /library.js", s.handleLibraryJS)
 	m.HandleFunc("GET /movie-downloads.js", s.handleMovieDownloadsJS)
 	m.HandleFunc("GET /video-presentation.js", s.handleVideoPresentationJS)
+	m.HandleFunc("GET /subtitle-maintenance.js", s.handleSubtitleMaintenanceJS)
 	m.HandleFunc("GET /favicon.svg", s.handleFavicon)
 	m.HandleFunc("GET /favicon.png", s.handleFaviconPNG)
 	m.HandleFunc("GET /favicon.ico", s.handleFaviconPNG)
@@ -457,7 +462,7 @@ func (s *Server) withGzip(next http.Handler) http.Handler {
 			strings.HasPrefix(path, "/read/") ||
 			path == "/api/library" || path == "/library.json" ||
 			path == "/" || path == "/audiobooks" || path == "/audiobooks-classic" || path == "/audiobooks-beta" || path == "/ebooks" ||
-			path == "/shared.js" || path == "/library.css" || path == "/library.js" || path == "/movie-downloads.js" || path == "/video-presentation.js" || path == "/epub.js" || path == "/jszip.js" || path == "/favicon.ico" ||
+			path == "/shared.js" || path == "/library.css" || path == "/library.js" || path == "/movie-downloads.js" || path == "/video-presentation.js" || path == "/subtitle-maintenance.js" || path == "/epub.js" || path == "/jszip.js" || path == "/favicon.ico" ||
 			path == "/favicon.svg" || path == "/favicon.png" {
 			// These routes manage their own cached gzip.
 			next.ServeHTTP(w, r)
@@ -703,7 +708,7 @@ func isBrowserPage(path string) bool {
 
 func isPublicWebAsset(path string) bool {
 	switch path {
-	case "/shared.js", "/library.css", "/library.js", "/movie-downloads.js", "/video-presentation.js", "/epub.js", "/jszip.js", "/favicon.svg", "/favicon.png", "/favicon.ico":
+	case "/shared.js", "/library.css", "/library.js", "/movie-downloads.js", "/video-presentation.js", "/subtitle-maintenance.js", "/epub.js", "/jszip.js", "/favicon.svg", "/favicon.png", "/favicon.ico":
 		return true
 	default:
 		return false

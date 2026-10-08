@@ -17,7 +17,7 @@ import (
 // JSON routes the iOS client uses. When opened with ?token= (LAN pairing),
 // the embedded JS propagates the token to every same-origin request.
 
-//go:embed web/library.html web/library.css web/library.js web/movie-downloads.js web/video-presentation.js web/audiobooks.html web/audiobooks-beta.html web/ebooks.html web/ebook-reader.html web/shared.js web/vendor/epub.min.js web/vendor/jszip.min.js web/vendor/LICENSES.txt web/favicon.svg web/favicon.png
+//go:embed web/library.html web/library.css web/library.js web/movie-downloads.js web/video-presentation.js web/subtitle-maintenance.js web/audiobooks.html web/audiobooks-beta.html web/ebooks.html web/ebook-reader.html web/shared.js web/vendor/epub.min.js web/vendor/jszip.min.js web/vendor/LICENSES.txt web/favicon.svg web/favicon.png
 var webFS embed.FS
 
 func mustReadWeb(name string) []byte {
@@ -88,6 +88,7 @@ func libraryPageForThemeAndLayout(preset, layout string) *gzippedPage {
 			{placeholder: "/library.js?v=asset", page: libraryJS},
 			{placeholder: "/movie-downloads.js?v=asset", page: movieDownloadsJS},
 			{placeholder: "/video-presentation.js?v=asset", page: videoPresentationJS},
+			{placeholder: "/subtitle-maintenance.js?v=asset", page: subtitleMaintenanceJS},
 			{placeholder: "/shared.js?v=asset", page: sharedJS},
 			{placeholder: "/favicon.png?v=asset", page: faviconPNG},
 		} {
@@ -221,4 +222,10 @@ func (s *Server) handleMovieDownloadsJS(w http.ResponseWriter, r *http.Request) 
 
 func (s *Server) handleVideoPresentationJS(w http.ResponseWriter, r *http.Request) {
 	serveAsset(w, r, videoPresentationJS, "text/javascript; charset=utf-8")
+}
+
+var subtitleMaintenanceJS = newGzippedPage(func() []byte { return mustReadWeb("web/subtitle-maintenance.js") })
+
+func (s *Server) handleSubtitleMaintenanceJS(w http.ResponseWriter, r *http.Request) {
+	serveAsset(w, r, subtitleMaintenanceJS, "text/javascript; charset=utf-8")
 }

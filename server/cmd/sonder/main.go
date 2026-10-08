@@ -33,6 +33,7 @@ import (
 	"tm-sonder/server/internal/probe"
 	"tm-sonder/server/internal/proxy"
 	"tm-sonder/server/internal/runtimecontrol"
+	"tm-sonder/server/internal/subtitles"
 	"tm-sonder/server/internal/transcode"
 	"tm-sonder/server/internal/zeroconf"
 )
@@ -423,6 +424,18 @@ func run(configFlag, plexDB, exportPath, importPath, importMode, importPathMap s
 		if err := store.Flush(snapshotPath); err != nil {
 			logger.Printf("snapshot save failed: %v", err)
 		}
+	}()
+
+	subtitleWorker := subtitles.New(store, cfg.DataDir, snapshotPath, cfg.FFmpegPath)
+	srv.SetSubtitleManager(subtitleWorker)
+	go func() {
+		select {
+		case <-ctx.Done():
+			return
+		case <-scanDone:
+		}
+		logger.Printf("subtitle maintenance: languages=%v provider-configured=%t", subtitleWorker.Status().Languages, subtitleWorker.Status().ProviderConfigured)
+		subtitleWorker.Run(ctx)
 	}()
 
 	errCh := make(chan error, 2)
