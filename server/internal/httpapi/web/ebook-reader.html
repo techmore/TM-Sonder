@@ -101,7 +101,7 @@
       let rendition;
       let book;
       let currentLocation;
-      let restoringPosition = false;
+      let restoringPosition = false, readerReady = false;
       const reader = document.querySelector("#reader");
       const viewer = document.querySelector("#viewer");
       const viewSelect = document.querySelector("#readingView");
@@ -176,7 +176,7 @@
       if (window.ResizeObserver) new ResizeObserver(() => {
         clearTimeout(resizeTimer);
         resizeTimer = setTimeout(async () => {
-          if (rendition && reader.dataset.mode !== "dock") {
+          if (rendition && readerReady && reader.dataset.mode !== "dock") {
             const cfi = reflowCFI || currentLocation?.start?.cfi;
             reflowCFI = null;
             try { rendition.resize(viewer.clientWidth, viewer.clientHeight); if (cfi) await rendition.display(cfi); }
@@ -187,6 +187,7 @@
       }).observe(viewer);
       window.addEventListener("resize", () => { preservePosition(); clampPanel(); });
       const positionKey = `sonder:epub-position:${id}`;
+      const storedPositionAtOpen = saved(positionKey, "");
 
       function showStatus(message, hide = false) {
         status.textContent = message;
@@ -254,6 +255,7 @@
         await book.ready;
         rendition.on("relocated", location => {
           currentLocation = location;
+          reader.dataset.location = location?.start?.cfi || "";
           const page = location?.start?.displayed?.page;
           const total = location?.start?.displayed?.total;
           const endPage = location?.end?.displayed?.page;
@@ -271,13 +273,13 @@
           }
         });
         let savedPosition;
-        const storedPosition = saved(positionKey, "");
+        const storedPosition = storedPositionAtOpen;
         try { savedPosition = JSON.parse(storedPosition || "null"); } catch {
           const savedSection = storedPosition && book.spine.get(storedPosition);
           if (savedSection) savedPosition = { href: savedSection.href, page: 1 };
         }
         if (savedPosition?.cfi && /^epubcfi\(/.test(savedPosition.cfi)) {
-          try { await rendition.display(savedPosition.cfi); return; } catch (_) { /* Older section position remains a fallback. */ }
+          try { restoringPosition = true; await rendition.display(savedPosition.cfi); readerReady = true; restoringPosition = false; return; } catch (_) { restoringPosition = false; /* Older section position remains a fallback. */ }
         }
         if (savedPosition?.href && Number.isInteger(savedPosition.page) && savedPosition.page > 0) {
           showStatus("Restoring reading position…");
@@ -290,13 +292,14 @@
             await rendition.next();
             currentLocation = await nextLocation;
           }
-          restoringPosition = false;
+          restoringPosition = false; readerReady = true;
           if (currentLocation?.start?.href && currentLocation?.start?.displayed?.page) {
             save(positionKey, JSON.stringify({ cfi:currentLocation.start.cfi, href: currentLocation.start.href, page: currentLocation.start.displayed.page }));
           }
           return;
         }
         await rendition.display();
+        readerReady = true;
       }
 
       previous.addEventListener("click", () => rendition?.prev());
