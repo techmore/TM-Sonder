@@ -113,7 +113,11 @@
       const allowedViews = ["fullscreen", "floating", "window", "dock"];
       viewSelect.value = ["fullscreen", "floating", "window"].includes(saved(preferenceKey, "fullscreen")) ? saved(preferenceKey, "fullscreen") : "fullscreen";
       fontSelect.value = ["100", "120", "140"].includes(saved("sonder.readingFont.v1", "100")) ? saved("sonder.readingFont.v1", "100") : "100";
-      let resizeTimer, drag;
+      let resizeTimer, drag, reflowCFI;
+      function preservePosition() {
+        if (!reflowCFI && currentLocation?.start?.cfi) reflowCFI = currentLocation.start.cfi;
+        if (reflowCFI) restoringPosition = true;
+      }
       function clampPanel() {
         if (reader.dataset.mode !== "floating") return;
         const rect = reader.getBoundingClientRect();
@@ -122,6 +126,7 @@
       }
       function setView(mode) {
         if (!allowedViews.includes(mode)) return;
+        if (reader.dataset.mode !== mode) preservePosition();
         reader.dataset.mode = mode;
         if (mode !== "floating") for (const prop of ["left", "top", "width", "height"]) reader.style.removeProperty(prop);
         handle.setAttribute("aria-disabled", String(mode !== "floating"));
@@ -141,7 +146,7 @@
       setView(viewSelect.value);
       document.querySelectorAll("[data-view]").forEach(button => button.addEventListener("click", () => present(button.dataset.view)));
       viewSelect.addEventListener("change", () => { save(preferenceKey, viewSelect.value); present(viewSelect.value); });
-      fontSelect.addEventListener("change", () => { save("sonder.readingFont.v1", fontSelect.value); rendition?.themes.fontSize(fontSelect.value + "%"); });
+      fontSelect.addEventListener("change", () => { save("sonder.readingFont.v1", fontSelect.value); preservePosition(); rendition?.themes.fontSize(fontSelect.value + "%"); });
       document.addEventListener("fullscreenchange", () => { if (!document.fullscreenElement && reader.dataset.mode === "fullscreen") setView("window"); });
       document.addEventListener("keydown", event => { if (event.key === "Escape") present("window"); });
       handle.addEventListener("pointerdown", event => {
@@ -159,6 +164,7 @@
       });
       const resizer = document.querySelector("#resize"); let sizing;
       function sizePanel(width, height) {
+        preservePosition();
         const rect = reader.getBoundingClientRect();
         reader.style.width = Math.max(Math.min(320, innerWidth), Math.min(width, innerWidth - rect.left)) + "px";
         reader.style.height = Math.max(Math.min(300, innerHeight), Math.min(height, innerHeight - rect.top)) + "px"; clampPanel();
@@ -169,9 +175,17 @@
       resizer.addEventListener("keydown", event => { if (!["ArrowLeft", "ArrowRight", "ArrowUp", "ArrowDown"].includes(event.key)) return; event.preventDefault(); const rect = reader.getBoundingClientRect(); sizePanel(rect.width + (event.key === "ArrowLeft" ? -10 : event.key === "ArrowRight" ? 10 : 0), rect.height + (event.key === "ArrowUp" ? -10 : event.key === "ArrowDown" ? 10 : 0)); });
       if (window.ResizeObserver) new ResizeObserver(() => {
         clearTimeout(resizeTimer);
-        resizeTimer = setTimeout(() => { if (rendition && reader.dataset.mode !== "dock") rendition.resize(viewer.clientWidth, viewer.clientHeight); clampPanel(); }, 120);
+        resizeTimer = setTimeout(async () => {
+          if (rendition && reader.dataset.mode !== "dock") {
+            const cfi = reflowCFI || currentLocation?.start?.cfi;
+            reflowCFI = null;
+            try { rendition.resize(viewer.clientWidth, viewer.clientHeight); if (cfi) await rendition.display(cfi); }
+            finally { restoringPosition = false; }
+          }
+          clampPanel();
+        }, 120);
       }).observe(viewer);
-      window.addEventListener("resize", clampPanel);
+      window.addEventListener("resize", () => { preservePosition(); clampPanel(); });
       const positionKey = `sonder:epub-position:${id}`;
 
       function showStatus(message, hide = false) {
