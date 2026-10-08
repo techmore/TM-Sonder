@@ -865,7 +865,8 @@
       if (!item) return;
       if (nowPlayingItem && nowPlayingItem.id === id) {
         togglePlay();
-        if (isMobileViewport()) setPlayerExpanded(true);
+        if (nowPlayingMode === "video") window.SonderVideoPresentation?.start("video");
+        else if (isMobileViewport()) setPlayerExpanded(true);
         closeDetailOnMobile();
         return;
       }
@@ -1527,7 +1528,7 @@
       if (typeof document !== "undefined") document.body.classList.add("np-visible");
       const expand = $("#npExpand");
       if (expand) {
-        expand.hidden = mode === "audio";
+        expand.hidden = mode === "audio" || Boolean(window.SonderVideoPresentation);
         expand.textContent = "⤡";
         expand.setAttribute("aria-label", "Hide video and keep playing");
         expand.setAttribute("aria-pressed", "true");
@@ -2000,7 +2001,7 @@
     });
     on("#npArt", "click", () => {
       if (!nowPlayingItem) return;
-      if (isMobileViewport() && !document.body.classList.contains("np-expanded")) setPlayerExpanded(true);
+      if (nowPlayingMode === "audio" && isMobileViewport() && !document.body.classList.contains("np-expanded")) setPlayerExpanded(true);
       else openDetail(nowPlayingItem.id, true);
     });
     on("#npExpand", "click", () => {
