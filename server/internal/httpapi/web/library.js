@@ -2651,6 +2651,25 @@
            + (FORMAT_RANK[(i.format||"").toLowerCase()] || 0) * 1e2;
     }
     let dedupEnabled = true;
+    const SEARCH_ORDINALS = Object.fromEntries([
+      "first", "second", "third", "fourth", "fifth", "sixth", "seventh", "eighth", "ninth", "tenth",
+      "eleventh", "twelfth", "thirteenth", "fourteenth", "fifteenth", "sixteenth", "seventeenth", "eighteenth", "nineteenth", "twentieth"
+    ].map((word, index) => {
+      const number = index + 1;
+      const suffix = number === 1 ? "st" : number === 2 ? "nd" : number === 3 ? "rd" : "th";
+      return [word, `${number}${suffix}`];
+    }));
+    function normalizedLibrarySearch(value) {
+      return foldDiacritics(String(value || "")).toLowerCase()
+        .replace(/[^\p{L}\p{N}]+/gu, " ")
+        .trim().split(/\s+/).map(word => SEARCH_ORDINALS[word] || word).join(" ");
+    }
+    function matchesLibrarySearch(query, fields) {
+      const terms = normalizedLibrarySearch(query).split(/\s+/).filter(Boolean);
+      const text = fields.filter(Boolean).map(normalizedLibrarySearch).join(" ");
+      return terms.every(term => text.includes(term));
+    }
+
     function visibleItems() {
       const term = $("#q").value.trim().toLowerCase();
       const watchSel = $("#watched").value;
@@ -2669,9 +2688,8 @@
       }
       if (selectedFacetValues.size) list = list.filter(i => facetValues(i, activeFacet).some(v => selectedFacetValues.has(String(v).toLowerCase())));
       if (term) {
-        list = list.filter(i =>
-          [i.title, i.subtitle, i.showTitle, i.summary]
-            .some(f => f && String(f).toLowerCase().includes(term)));
+        list = list.filter(i => matchesLibrarySearch(term,
+          [i.title, i.subtitle, i.showTitle, i.summary, i.author, i.narrator, i.series]));
       }
       switch ($("#sort").value) {
         case "year":     list.sort((a,b)=>(b.year||0)-(a.year||0)||a.title.localeCompare(b.title)); break;
@@ -4790,8 +4808,7 @@
         const visibleIDs = new Set(visible.filter(i => i.kind === "tvShow").map(i => i.id));
         let shows = buildShowGroups(visibleIDs);
         const term = $("#q").value.trim().toLowerCase();
-        if (term) shows = shows.filter(s =>
-          foldDiacritics(`${s.name} ${s.searchText}`).toLowerCase().includes(foldDiacritics(term)));
+        if (term) shows = shows.filter(s => matchesLibrarySearch(term, [s.name, s.searchText]));
         grid.className = "grid";
         const episodeCount = shows.reduce((count, show) =>
           count + Array.from(show.seasons.values()).reduce((n, eps) => n + eps.length, 0), 0);
