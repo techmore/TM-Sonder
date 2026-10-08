@@ -45,6 +45,7 @@ type Status struct {
 	Items              map[string]Record `json:"items"`
 }
 type Manager struct {
+	lastSaved                                       time.Time
 	mu                                              sync.Mutex
 	state                                           Status
 	store                                           *library.Store
@@ -115,6 +116,7 @@ func (m *Manager) Run(ctx context.Context) {
 	}
 }
 func (m *Manager) save() {
+	m.lastSaved = time.Now()
 	state := m.Status()
 	b, err := json.MarshalIndent(state, "", "  ")
 	if err != nil {
@@ -131,7 +133,9 @@ func (m *Manager) record(key string, r Record) {
 	m.state.Items[key] = r
 	m.state.UpdatedAt = time.Now().UTC()
 	m.mu.Unlock()
-	m.save()
+	if time.Since(m.lastSaved) >= 15*time.Second {
+		m.save()
+	}
 }
 func videoItem(it *library.Item) bool {
 	return it.FilePath != "" && (it.Kind == api.KindMovie || it.Kind == api.KindTVShow || it.Kind == api.KindDocumentary)
@@ -179,6 +183,7 @@ func (m *Manager) pass(ctx context.Context) {
 		}
 	}
 	m.mu.Unlock()
+	m.save()
 	token, providerBlock := "", ""
 	if m.key == "" {
 		providerBlock = "OpenSubtitles API key is not configured"
