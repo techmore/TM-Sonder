@@ -91,7 +91,10 @@ func (m *Manager) StartHLS(ctx context.Context, root, itemID, owner string, req 
 	} else {
 		args = append(args, "-vf", "scale=w=min(1280\\,iw):h=-2")
 	}
-	args = append(args[:4], append([]string{"-readrate", "1"}, args[4:]...)...)
+	input := indexOfArg(args, "-i")
+	paced := append([]string{}, args[:input]...)
+	paced = append(paced, "-readrate", "1")
+	args = append(paced, args[input:]...)
 	args = append(args, "-maxrate", "4M", "-bufsize", "8M", "-ac", "2", "-f", "hls", "-hls_time", "2", "-hls_list_size", "90", "-hls_delete_threshold", "15", "-hls_flags", "delete_segments+independent_segments+temp_file", "-hls_segment_filename", filepath.Join(dir, "segment%06d.ts"), filepath.Join(dir, "index.m3u8"))
 	cmd := exec.CommandContext(runCtx, m.cfg.FFmpegPath, args...)
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
