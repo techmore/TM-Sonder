@@ -801,6 +801,12 @@
       const button = $("#npAirPlay");
       if (!button) return;
       const wireless = !!(media && media.webkitCurrentPlaybackTargetIsWireless);
+      // Keep the video output shortcut discoverable before receiver discovery
+      // completes. The native picker owns discovery and the current route.
+      if (nowPlayingMode === "video" && typeof media?.webkitShowPlaybackTargetPicker === "function") {
+        button.hidden = false;
+        button.disabled = false;
+      }
       setClassEnabled(button, "np-wireless-output", wireless);
       button.setAttribute("aria-pressed", wireless ? "true" : "false");
       button.setAttribute("aria-label", wireless ? "AirPlay output connected" : "Choose AirPlay output");
@@ -844,13 +850,15 @@
       stopAirPlayAvailabilityListener();
       npAirPlayAvailabilityHandler = event => {
         const available = event && event.availability === "available";
-        button.hidden = !available;
-        button.disabled = !available;
-        if (!available) {
+        const visible = available || nowPlayingMode === "video";
+        button.hidden = !visible;
+        button.disabled = !visible;
+        if (visible) renderAirPlayWirelessState();
+        else {
           setClassEnabled(button, "np-wireless-output", false);
           button.setAttribute("aria-pressed", "false");
           button.setAttribute("aria-label", "Choose AirPlay output");
-        } else renderAirPlayWirelessState();
+        }
       };
       npAirPlayWirelessHandler = () => renderAirPlayWirelessState();
       media.addEventListener("webkitplaybacktargetavailabilitychanged", npAirPlayAvailabilityHandler);
@@ -2015,7 +2023,8 @@
       // Keep this call synchronous with the tap: Safari requires a direct user
       // gesture to open its native AirPlay destination picker.
       if (media && typeof media.webkitShowPlaybackTargetPicker === "function") {
-        media.webkitShowPlaybackTargetPicker();
+        try { media.webkitShowPlaybackTargetPicker(); }
+        catch { const status = $("#npStatus"); if (status) status.textContent = "AirPlay could not open. Tap the AirPlay icon to try again."; }
       }
     });
     on("#npQueueToggle", "click", () => {

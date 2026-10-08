@@ -2112,3 +2112,14 @@ body.np-video-immersive .catalog-detail-backdrop { visibility:hidden; }
   .np-view-actions { min-width:0; }
   .np-view-status { flex-basis:100%; max-width:none; }
 }
+
+/* A quiet video output shortcut with a finger-sized target. */
+.nowplaying:not(.np-audio-mode) #npAirPlay {
+  width:44px; height:44px; min-height:44px; flex:0 0 44px;
+  padding:0; justify-content:center; gap:0;
+}
+.nowplaying:not(.np-audio-mode) #npAirPlay > span { display:none; }
+.nowplaying:not(.np-audio-mode) #npAirPlay .np-airplay-icon { width:21px; height:21px; }
+.nowplaying:not(.np-audio-mode) #npAirPlay.np-wireless-output {
+  background:color-mix(in srgb,var(--accent) 15%,var(--panel2));
+}
