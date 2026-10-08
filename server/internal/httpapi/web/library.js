@@ -4250,7 +4250,7 @@
         return `<section class="movie-meta-loading" aria-live="polite"><span class="catalog-kicker">LOOKING CLOSER</span><p>Loading cast, characters, and ratings…</p></section>`;
       }
       if (movieMetadataErrors.has(item.id)) {
-        return `<section class="movie-meta-loading movie-meta-error"><span class="catalog-kicker">LOCAL METADATA</span><p>Online cast and rating details are unavailable right now. The local primer above is still ready.</p></section>`;
+        return `<section class="movie-meta-loading movie-meta-error"><span class="catalog-kicker">LOCAL METADATA</span><p>Online cast and rating details are unavailable right now. Your movie is still ready to play.</p></section>`;
       }
       if (!metadata) return "";
 
@@ -4264,13 +4264,13 @@
       const creditsHTML = creditBits.length ? `<div class="movie-credits">${creditBits.join("")}</div>` : "";
       const ratingsHTML = ratings.length ? `
         <section class="movie-ratings" aria-label="Movie ratings">
-          <div class="movie-section-head"><span class="catalog-kicker">RATINGS</span><span>Published snapshots</span></div>
+          <div class="movie-section-head"><h3>Ratings</h3><span>Published snapshots</span></div>
           <div class="movie-rating-grid">${ratings.map(rating => `
             <div class="movie-rating"><strong>${escapeHTML(rating.value)}</strong><span>${escapeHTML(rating.source || "Wikidata")}</span>${rating.method ? `<small>${escapeHTML(rating.method)}</small>` : ""}</div>`).join("")}</div>
         </section>` : "";
       const castHTML = cast.length ? `
         <section class="movie-cast" aria-label="Main cast">
-          <div class="movie-section-head"><span class="catalog-kicker">CAST</span><span>Main players</span></div>
+          <div class="movie-section-head"><h3>Cast &amp; characters</h3><span>Main players</span></div>
           <div class="movie-cast-grid">${cast.map(member => `
             <div class="movie-cast-member">
               <div class="movie-cast-portrait">${member.imageURL ? `<img src="${escapeHTML(member.imageURL)}" alt="" loading="lazy">` : `<span>${escapeHTML(movieMetaInitials(member.name))}</span>`}</div>
@@ -4297,8 +4297,12 @@
         })
         .finally(() => {
           movieMetadataLoading.delete(item.id);
-          if (activeTab === "movies" && selectedMovieID === item.id && !$("#movieCatalog")?.hidden) {
-            renderMovieCatalog(visibleItems());
+          // Update only the selected detail; preserve the shelf scroll position.
+          if (selectedMovieID === item.id && !$("#movieCatalog")?.hidden) {
+            $("#movieDetailBody").innerHTML = movieDetailMarkup(item);
+          }
+          if (detailItemID === item.id && $("#detail").open) {
+            $("#detailBody").innerHTML = movieDetailMarkup(item);
           }
         });
     }
@@ -4320,26 +4324,42 @@
         .filter(Boolean).join(" · ");
       const tags = (item.tags || []).slice(0, 8)
         .map(tag => `<span class="tag">${escapeHTML(tag)}</span>`).join("");
-      const summary = [metadata?.primer || item.summary, metadata?.primer ? "" : item.subtitle].filter(Boolean)
-        .map(value => `<p class="summary">${escapeHTML(value)}</p>`).join("");
+      const synopsis = metadata?.primer || item.summary || "";
+      const percent = item.durationSeconds > 0 && p ? Math.max(0, Math.min(100, p.seconds / item.durationSeconds * 100)) : 0;
       const progress = p && p.seconds > 5
-        ? `<p class="catalog-detail-meta">${isWatched(p, item) ? "Watched" : `Started · ${formatTime(p.seconds)}${item.durationSeconds ? ` of ${formatTime(item.durationSeconds)}` : ""}`}</p>`
-        : "";
-      return `
-        <div class="catalog-detail-hero">
+        ? `<div class="movie-watch-progress"><span>${isWatched(p, item) ? "Watched" : `Continue from ${formatTime(p.seconds)}`}</span>${item.durationSeconds > 0 ? `<progress max="100" value="${percent}" aria-label="${Math.round(percent)} percent watched"></progress>` : ""}</div>` : "";
+      const facts = [
+        ["Container", String(item.format || "").toUpperCase()],
+        ["Resolution", item.probedHeight ? `${item.probedWidth || "?"} × ${item.probedHeight}` : ""],
+        ["Video codec", item.probedCodec],
+        ["Audio", (item.embeddedAudioTracks || []).map(track => track.label || track.languageCode).filter(Boolean).join(" · ")],
+        ["Subtitles", (item.embeddedSubtitleTracks || []).map(track => track.label || track.languageCode).filter(Boolean).join(" · ")],
+        ["Studio", item.studio],
+        ["Edition", item.edition]
+      ].filter(([, value]) => value);
+      return `<article class="movie-detail-content">
+        <div class="catalog-detail-hero movie-hero">
           <div class="catalog-detail-cover">${poster}</div>
-          <div>
-            <span class="pill">Movie</span>
+          <div class="movie-hero-copy">
+            <span class="catalog-kicker">YOUR MOVIE LIBRARY</span>
             <h2>${escapeHTML(title)}</h2>
             <p class="catalog-detail-meta">${escapeHTML(meta || "Ready to watch")}</p>
+            ${metadata?.description ? `<p class="movie-description">${escapeHTML(metadata.description)}</p>` : ""}
             ${progress}
+            ${plan ? `<div class="actions"><button type="button" class="primary" data-action="play-item" data-id="${escapeHTML(item.id)}">${escapeHTML(playLabel)}</button></div><p class="movie-play-note">Playback continues while you browse.</p>` : `<p class="not-playable">This format needs a native player.</p>`}
           </div>
         </div>
-        ${plan ? `<div class="actions"><button class="primary" data-action="play-item" data-id="${escapeHTML(item.id)}">${playLabel}</button><a href="${api("/stream/" + item.id)}" target="_blank" rel="noopener">Open stream URL</a></div>` : `<div class="not-playable"><strong>.${escapeHTML(String(item.format || "?").toUpperCase())}</strong> can't play in the browser. <a href="${api("/stream/" + item.id)}" target="_blank" rel="noopener">Open in a native player</a>.</div>`}
-        ${summary || `<p class="catalog-detail-empty">No synopsis is available for this movie yet.</p>`}
+        <section class="movie-story" aria-label="Synopsis"><h3>About the movie</h3>
+          ${synopsis ? `<p class="summary">${escapeHTML(synopsis)}</p>` : `<p class="catalog-detail-empty">No synopsis is indexed yet. Additional movie information loads here when available.</p>`}
+        </section>
         ${movieMetadataMarkup(item)}
-        ${tags ? `<div class="tagrow">${tags}</div>` : ""}
-        ${editionsHTML(item)}`;
+        ${tags ? `<div class="tagrow movie-tags" aria-label="Library tags">${tags}</div>` : ""}
+        <details class="movie-file-details"><summary>Playback &amp; file details</summary>
+          <dl>${facts.map(([label, value]) => `<div><dt>${escapeHTML(label)}</dt><dd>${escapeHTML(value)}</dd></div>`).join("")}</dl>
+          <a href="${escapeHTML(api("/stream/" + item.id))}" target="_blank" rel="noopener">Open in a native player ↗</a>
+          ${editionsHTML(item)}
+        </details>
+      </article>`;
     }
 
     // The movie catalog has its own renderer, so it needs its own curated
@@ -5513,6 +5533,15 @@
       detailItemID = id;
       if (activeTab === "movies" && libraryLayout === "rails" && !$("#movieCatalog")?.hidden) {
         openMovieDetail(id);
+        return;
+      }
+      const dialog = $("#detail");
+      dialog.classList.toggle("movie-dialog", item.kind === "movie");
+      if (item.kind === "movie") {
+        $("#detailTitle").textContent = "Movie details";
+        requestMovieMetadata(item);
+        $("#detailBody").innerHTML = movieDetailMarkup(item);
+        if (!dialog.open) dialog.showModal();
         return;
       }
       const p = progressForItem(item);

@@ -1967,3 +1967,45 @@ body.audiobook-mode:not(.book-detail-mode) #filterRow.audiobook-filters-open:not
   .insights-panel-head { gap:8px; }
   .insights-panel-head h3 { font-size:17px; }
 }
+
+/* Shared movie information for cards, search results and the shelf panel. */
+.movie-detail-content { min-width:0; }
+.movie-detail-content h2 { margin:9px 0; font-size:clamp(24px,3vw,36px); line-height:1.12; overflow-wrap:anywhere; }
+.movie-detail-content h3 { margin:0 0 12px; font-size:16px; color:var(--text); }
+.movie-hero-copy { min-width:0; }
+.movie-description { color:var(--muted); line-height:1.5; margin:10px 0; }
+.movie-story { margin-top:26px; padding-top:22px; border-top:1px solid var(--line); }
+.movie-story .summary { font-size:15px; line-height:1.75; max-width:70ch; margin:0; }
+.movie-play-note { color:var(--muted); font-size:12px; line-height:1.5; }
+.movie-watch-progress { display:grid; gap:8px; margin-top:16px; color:var(--muted); font-size:12px; }
+.movie-watch-progress progress { width:100%; height:6px; accent-color:var(--accent); }
+.movie-detail-content .actions button { min-height:44px; padding:10px 20px; }
+.movie-detail-content .movie-credits { grid-template-columns:repeat(auto-fit,minmax(150px,1fr)); gap:16px; }
+.movie-detail-content .movie-credits span { font-size:14px; line-height:1.5; }
+.movie-detail-content .movie-cast-grid { grid-template-columns:repeat(auto-fit,minmax(90px,1fr)); gap:16px 12px; }
+.movie-detail-content .movie-cast-member strong, .movie-detail-content .movie-cast-member > span { white-space:normal; font-size:12px; line-height:1.4; }
+.movie-detail-content .movie-rating span, .movie-detail-content .movie-rating small { white-space:normal; line-height:1.4; }
+.movie-detail-content .movie-rating { padding:14px; }
+.movie-detail-content .movie-rating strong { font-size:22px; }
+.movie-tags { margin-top:24px; }
+.movie-file-details { border-top:1px solid var(--line); margin-top:24px; padding-top:18px; font-size:13px; }
+.movie-file-details > summary { cursor:pointer; padding:8px 0; color:var(--text); font-weight:600; }
+.movie-file-details dl { display:grid; grid-template-columns:repeat(auto-fit,minmax(140px,1fr)); gap:16px; margin:16px 0; }
+.movie-file-details dt { color:var(--muted); font-size:11px; margin-bottom:5px; }
+.movie-file-details dd { margin:0; overflow-wrap:anywhere; line-height:1.5; }
+.movie-file-details a { color:var(--accent); }
+dialog#detail.movie-dialog { width:min(960px,94vw); background:var(--panel); }
+.movie-dialog .modal-head { position:sticky; top:0; background:var(--panel); z-index:1; }
+.movie-dialog .modal-head button { min-width:40px; min-height:40px; }
+.movie-dialog .modal-body { padding:28px; }
+.movie-dialog .movie-hero { grid-template-columns:180px minmax(0,1fr); gap:28px; }
+.movie-dialog .catalog-detail-cover { width:180px; }
+.movie-dialog .movie-cast-grid { grid-template-columns:repeat(auto-fit,minmax(100px,1fr)); }
+@media (max-width:600px) {
+  .movie-dialog .modal-body { padding:18px; }
+  .movie-dialog .movie-hero { grid-template-columns:100px minmax(0,1fr); gap:16px; }
+  .movie-dialog .catalog-detail-cover { width:100px; }
+  .movie-detail-content h2 { font-size:24px; }
+  .movie-dialog .movie-cast-grid { grid-template-columns:repeat(3,minmax(0,1fr)); }
+  .movie-section-head { flex-wrap:wrap; }
+}
