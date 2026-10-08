@@ -460,7 +460,19 @@
     // the server's on-the-fly fMP4 transcode (mkv, avi, ...). Audiobook
     // containers such as .m4b are MP4 audio and play directly when the browser
     // supports their probed codec (including Opus in MP4).
+    const preparedVideos = new Map();
+    document.addEventListener("sonder:movie-prepared", event => {
+      const detail = event.detail;
+      if (!detail?.id) return;
+      if (detail.status === "ready" && detail.playlistURL) preparedVideos.set(detail.id, detail.playlistURL);
+      else preparedVideos.delete(detail.id);
+    });
+
     function playbackPlan(item) {
+      if (preparedVideos.has(item.id)) {
+        const playlist = preparedVideos.get(item.id);
+        return { mode: "video", url: npMedia()?.canPlayType("application/vnd.apple.mpegurl") ? playlist : playlist.replace(/index\.m3u8$/, "download.mp4?inline=1") };
+      }
       const format = String(item.format || "").toLowerCase();
       const kind = String(item.kind || "");
       if (DIRECT_AUDIO.has(format)) return { mode: "audio", url: "/stream/" + item.id };

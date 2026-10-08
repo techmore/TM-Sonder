@@ -324,6 +324,9 @@ func (s *Server) routes() {
 	m.HandleFunc("POST /api/progress/{id}", s.handleProgressUpdate)
 	m.HandleFunc("GET /stream/{id}", s.handleStream)
 	m.HandleFunc("GET /stream/{id}/hls/{session}/{asset}", s.handleHLSAsset)
+	m.HandleFunc("GET /stream/{id}/vod/{cache}/{asset}", s.handleMovieVODAsset)
+	m.HandleFunc("GET /api/movies/{id}/preparation", s.handleMoviePreparation)
+	m.HandleFunc("POST /api/movies/{id}/prepare", s.handleMoviePrepare)
 	m.HandleFunc("GET /subtitles/{id}/{index}", s.handleSubtitle)
 	m.HandleFunc("GET /artwork/poster/{id}", s.handlePoster)
 	m.HandleFunc("GET /artwork/curated/{id}", s.handleCuratedPoster)
@@ -356,6 +359,7 @@ func (s *Server) routes() {
 	m.HandleFunc("GET /shared.js", s.handleSharedJS)
 	m.HandleFunc("GET /library.css", s.handleLibraryCSS)
 	m.HandleFunc("GET /library.js", s.handleLibraryJS)
+	m.HandleFunc("GET /movie-downloads.js", s.handleMovieDownloadsJS)
 	m.HandleFunc("GET /favicon.svg", s.handleFavicon)
 	m.HandleFunc("GET /favicon.png", s.handleFaviconPNG)
 	m.HandleFunc("GET /favicon.ico", s.handleFaviconPNG)
@@ -450,7 +454,7 @@ func (s *Server) withGzip(next http.Handler) http.Handler {
 			strings.HasPrefix(path, "/read/") ||
 			path == "/api/library" || path == "/library.json" ||
 			path == "/" || path == "/audiobooks" || path == "/audiobooks-classic" || path == "/audiobooks-beta" || path == "/ebooks" ||
-			path == "/shared.js" || path == "/library.css" || path == "/library.js" || path == "/epub.js" || path == "/jszip.js" || path == "/favicon.ico" ||
+			path == "/shared.js" || path == "/library.css" || path == "/library.js" || path == "/movie-downloads.js" || path == "/epub.js" || path == "/jszip.js" || path == "/favicon.ico" ||
 			path == "/favicon.svg" || path == "/favicon.png" {
 			// These routes manage their own cached gzip.
 			next.ServeHTTP(w, r)
@@ -696,7 +700,7 @@ func isBrowserPage(path string) bool {
 
 func isPublicWebAsset(path string) bool {
 	switch path {
-	case "/shared.js", "/library.css", "/library.js", "/epub.js", "/jszip.js", "/favicon.svg", "/favicon.png", "/favicon.ico":
+	case "/shared.js", "/library.css", "/library.js", "/movie-downloads.js", "/epub.js", "/jszip.js", "/favicon.svg", "/favicon.png", "/favicon.ico":
 		return true
 	default:
 		return false

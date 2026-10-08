@@ -195,11 +195,14 @@ func (s *Session) drainReaders() {
 type Manager struct {
 	cfg Config
 
-	mu       sync.Mutex
-	sessions map[string]*Session
-	sem      chan struct{}
-	hls      sync.Map
-	hlsStart sync.Mutex
+	mu        sync.Mutex
+	sessions  map[string]*Session
+	sem       chan struct{}
+	hls       sync.Map
+	hlsStart  sync.Mutex
+	vod       sync.Map
+	vodMu     sync.Mutex
+	vodSerial chan struct{}
 }
 
 func NewManager(cfg Config) *Manager {
@@ -213,15 +216,17 @@ func NewManager(cfg Config) *Manager {
 		cfg.HWAccel = "videotoolbox"
 	}
 	return &Manager{
-		cfg:      cfg,
-		sessions: make(map[string]*Session),
-		sem:      make(chan struct{}, cfg.MaxConcurrent),
+		cfg:       cfg,
+		sessions:  make(map[string]*Session),
+		sem:       make(chan struct{}, cfg.MaxConcurrent),
+		vodSerial: make(chan struct{}, 1),
 	}
 }
 
 // StopAll terminates every running ffmpeg (shutdown path).
 func (m *Manager) StopAll() {
 	m.hls.Range(func(_, value any) bool { value.(*HLSSession).cancel(); return true })
+	m.vod.Range(func(_, value any) bool { value.(*VODAsset).cancel(); return true })
 	m.mu.Lock()
 	ss := make([]*Session, 0, len(m.sessions))
 	for _, s := range m.sessions {

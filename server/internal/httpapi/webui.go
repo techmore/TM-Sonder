@@ -17,7 +17,7 @@ import (
 // JSON routes the iOS client uses. When opened with ?token= (LAN pairing),
 // the embedded JS propagates the token to every same-origin request.
 
-//go:embed web/library.html web/library.css web/library.js web/audiobooks.html web/audiobooks-beta.html web/ebooks.html web/ebook-reader.html web/shared.js web/vendor/epub.min.js web/vendor/jszip.min.js web/vendor/LICENSES.txt web/favicon.svg web/favicon.png
+//go:embed web/library.html web/library.css web/library.js web/movie-downloads.js web/audiobooks.html web/audiobooks-beta.html web/ebooks.html web/ebook-reader.html web/shared.js web/vendor/epub.min.js web/vendor/jszip.min.js web/vendor/LICENSES.txt web/favicon.svg web/favicon.png
 var webFS embed.FS
 
 func mustReadWeb(name string) []byte {
@@ -32,6 +32,7 @@ var (
 	libraryPage        = newGzippedPage(func() []byte { return mustReadWeb("web/library.html") })
 	libraryCSS         = newGzippedPage(func() []byte { return mustReadWeb("web/library.css") })
 	libraryJS          = newGzippedPage(func() []byte { return mustReadWeb("web/library.js") })
+	movieDownloadsJS   = newGzippedPage(func() []byte { return mustReadWeb("web/movie-downloads.js") })
 	audiobooksPage     = newGzippedPage(func() []byte { return mustReadWeb("web/audiobooks.html") })
 	audiobooksBetaPage = newGzippedPage(func() []byte { return mustReadWeb("web/audiobooks-beta.html") })
 	ebooksPage         = newGzippedPage(func() []byte { return mustReadWeb("web/ebooks.html") })
@@ -84,6 +85,7 @@ func libraryPageForThemeAndLayout(preset, layout string) *gzippedPage {
 		}{
 			{placeholder: "/library.css?v=asset", page: libraryCSS},
 			{placeholder: "/library.js?v=asset", page: libraryJS},
+			{placeholder: "/movie-downloads.js?v=asset", page: movieDownloadsJS},
 			{placeholder: "/shared.js?v=asset", page: sharedJS},
 			{placeholder: "/favicon.png?v=asset", page: faviconPNG},
 		} {
@@ -209,4 +211,8 @@ func serveGzippableHTML(w http.ResponseWriter, r *http.Request, page *gzippedPag
 	}
 	w.WriteHeader(http.StatusOK)
 	_, _ = w.Write(body)
+}
+
+func (s *Server) handleMovieDownloadsJS(w http.ResponseWriter, r *http.Request) {
+	serveAsset(w, r, movieDownloadsJS, "text/javascript; charset=utf-8")
 }
