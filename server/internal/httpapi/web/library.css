@@ -1994,10 +1994,10 @@ body.audiobook-mode:not(.book-detail-mode) #filterRow.audiobook-filters-open:not
 .movie-file-details dt { color:var(--muted); font-size:11px; margin-bottom:5px; }
 .movie-file-details dd { margin:0; overflow-wrap:anywhere; line-height:1.5; }
 .movie-file-details a { color:var(--accent); }
-dialog#detail.movie-dialog { width:min(960px,94vw); background:var(--panel); }
+dialog#detail.movie-dialog { width:min(960px,94vw); background:var(--panel); overflow:hidden; }
 .movie-dialog .modal-head { position:sticky; top:0; background:var(--panel); z-index:1; }
 .movie-dialog .modal-head button { min-width:40px; min-height:40px; }
-.movie-dialog .modal-body { padding:28px; }
+.movie-dialog .modal-body { padding:28px; max-height:calc(90vh - 80px); }
 .movie-dialog .movie-hero { grid-template-columns:180px minmax(0,1fr); gap:28px; }
 .movie-dialog .catalog-detail-cover { width:180px; }
 .movie-dialog .movie-cast-grid { grid-template-columns:repeat(auto-fit,minmax(100px,1fr)); }

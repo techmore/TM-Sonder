@@ -126,3 +126,13 @@ jobs:
           incus exec sonder -- systemctl is-active sonder
           incus exec sonder -- /usr/local/bin/sonder app status --json --config /etc/sonder/server.json \
             | python3 -c 'import json,sys; d=json.load(sys.stdin); s=d.get("status",{}); assert s.get("webHealthy") and s.get("apiHealthy"), d; print("version", d.get("version"), "web/API healthy")'
+
+      - name: Confirm the public site serves this revision
+        run: |
+          set -euo pipefail
+          for asset in library.js library.css; do
+            curl --fail --silent --show-error --retry 3 --retry-delay 2 \
+              "https://sonder.stoverparc.org/${asset}?deploy=${GITHUB_SHA}" \
+              -o "${RUNNER_TEMP}/public-${asset}"
+            cmp "server/internal/httpapi/web/${asset}" "${RUNNER_TEMP}/public-${asset}"
+          done
