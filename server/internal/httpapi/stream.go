@@ -79,7 +79,7 @@ func (s *Server) handleStream(w http.ResponseWriter, r *http.Request) {
 }
 
 // streamTranscode pipes a live fMP4 session to the client. Range semantics
-// do not apply; the fragmented container supports player-side seeking.
+// do not apply; seeking starts a new stream at the requested source offset.
 func (s *Server) streamTranscode(w http.ResponseWriter, r *http.Request, item *library.Item, st os.FileInfo) {
 	q := r.URL.Query()
 	mode := transcode.Mode(q.Get("mode"))
@@ -106,6 +106,10 @@ func (s *Server) streamTranscode(w http.ResponseWriter, r *http.Request, item *l
 	}
 
 	streamItem, release := s.cacheItem(item, st)
+	if q.Get("delivery") == "hls" {
+		s.streamHLS(w, r, streamItem, start, burnSub, audioTrack, release)
+		return
+	}
 	defer release()
 	reader, cleanup, err := s.tm.Attach(r.Context(), streamItem, mode, start, burnSub, audioTrack)
 	if err != nil {

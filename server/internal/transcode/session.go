@@ -198,6 +198,7 @@ type Manager struct {
 	mu       sync.Mutex
 	sessions map[string]*Session
 	sem      chan struct{}
+	hls      sync.Map
 }
 
 func NewManager(cfg Config) *Manager {
@@ -219,6 +220,7 @@ func NewManager(cfg Config) *Manager {
 
 // StopAll terminates every running ffmpeg (shutdown path).
 func (m *Manager) StopAll() {
+	m.hls.Range(func(_, value any) bool { value.(*HLSSession).cancel(); return true })
 	m.mu.Lock()
 	ss := make([]*Session, 0, len(m.sessions))
 	for _, s := range m.sessions {

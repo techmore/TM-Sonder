@@ -778,7 +778,8 @@
     }
 
     function transcodedVideoURL(item, offset) {
-      return api("/stream/" + item.id + "?transcode=1&ss=" + Math.max(0, offset).toFixed(3));
+      const nativeHLS = npMedia()?.canPlayType("application/vnd.apple.mpegurl");
+      return api("/stream/" + item.id + "?transcode=1" + (nativeHLS ? "&delivery=hls" : "") + "&ss=" + Math.max(0, offset).toFixed(3));
     }
 
     function renderAirPlayWirelessState() {
@@ -1398,7 +1399,7 @@
             cancelPlaybackAttempt();
           } else if (!attempt.retried) recover();
           else failed();
-        }, 8000);
+        }, npVideoTranscoded && media.src.includes("delivery=hls") ? 25000 : 8000);
       };
       const recover = () => {
         if (!active() || attempt.retried) return;
@@ -2050,7 +2051,8 @@
     on("#npMedia", "loadedmetadata", () => onTimeUpdate());
     on("#npMedia", "error", () => {
       const status = $("#npStatus");
-      if (status) status.textContent = "This stream could not be played here. Try “Open stream URL” instead.";
+      if (npPlaybackAttempt) return; // The active attempt owns recovery and its status.
+      if (status) status.textContent = "Playback disconnected. Tap Play to reconnect at your saved position.";
     });
     onDocument("keydown", event => {
       if (!nowPlayingItem) return;

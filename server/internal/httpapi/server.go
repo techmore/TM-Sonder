@@ -323,6 +323,7 @@ func (s *Server) routes() {
 	m.HandleFunc("POST /api/playback/{id}/refresh-tracks", s.handleRefreshTracks)
 	m.HandleFunc("POST /api/progress/{id}", s.handleProgressUpdate)
 	m.HandleFunc("GET /stream/{id}", s.handleStream)
+	m.HandleFunc("GET /stream/{id}/hls/{session}/{asset}", s.handleHLSAsset)
 	m.HandleFunc("GET /subtitles/{id}/{index}", s.handleSubtitle)
 	m.HandleFunc("GET /artwork/poster/{id}", s.handlePoster)
 	m.HandleFunc("GET /artwork/curated/{id}", s.handleCuratedPoster)
