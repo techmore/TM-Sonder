@@ -1527,7 +1527,8 @@
       // Audiobooks should feel like a listening app on a phone. Open the
       // dedicated surface immediately; the compact dock remains available
       // after the listener taps Minimize.
-      setPlayerExpanded(isMobileViewport());
+      if (mode === "video") setPlayerExpanded(isMobileViewport());
+      else setPlayerExpanded(mode === "audio" && isMobileViewport());
       syncAirPlayAvailabilityListener();
       updateMediaSession(item);
     }
