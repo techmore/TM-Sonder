@@ -3,6 +3,7 @@ package enrich
 import (
 	"context"
 	"log"
+	"sort"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -36,6 +37,34 @@ func RunPass(ctx context.Context, logger *log.Logger, store Catalog, cacheRoot s
 			candidates = append(candidates, it)
 		}
 	}
+	// Repair absent artwork before spending provider requests on summaries or
+	// replacing thumbnails. In-progress items get first choice within a tier.
+	sort.SliceStable(candidates, func(i, j int) bool {
+		a, b := candidates[i], candidates[j]
+		if (a.PosterPath == "") != (b.PosterPath == "") {
+			return a.PosterPath == ""
+		}
+		if (a.ProgressSeconds > 0) != (b.ProgressSeconds > 0) {
+			return a.ProgressSeconds > 0
+		}
+		rank := func(kind string) int {
+			switch kind {
+			case "audiobook", "movie":
+				return 0
+			case "ebook":
+				return 1
+			default:
+				return 2
+			}
+		}
+		if rank(string(a.Kind)) != rank(string(b.Kind)) {
+			return rank(string(a.Kind)) < rank(string(b.Kind))
+		}
+		if !a.ModTime.Equal(b.ModTime) {
+			return a.ModTime.After(b.ModTime)
+		}
+		return a.ID < b.ID
+	})
 	if logger != nil {
 		logger.Printf("enrichment pass: %d candidate item(s)", len(candidates))
 	}
