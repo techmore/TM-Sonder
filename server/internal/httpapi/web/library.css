@@ -2078,3 +2078,14 @@ body.np-video-immersive { overflow:hidden; padding-bottom:0; }
   .nowplaying.np-immersive .np-time, .nowplaying.np-floating .np-time { display:block; }
   .nowplaying.np-floating { top:60px; height:min(380px,calc(100dvh - 80px)); }
 }
+
+/* Video controls remain legible and reachable in the compact mobile dock. */
+.nowplaying:not(.np-audio-mode) { --np-fg:#f5f5f1; --np-muted:#c1cab9; --np-highlight:#bed0a3; }
+@media(max-width:700px) {
+  .nowplaying:not(.np-audio-mode) .np-tools { display:flex; flex-wrap:wrap; margin-left:auto; }
+  .nowplaying:not(.np-audio-mode) .np-seek-readouts { display:flex; }
+  .nowplaying.np-video-docked .np-bar { display:flex; flex-wrap:wrap; }
+  .nowplaying.np-immersive .np-controls #npBack, .nowplaying.np-immersive .np-controls #npFwd,
+  .nowplaying.np-floating .np-controls #npBack, .nowplaying.np-floating .np-controls #npFwd { display:block; }
+  .nowplaying.np-immersive .np-controls .np-play, .nowplaying.np-floating .np-controls .np-play { background:#bed0a3; color:#1b241e; }
+}
