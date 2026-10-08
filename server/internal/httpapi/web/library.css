@@ -2107,3 +2107,8 @@ body.np-video-immersive { overflow:hidden; padding-bottom:0; }
 .nowplaying[popover]::backdrop { background:transparent; pointer-events:none; }
 body.np-video-immersive .catalog-detail,
 body.np-video-immersive .catalog-detail-backdrop { visibility:hidden; }
+@media(max-width:700px) {
+  .np-presentation { flex:0 0 auto; }
+  .np-view-actions { min-width:0; }
+  .np-view-status { flex-basis:100%; max-width:none; }
+}
