@@ -300,6 +300,14 @@
     document.querySelectorAll(".movie-download-tools[data-movie-id]").forEach(section => render(section, section.dataset.movieId, section.dataset.movieTitle));
   }
 
+  function continueMovieIDs() {
+    return [...new Set([...document.querySelectorAll('.movie-continue-card [data-action="play-item"][data-id]')].map(button => button.dataset.id))];
+  }
+
+  function checkContinueMovies() {
+    for (const id of continueMovieIDs()) if (!states.has(id)) check(id);
+  }
+
   function mount() {
     document.querySelectorAll(".movie-detail-content").forEach(article => {
       if (article.querySelector(".movie-download-tools")) return;
@@ -317,11 +325,17 @@
   const observer = new MutationObserver(() => {
     if ([...document.querySelectorAll(".movie-detail-content")].some(article => !article.querySelector(".movie-download-tools"))) mount();
     if (saved.size && document.querySelector("#movieRails") && !document.querySelector("#movieRails .movie-device-library")) renderDeviceLibrary();
+    checkContinueMovies();
   });
   observer.observe(document.body, { childList: true, subtree: true });
   mount();
+  checkContinueMovies();
   loadSaved();
   setInterval(() => {
+    for (const id of continueMovieIDs()) {
+      const status = states.get(id)?.status;
+      if (status === "preparing" || status === "queued") check(id);
+    }
     document.querySelectorAll(".movie-download-tools[data-movie-id]").forEach(section => {
       const status = states.get(section.dataset.movieId)?.status;
       if (status === "preparing" || status === "queued") check(section.dataset.movieId);
