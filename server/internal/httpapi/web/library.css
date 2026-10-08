@@ -1782,6 +1782,12 @@ body:not(.mobile-filters-open) #filterRow { display:none !important; }
 .listening-copy > span { display:block; margin-top:7px; color:var(--muted); font-size:11px; }
 .listening-resume { min-height:44px; padding:10px 14px; border:1px solid var(--line); border-radius:8px; background:var(--panel2); color:var(--text); font:inherit; font-size:12px; cursor:pointer; }
 .listening-resume:hover, .listening-resume:focus-visible { border-color:var(--accent); }
+.movie-continue-grid { display:grid; grid-template-columns:repeat(auto-fit,minmax(min(100%,420px),1fr)); gap:12px; }
+.movie-continue-actions { display:flex; flex-direction:column; gap:6px; }
+.movie-continue-card .listening-art { aspect-ratio:2/3; }
+.movie-dismissed { margin-top:16px; }
+.movie-dismissed summary { cursor:pointer; padding:10px 0; color:var(--muted); }
+#continueGrid:has(.movie-continue-shelf) { display:block; }
 .book-cover-fallback { position:absolute; inset:0; display:grid; place-items:center; color:var(--accent); font-size:38px; background:var(--panel2); }
 .audiobook-mode .card img.poster { position:relative; object-fit:contain; }
 .book-card-narrator { margin:3px 10px 10px; font-size:11px; color:var(--muted); overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }

@@ -1543,6 +1543,7 @@
     }
 
     function startPlayback(item, resumeAt = 0, explicitSeek = false) {
+      if (item.kind === "movie") rememberMovieStart(item);
       const plan = playbackPlan(item);
       const media = npMedia();
       if (!plan || !media) return;
@@ -3535,6 +3536,67 @@
     const movieMetadataByID = new Map();
     const movieMetadataLoading = new Set();
     const movieMetadataErrors = new Map();
+    let dismissedMovieIDs = new Set();
+
+    async function loadMovieContinuePreferences() {
+      try {
+        const response = await fetch(api("/api/movies/continue"), { cache: "no-store" });
+        if (!response.ok) return;
+        const data = await response.json();
+        dismissedMovieIDs = new Set(data.dismissedMovieIDs || []);
+        render();
+      } catch (_) { /* Progress remains visible if preferences cannot load. */ }
+    }
+
+    async function setMovieDismissed(id, dismissed) {
+      try {
+        const response = await fetch(api(`/api/movies/${encodeURIComponent(id)}/continue`), {
+          method: "PATCH", headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ dismissed }),
+        });
+        if (!response.ok) throw new Error("Could not save this change. Try again.");
+        const data = await response.json();
+        dismissedMovieIDs = new Set(data.dismissedMovieIDs || []);
+        render();
+      } catch (error) { flashStatus(error.message); }
+    }
+
+    function rememberMovieStart(item) {
+      if (dismissedMovieIDs.has(item.id)) void setMovieDismissed(item.id, false);
+      if (progressFor(item.id)) return;
+      // Even an interrupted start remains findable instead of requiring search.
+      const record = { itemID: item.id, seconds: 0, duration: item.durationSeconds || 0, updatedAt: nextProgressTimestamp(item.id) };
+      progressByID.set(item.id, record);
+      savePendingProgress(record);
+      writeProgressCheckpoint(record).then(async response => {
+        if (response.ok) settleProgressCheckpoint(record, await response.json());
+      }).catch(() => {});
+    }
+
+    function unfinishedMovies() {
+      return items.filter(item => {
+        if (item.kind !== "movie" || item.isPlaceholder) return false;
+        const p = progressFor(item.id);
+        const duration = Number(p?.duration) || Number(item.durationSeconds) || 0;
+        return !!p && (duration <= 0 || Number(p.seconds) < Math.max(0, duration - 3));
+      }).sort((a, b) => String(progressFor(b.id)?.updatedAt || "").localeCompare(String(progressFor(a.id)?.updatedAt || "")));
+    }
+
+    function movieContinueCard(item, dismissed = false) {
+      const p = progressFor(item.id);
+      const seconds = Math.max(0, Number(p?.seconds) || 0);
+      const duration = Number(p?.duration) || Number(item.durationSeconds) || 0;
+      const percent = duration > 0 ? Math.min(100, seconds / duration * 100) : 0;
+      return `<article class="listening-card movie-continue-card"><button type="button" class="listening-art" data-action="open-detail" data-id="${escapeHTML(item.id)}" aria-label="Details for ${escapeHTML(item.title)}">${item.posterURL ? `<img data-cover-src="${escapeHTML(api(item.posterURL))}" alt="" loading="lazy">` : "▶"}</button><div class="listening-copy"><h3><button type="button" data-action="open-detail" data-id="${escapeHTML(item.id)}">${escapeHTML(item.title)}</button></h3><p>${seconds > 0 ? `Resume at ${escapeHTML(formatTime(seconds))}${duration > 0 ? ` · ${escapeHTML(formatTime(Math.max(0, duration - seconds)))} left` : ""}` : "Ready to continue"}</p><progress max="100" value="${percent}" aria-label="${Math.round(percent)} percent watched"></progress></div><div class="movie-continue-actions"><button type="button" class="listening-resume" data-action="play-item" data-id="${escapeHTML(item.id)}" aria-label="Resume ${escapeHTML(item.title)}">Resume ▶</button><button type="button" class="listening-resume" data-action="${dismissed ? "restore" : "dismiss"}-movie-continue" data-id="${escapeHTML(item.id)}" aria-label="${dismissed ? "Restore" : "Dismiss"} ${escapeHTML(item.title)}">${dismissed ? "Restore" : "Dismiss"}</button></div></article>`;
+    }
+
+    function movieContinueShelf() {
+      const unfinished = unfinishedMovies();
+      const continuing = unfinished.filter(item => !dismissedMovieIDs.has(item.id));
+      const dismissed = unfinished.filter(item => dismissedMovieIDs.has(item.id));
+      if (!unfinished.length) return "";
+      return `<section class="web-rail movie-continue-shelf"><h2>Continue watching</h2><p class="sub">${continuing.length} unfinished · kept here until finished or dismissed</p><div class="movie-continue-grid">${continuing.map(item => movieContinueCard(item)).join("")}</div>${dismissed.length ? `<details class="movie-dismissed"><summary>Dismissed movies (${dismissed.length})</summary><div class="movie-continue-grid">${dismissed.map(item => movieContinueCard(item, true)).join("")}</div></details>` : ""}</section>`;
+    }
 
     function movieShelfGroups(source) {
       const movies = (source || []).filter(item => item.kind === "movie" && !item.isPlaceholder);
@@ -4567,7 +4629,7 @@
         : movieShelfExpanded && groups.full.length > 96
           ? `<div class="catalog-more"><button type="button" data-action="collapse-movie-shelf">Show a faster shelf</button></div>`
           : "";
-      rails.innerHTML = shelf("Continue watching", `${groups.continueWatching.length} movies in progress`, groups.continueWatching.slice(0, 12)) +
+      rails.innerHTML = movieContinueShelf() +
         shelf("Featured movies", "newest unwatched films from your shelf", groups.featured.slice(0, 18)) +
         curatedMovieShelves() +
         shelf("Quick watches", "under two hours", groups.quick.slice(0, 18)) +
@@ -4847,9 +4909,10 @@
         .sort((a,b)=>(progressByID.get(b.id)?.updatedAt || "").localeCompare(
                       progressByID.get(a.id)?.updatedAt || ""));
 
-      $("#continueRow").hidden = libraryLayout === "rails" || continuing.length === 0 || activeTab !== "all";
+      $("#continueRow").hidden = activeTab === "movies" ? !movieContinueShelf() : libraryLayout === "rails" || continuing.length === 0 || activeTab !== "all";
       if (!$("#continueRow").hidden) {
-        $("#continueGrid").innerHTML = continuing.map(i => cardHTML(i)).join("");
+        $("#continueRow > h2").hidden = activeTab === "movies";
+        $("#continueGrid").innerHTML = activeTab === "movies" ? movieContinueShelf() : continuing.map(i => cardHTML(i)).join("");
       }
 
       const grid = $("#grid");
@@ -5152,6 +5215,8 @@
       else if (["convert-book-m4b", "lookup-book-chapters", "apply-book-chapters", "reset-book-chapters"].includes(act) && btn.dataset.id) void runBookTool(act, btn.dataset.id);
       else if (act === "play-book-chapter" && btn.dataset.id) void playBookDetailChapter(btn.dataset.id, Number(btn.dataset.seconds));
       else if (act === "play-item" && btn.dataset.id) startPlaybackById(btn.dataset.id);
+      else if (act === "dismiss-movie-continue" && btn.dataset.id) void setMovieDismissed(btn.dataset.id, true);
+      else if (act === "restore-movie-continue" && btn.dataset.id) void setMovieDismissed(btn.dataset.id, false);
       else if (act === "expand-movie-shelf") { movieShelfExpanded = true; renderMovieCatalog(visibleItems()); }
       else if (act === "collapse-movie-shelf") { movieShelfExpanded = false; renderMovieCatalog(visibleItems()); }
       else if (act === "expand-library-shelf") { libraryShelfLimit += 96; render(); }
@@ -5825,6 +5890,7 @@
       if (detail.status === "ready" && detail.playlistURL) preparedVideos.set(detail.id, detail.playlistURL);
       else preparedVideos.delete(detail.id);
     });
+    void loadMovieContinuePreferences();
     restorePendingProgress();
     fetch(api("/api/library")).then(async response => {
       const etag = response.headers.get("ETag") || "";

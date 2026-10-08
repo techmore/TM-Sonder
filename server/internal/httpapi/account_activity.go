@@ -25,8 +25,9 @@ type accountActivityStore struct {
 }
 
 type accountActivity struct {
-	Progress map[string]api.ProgressRecord `json:"progress"`
-	Reading  api.ReadingState              `json:"reading"`
+	Progress        map[string]api.ProgressRecord `json:"progress"`
+	Reading         api.ReadingState              `json:"reading"`
+	DismissedMovies map[string]bool               `json:"dismissedMovies,omitempty"`
 }
 
 type accountActivityFile struct {
@@ -131,8 +132,9 @@ func (s *accountActivityStore) ensure(username, owner string, legacyProgress []a
 
 func emptyAccountActivity() accountActivity {
 	return accountActivity{
-		Progress: make(map[string]api.ProgressRecord),
-		Reading:  api.ReadingState{Queue: []string{}, Records: []api.BookReadingRecord{}},
+		Progress:        make(map[string]api.ProgressRecord),
+		DismissedMovies: make(map[string]bool),
+		Reading:         api.ReadingState{Queue: []string{}, Records: []api.BookReadingRecord{}},
 	}
 }
 
@@ -148,6 +150,9 @@ func cloneAccountActivity(in accountActivity) accountActivity {
 		out.Progress[id] = record
 	}
 	out.Reading = cloneReadingState(in.Reading)
+	for id, dismissed := range in.DismissedMovies {
+		out.DismissedMovies[id] = dismissed
+	}
 	return out
 }
 

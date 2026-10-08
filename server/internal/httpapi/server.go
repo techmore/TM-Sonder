@@ -327,6 +327,8 @@ func (s *Server) routes() {
 	m.HandleFunc("GET /stream/{id}/vod/{cache}/{asset}", s.handleMovieVODAsset)
 	m.HandleFunc("GET /api/movies/{id}/preparation", s.handleMoviePreparation)
 	m.HandleFunc("POST /api/movies/{id}/prepare", s.handleMoviePrepare)
+	m.HandleFunc("GET /api/movies/continue", s.handleMovieContinue)
+	m.HandleFunc("PATCH /api/movies/{id}/continue", s.handleMovieContinue)
 	m.HandleFunc("GET /subtitles/{id}/{index}", s.handleSubtitle)
 	m.HandleFunc("GET /artwork/poster/{id}", s.handlePoster)
 	m.HandleFunc("GET /artwork/curated/{id}", s.handleCuratedPoster)
