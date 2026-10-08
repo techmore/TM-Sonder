@@ -106,7 +106,7 @@ func (s *Server) streamTranscode(w http.ResponseWriter, r *http.Request, item *l
 	}
 
 	streamItem, release := s.cacheItem(item, st)
-	if q.Get("delivery") == "hls" {
+	if useNativeHLS(r) {
 		s.streamHLS(w, r, streamItem, start, burnSub, audioTrack, release)
 		return
 	}

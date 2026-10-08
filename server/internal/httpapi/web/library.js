@@ -465,7 +465,7 @@
     function playbackPlan(item) {
       if (preparedVideos.has(item.id)) {
         const playlist = preparedVideos.get(item.id);
-        return { mode: "video", url: npMedia()?.canPlayType("application/vnd.apple.mpegurl") ? playlist : playlist.replace(/index\.m3u8$/, "download.mp4?inline=1") };
+        return { mode: "video", url: nativeHLSAvailable() ? playlist : playlist.replace(/index\.m3u8$/, "download.mp4?inline=1") };
       }
       const format = String(item.format || "").toLowerCase();
       const kind = String(item.kind || "");
@@ -781,12 +781,18 @@
 
     function npMedia() { return $("#npMedia"); }
 
+    function nativeHLSAvailable(media = npMedia()) {
+      if (media?.canPlayType?.("application/vnd.apple.mpegurl") || media?.canPlayType?.("application/x-mpegURL")) return true;
+      // iOS supports native HLS even when its MIME capability probe is empty.
+      return typeof navigator !== "undefined" && /iPhone|iPad|iPod/.test(navigator.userAgent || "");
+    }
+
     function playbackPosition(media = npMedia()) {
       return (npVideoTranscoded ? npVideoOffset : 0) + ((media && media.currentTime) || 0);
     }
 
     function transcodedVideoURL(item, offset) {
-      const nativeHLS = npMedia()?.canPlayType("application/vnd.apple.mpegurl");
+      const nativeHLS = nativeHLSAvailable();
       return api("/stream/" + item.id + "?transcode=1" + (nativeHLS ? "&delivery=hls&playback=" + encodeURIComponent(npHLSClientID) + "&generation=" + (++npHLSGeneration) : "") + "&ss=" + Math.max(0, offset).toFixed(3));
     }
 
@@ -1409,7 +1415,7 @@
             cancelPlaybackAttempt();
           } else if (!attempt.retried) recover();
           else failed();
-        }, npVideoTranscoded && media.src.includes("delivery=hls") ? 25000 : 8000);
+        }, media.src.includes("delivery=hls") || /\.m3u8(?:[?#]|$)/.test(media.src) ? 25000 : 8000);
       };
       const recover = () => {
         if (!active() || attempt.retried) return;
@@ -1448,7 +1454,7 @@
         try { media.load(); } catch (error) { failed(error); return; }
         play();
       };
-      status("");
+      status(nowPlayingMode === "video" ? "Starting video…" : "");
       if (npResumeCheckpoint || media.error || media.networkState === 3 || (npVideoTranscoded && media.ended)) recover();
       else play();
     }
@@ -1736,14 +1742,16 @@
       const media = npMedia();
       if (!media) return;
       const playing = !media.paused && !media.ended;
+      const buffering = playing && nowPlayingMode === "video" && Number(media.readyState || 0) < 3;
       const button = $("#npPlayPause");
       if (button) {
         button.dataset.playing = playing ? "true" : "false";
-        button.setAttribute("aria-label", playing ? "Pause" : "Play");
+        button.dataset.buffering = buffering ? "true" : "false";
+        button.setAttribute("aria-label", buffering ? "Pause loading video" : playing ? "Pause" : "Play");
         button.setAttribute("aria-pressed", playing ? "true" : "false");
       }
       if (typeof navigator !== "undefined" && "mediaSession" in navigator) {
-        navigator.mediaSession.playbackState = playing ? "playing" : "paused";
+        navigator.mediaSession.playbackState = playing && !buffering ? "playing" : "paused";
       }
       if (selectedBookID) updateBookDetailPlaybackButton();
     }
@@ -2049,12 +2057,26 @@
       if (!npResumeCheckpoint) startReadSession();
       onPlayStateChange();
       const status = $("#npStatus");
-      if (status?.textContent === playbackPrompt() || status?.textContent === "Reconnecting at your saved position…") status.textContent = "";
+      if (nowPlayingMode !== "video" && (status?.textContent === playbackPrompt() || status?.textContent === "Reconnecting at your saved position…")) status.textContent = "";
       checkSleepTimer();
+    });
+    on("#npMedia", "playing", () => {
+      const status = $("#npStatus");
+      if (status && ["Starting video…", "Buffering video…", "Reconnecting at your saved position…", playbackPrompt()].includes(status.textContent)) status.textContent = "";
+      onPlayStateChange();
+    });
+    on("#npMedia", "waiting", () => {
+      if (nowPlayingMode === "video" && !npMedia()?.paused) {
+        const status = $("#npStatus");
+        if (status) status.textContent = "Buffering video…";
+        onPlayStateChange();
+      }
     });
     on("#npMedia", "pause", () => {
       if (npPlaybackAttempt?.loading) return;
       cancelPlaybackAttempt();
+      const status = $("#npStatus");
+      if (status && ["Starting video…", "Buffering video…"].includes(status.textContent)) status.textContent = "";
       sampleReadTime(true);
       onPlayStateChange();
       saveProgress(true);

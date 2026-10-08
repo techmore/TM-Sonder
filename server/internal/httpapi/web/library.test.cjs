@@ -69,6 +69,27 @@ const librarySource = fs.readFileSync(`${__dirname}/library.js`, 'utf8');
 const libraryHTML = fs.readFileSync(`${__dirname}/library.html`, 'utf8');
 const libraryCSS = fs.readFileSync(`${__dirname}/library.css`, 'utf8');
 
+test('iPhone playback chooses HLS even when the MIME probe returns empty', () => {
+  const get = catalog([movie('phone', 1999)]);
+  get(`navigator.userAgent='Mozilla/5.0 (iPhone) AppleWebKit Safari/604.1'; $("#npMedia").canPlayType=()=>''; true`);
+  assert.equal(get('nativeHLSAvailable()'), true);
+  assert.match(get('transcodedVideoURL(items[0],285.18)'), /delivery=hls&playback=.+&generation=1&ss=285\.180/);
+  get(`preparedVideos.set('phone','/stream/phone/vod/cache/index.m3u8'); true`);
+  assert.equal(get('playbackPlan(items[0]).url'), '/stream/phone/vod/cache/index.m3u8');
+});
+
+test('video startup shows buffering until decoded playback starts', () => {
+  const get = catalog([movie('phone', 1999)]);
+  get(`nowPlayingItem=items[0];nowPlayingMode='video';const v=$("#npMedia");v.paused=false;v.readyState=1;v.src='/movie/index.m3u8';requestPlayback(v);v.listeners.play();true`);
+  assert.equal(get('$("#npStatus").textContent'), 'Starting video…');
+  assert.equal(get('$("#npPlayPause").attributes["aria-label"]'), 'Pause loading video');
+  get(`$("#npMedia").readyState=4;$("#npMedia").listeners.playing();true`);
+  assert.equal(get('$("#npStatus").textContent'), '');
+  assert.equal(get('$("#npPlayPause").attributes["aria-label"]'), 'Pause');
+  get(`$("#npMedia").readyState=2;$("#npMedia").listeners.waiting();true`);
+  assert.equal(get('$("#npStatus").textContent'), 'Buffering video…');
+});
+
 test('library shows its version and keeps audiobook layout in Settings', () => {
   assert.match(libraryHTML, /id="appVersion"/);
   assert.match(libraryHTML, /id="audiobookLayoutSel"/);
