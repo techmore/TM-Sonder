@@ -475,6 +475,7 @@
     let nowPlayingMode = "audio";
     let npVideoTranscoded = false;
     let npVideoOffset = 0;
+    const npHLSClientID = typeof crypto !== "undefined" && crypto.randomUUID ? crypto.randomUUID() : Date.now().toString(36) + Math.random().toString(36).slice(2) + Math.random().toString(36).slice(2);
     let npSeeking = false;
     let npLastSaved = 0;
     let npPlaybackAttempt = null;
@@ -779,7 +780,7 @@
 
     function transcodedVideoURL(item, offset) {
       const nativeHLS = npMedia()?.canPlayType("application/vnd.apple.mpegurl");
-      return api("/stream/" + item.id + "?transcode=1" + (nativeHLS ? "&delivery=hls" : "") + "&ss=" + Math.max(0, offset).toFixed(3));
+      return api("/stream/" + item.id + "?transcode=1" + (nativeHLS ? "&delivery=hls&playback=" + encodeURIComponent(npHLSClientID) : "") + "&ss=" + Math.max(0, offset).toFixed(3));
     }
 
     function renderAirPlayWirelessState() {

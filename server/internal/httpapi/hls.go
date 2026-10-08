@@ -16,7 +16,7 @@ import (
 func (s *Server) streamHLS(w http.ResponseWriter, r *http.Request, item *library.Item, start float64, sub, audio int, release func()) {
 	ctx, cancel := context.WithTimeout(r.Context(), 25*time.Second)
 	defer cancel()
-	session, err := s.tm.StartHLS(ctx, filepath.Join(s.cfg().DataDir, "hls-runtime"), item.ID, transcode.Request{Path: item.FilePath, StartSeconds: start, BurnSubtitleN: sub, AudioTrackN: audio}, release)
+	session, err := s.tm.StartHLS(ctx, filepath.Join(s.cfg().DataDir, "hls-runtime"), item.ID, r.URL.Query().Get("playback"), transcode.Request{Path: item.FilePath, StartSeconds: start, BurnSubtitleN: sub, AudioTrackN: audio}, release)
 	if err != nil {
 		writeError(w, http.StatusServiceUnavailable, "Video encoder busy; retry playback")
 		return

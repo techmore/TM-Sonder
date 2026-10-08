@@ -18,13 +18,35 @@ import (
 // limits, input pacing, rolling segments and idle eviction bound resources.
 type HLSSession struct {
 	ID, ItemID, dir string
+	owner           string
 	cancel          context.CancelFunc
 	done            chan struct{}
 	mu              sync.Mutex
 	touched         time.Time
 }
 
-func (m *Manager) StartHLS(ctx context.Context, root, itemID string, req Request, release func()) (*HLSSession, error) {
+func (m *Manager) StartHLS(ctx context.Context, root, itemID, owner string, req Request, release func()) (*HLSSession, error) {
+	if len(owner) >= 20 && len(owner) <= 100 {
+		var previous []*HLSSession
+		m.hls.Range(func(_, value any) bool {
+			old := value.(*HLSSession)
+			if old.owner == owner {
+				old.cancel()
+				previous = append(previous, old)
+			}
+			return true
+		})
+		for _, old := range previous {
+			select {
+			case <-old.done:
+			case <-ctx.Done():
+				release()
+				return nil, ctx.Err()
+			}
+		}
+	} else {
+		owner = ""
+	}
 	select {
 	case m.sem <- struct{}{}:
 	case <-ctx.Done():
@@ -57,7 +79,7 @@ func (m *Manager) StartHLS(ctx context.Context, root, itemID string, req Request
 		return fail(err)
 	}
 	runCtx, cancel := context.WithCancel(context.Background())
-	s := &HLSSession{ID: id, ItemID: itemID, dir: dir, cancel: cancel, done: make(chan struct{}), touched: time.Now()}
+	s := &HLSSession{ID: id, ItemID: itemID, dir: dir, owner: owner, cancel: cancel, done: make(chan struct{}), touched: time.Now()}
 	req.Mode = ModeEncode
 	req.CopyAudio = false
 	cfg := m.cfg
