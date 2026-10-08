@@ -180,6 +180,7 @@
     // iOS can leave native fullscreen during loading, rotation, or app resume.
     // Keep the movie visible; only an explicit Dock action should hide it.
     if (active && mode === "fullscreen" && !nativeFullscreen()) layout("fullscreen");
+    else window.SonderMediaPresentationChanged?.();
   }
   document.addEventListener("fullscreenchange", fullscreenChanged);
   document.addEventListener("webkitfullscreenchange", fullscreenChanged);
