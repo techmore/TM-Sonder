@@ -9,7 +9,7 @@ import (
 func (s *Server) SetSubtitleManager(manager *subtitles.Manager) { s.subtitleManager = manager }
 
 func (s *Server) handleSubtitleMaintenance(w http.ResponseWriter, r *http.Request) {
-	if !s.requireOwner(w, r) {
+	if !s.requireSubtitleOwner(w, r) {
 		return
 	}
 	if s.subtitleManager == nil {
@@ -22,4 +22,17 @@ func (s *Server) handleSubtitleMaintenance(w http.ResponseWriter, r *http.Reques
 		return
 	}
 	writeJSON(w, http.StatusOK, s.subtitleManager.Status())
+}
+
+// Runtime control is restricted to the owner account or direct loopback access.
+func (s *Server) requireSubtitleOwner(w http.ResponseWriter, r *http.Request) bool {
+	if r.Header.Get("X-Forwarded-Host") == "" && isLoopback(peerHost(r)) && hostIsLoopback(r.Host) {
+		return true
+	}
+	username, ok := s.sessionUsername(r)
+	if !ok || username != s.accounts.Username() {
+		writeError(w, http.StatusForbidden, "Owner account required")
+		return false
+	}
+	return true
 }
