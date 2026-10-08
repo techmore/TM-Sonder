@@ -444,6 +444,13 @@
         </select>
       </label>
       <label style="display:flex;gap:8px;align-items:center;margin-bottom:6px">
+        Movies and shows open in:
+        <select id="videoPresentationSel" aria-label="Default video presentation" style="background:var(--panel2);border:1px solid var(--line);color:var(--text);border-radius:8px;padding:6px 10px">
+          <option value="fullscreen">Fullscreen</option><option value="floating">Floating pop-out</option><option value="pip">Picture in picture</option><option value="dock">Bottom bar</option>
+        </select>
+      </label>
+      <p style="color:var(--muted);font-size:11.5px;margin:2px 0 10px">Video presentation saves on this device. Change it anytime in the player. Drag the floating player's header to move it; resize from its corner on desktop.</p>
+      <label style="display:flex;gap:8px;align-items:center;margin-bottom:6px">
         Chapter numbering:
         <select id="chapterNumeralsSel" aria-label="Audiobook chapter numbering" style="background:var(--panel2);border:1px solid var(--line);color:var(--text);border-radius:8px;padding:6px 10px">
           <option value="arabic">Arabic · 1, 2, 3</option><option value="roman">Roman · I, II, III</option>
@@ -571,5 +578,6 @@
 
   <script src="/library.js?v=asset"></script>
   <script src="/movie-downloads.js?v=asset"></script>
+  <script src="/video-presentation.js?v=asset"></script>
 </body>
 </html>

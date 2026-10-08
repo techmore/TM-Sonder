@@ -362,6 +362,7 @@ func (s *Server) routes() {
 	m.HandleFunc("GET /library.css", s.handleLibraryCSS)
 	m.HandleFunc("GET /library.js", s.handleLibraryJS)
 	m.HandleFunc("GET /movie-downloads.js", s.handleMovieDownloadsJS)
+	m.HandleFunc("GET /video-presentation.js", s.handleVideoPresentationJS)
 	m.HandleFunc("GET /favicon.svg", s.handleFavicon)
 	m.HandleFunc("GET /favicon.png", s.handleFaviconPNG)
 	m.HandleFunc("GET /favicon.ico", s.handleFaviconPNG)
@@ -456,7 +457,7 @@ func (s *Server) withGzip(next http.Handler) http.Handler {
 			strings.HasPrefix(path, "/read/") ||
 			path == "/api/library" || path == "/library.json" ||
 			path == "/" || path == "/audiobooks" || path == "/audiobooks-classic" || path == "/audiobooks-beta" || path == "/ebooks" ||
-			path == "/shared.js" || path == "/library.css" || path == "/library.js" || path == "/movie-downloads.js" || path == "/epub.js" || path == "/jszip.js" || path == "/favicon.ico" ||
+			path == "/shared.js" || path == "/library.css" || path == "/library.js" || path == "/movie-downloads.js" || path == "/video-presentation.js" || path == "/epub.js" || path == "/jszip.js" || path == "/favicon.ico" ||
 			path == "/favicon.svg" || path == "/favicon.png" {
 			// These routes manage their own cached gzip.
 			next.ServeHTTP(w, r)
@@ -702,7 +703,7 @@ func isBrowserPage(path string) bool {
 
 func isPublicWebAsset(path string) bool {
 	switch path {
-	case "/shared.js", "/library.css", "/library.js", "/movie-downloads.js", "/epub.js", "/jszip.js", "/favicon.svg", "/favicon.png", "/favicon.ico":
+	case "/shared.js", "/library.css", "/library.js", "/movie-downloads.js", "/video-presentation.js", "/epub.js", "/jszip.js", "/favicon.svg", "/favicon.png", "/favicon.ico":
 		return true
 	default:
 		return false

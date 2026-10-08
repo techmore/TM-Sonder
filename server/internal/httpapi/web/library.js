@@ -1265,6 +1265,7 @@
       return typeof window !== "undefined" && typeof window.matchMedia === "function" &&
         window.matchMedia("(max-width: 700px)").matches;
     }
+    window.SonderPlayerExpanded = setPlayerExpanded;
 
     // On a phone the detail dialog is an entry point into the player, not a
     // second surface that should remain stacked above it. Desktop keeps the
@@ -1536,8 +1537,13 @@
       // Audiobooks should feel like a listening app on a phone. Open the
       // dedicated surface immediately; the compact dock remains available
       // after the listener taps Minimize.
-      if (mode === "video") setPlayerExpanded(isMobileViewport());
-      else setPlayerExpanded(mode === "audio" && isMobileViewport());
+      if (mode === "video") {
+        setPlayerExpanded(false);
+        window.SonderVideoPresentation?.start(mode);
+      } else {
+        window.SonderVideoPresentation?.stop();
+        setPlayerExpanded(mode === "audio" && isMobileViewport());
+      }
       syncAirPlayAvailabilityListener();
       updateMediaSession(item);
     }
@@ -1617,6 +1623,7 @@
     }
 
     function stopPlayback() {
+      window.SonderVideoPresentation?.stop();
       const media = npMedia();
       cancelPlaybackAttempt();
       saveProgress(true);
@@ -1997,6 +2004,10 @@
       else openDetail(nowPlayingItem.id, true);
     });
     on("#npExpand", "click", () => {
+      if (nowPlayingMode === "video" && window.SonderVideoPresentation) {
+        window.SonderVideoPresentation.present("fullscreen");
+        return;
+      }
       const host = $("#nowPlaying");
       const button = $("#npExpand");
       if (!host) return;
