@@ -95,6 +95,7 @@ type Session struct {
 type reader struct {
 	sess *Session
 	ch   chan []byte
+	done chan struct{}
 	pend []byte // bytes left from last chunk; owned by single Read caller
 	once sync.Once
 }
@@ -105,9 +106,16 @@ func (r *reader) Read(p []byte) (int, error) {
 		r.pend = r.pend[n:]
 		return n, nil
 	}
-	b, ok := <-r.ch
-	if !ok {
-		return 0, io.EOF
+	var b []byte
+	// Drain queued output before reporting EOF after ffmpeg finishes.
+	select {
+	case b = <-r.ch:
+	default:
+		select {
+		case b = <-r.ch:
+		case <-r.done:
+			return 0, io.EOF
+		}
 	}
 	n := copy(p, b)
 	if n < len(b) {
@@ -117,27 +125,18 @@ func (r *reader) Read(p []byte) (int, error) {
 }
 
 func (r *reader) Close() error {
-	s := r.sess
-	s.mu.Lock()
-	_, ok := s.readers[r]
-	if ok {
-		delete(s.readers, r)
-		s.maybeScheduleIdleLocked()
-	}
-	s.mu.Unlock()
-	if ok {
-		r.once.Do(func() { close(r.ch) })
-	}
+	r.sess.closeReader(r)
 	return nil
 }
 
 func (s *Session) closeReader(r *reader) {
 	r.once.Do(func() {
+		// Wake a blocked distributor before taking the session lock.
+		close(r.done)
 		s.mu.Lock()
 		delete(s.readers, r)
 		s.maybeScheduleIdleLocked()
 		s.mu.Unlock()
-		close(r.ch)
 	})
 }
 
@@ -188,7 +187,7 @@ func (s *Session) drainReaders() {
 	}
 	s.mu.Unlock()
 	for _, r := range rs {
-		r.once.Do(func() { close(r.ch) })
+		r.once.Do(func() { close(r.done) })
 	}
 }
 
@@ -329,7 +328,7 @@ func absDiff(a, b float64) float64 {
 }
 
 func (s *Session) attach() *reader {
-	r := &reader{sess: s, ch: make(chan []byte, 32)}
+	r := &reader{sess: s, ch: make(chan []byte, 32), done: make(chan struct{})}
 	s.mu.Lock()
 	if s.idle != nil {
 		s.idle.Stop()
@@ -430,19 +429,20 @@ func (m *Manager) spawn(reqCtx context.Context, req Request) (*Session, error) {
 			n, err := stdout.Read(buf)
 			if n > 0 {
 				s.mu.Lock()
-				if len(s.readers) > 0 {
-					chunk := make([]byte, n)
-					copy(chunk, buf[:n])
-					for r := range s.readers {
-						select {
-						case r.ch <- chunk:
-						default:
-							// Slow consumer: drop it rather than stall ffmpeg.
-							go s.closeReader(r)
-						}
-					}
+				rs := make([]*reader, 0, len(s.readers))
+				for r := range s.readers {
+					rs = append(rs, r)
 				}
 				s.mu.Unlock()
+				chunk := append([]byte(nil), buf[:n]...)
+				for _, r := range rs {
+					select {
+					case r.ch <- chunk:
+					case <-r.done:
+					case <-ctx.Done():
+						return
+					}
+				}
 			}
 			if err != nil {
 				return
@@ -501,7 +501,9 @@ func buildArgs(req Request, cfg Config) []string {
 		args = append(args,
 			"-c:v", "libx264",
 			"-preset", cfg.Preset,
-			"-crf", "20")
+			"-crf", "20",
+			"-pix_fmt", "yuv420p",
+			"-force_key_frames", "expr:gte(t,n_forced*2)")
 		args = append(args, "-c:a", "aac", "-b:a", "192k")
 	}
 
