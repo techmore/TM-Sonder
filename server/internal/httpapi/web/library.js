@@ -1751,7 +1751,7 @@
         button.setAttribute("aria-pressed", playing ? "true" : "false");
       }
       if (typeof navigator !== "undefined" && "mediaSession" in navigator) {
-        navigator.mediaSession.playbackState = playing && !buffering ? "playing" : "paused";
+        navigator.mediaSession.playbackState = fullscreenVideoSession() ? "none" : playing && !buffering ? "playing" : "paused";
       }
       if (selectedBookID) updateBookDetailPlaybackButton();
     }
@@ -1906,8 +1906,23 @@
     //     series, and "album" was previously only ever a TV show's title;
     //   * position state in *book* coordinates, so the island's scrubber
     //     addresses the whole book rather than the current file.
+    function fullscreenVideoSession() {
+      return nowPlayingMode === "video" && !!window.SonderVideoPresentation?.isFullscreen?.();
+    }
+    function clearCustomMediaSession() {
+      const session = navigator.mediaSession;
+      session.metadata = null;
+      session.playbackState = "none";
+      try { session.setPositionState?.(); } catch { /* unsupported */ }
+      for (const action of ["play", "pause", "seekbackward", "seekforward", "seekto", "stop"]) {
+        try { session.setActionHandler(action, null); } catch { /* unsupported */ }
+      }
+    }
     function updateMediaSession(item) {
       if (typeof navigator === "undefined" || !("mediaSession" in navigator)) return;
+      // Safari still owns its native Now Playing UI. Fullscreen video does not
+      // publish Sonder's audiobook-style metadata, commands or position state.
+      if (fullscreenVideoSession()) { clearCustomMediaSession(); return; }
       const artwork = item.posterURL
         ? [{ src: api(item.posterURL), sizes: "512x512", type: "image/jpeg" }]
         : [];
@@ -1939,7 +1954,7 @@
     function updatePositionState() {
       if (typeof navigator === "undefined" || !("mediaSession" in navigator)) return;
       const session = navigator.mediaSession;
-      if (!session.setPositionState) return;
+      if (fullscreenVideoSession() || !session.setPositionState) return;
       const media = npMedia();
       if (!media) return;
       // A multi-part book is one title to the lock screen, so the scrubber must
@@ -1955,6 +1970,12 @@
         });
       } catch { /* transient state, safe to skip */ }
     }
+
+    window.SonderMediaPresentationChanged = () => {
+      if (nowPlayingItem) updateMediaSession(nowPlayingItem);
+      onPlayStateChange();
+      updatePositionState();
+    };
 
     function onDocument(event, handler) {
       if (typeof document !== "undefined" && typeof document.addEventListener === "function") {

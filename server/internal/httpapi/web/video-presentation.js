@@ -98,6 +98,7 @@
     if (next === "fullscreen" || next === "floating") raisePlayer();
     else lowerPlayer();
     if (next === "floating") clampFloating();
+    window.SonderMediaPresentationChanged?.();
   }
   async function fullscreen() {
     layout("fullscreen");
@@ -174,6 +175,7 @@
     else if (active && mode === "pip") layout("floating");
     syncPiPButton();
   });
+  video.addEventListener("webkitbeginfullscreen", () => window.SonderMediaPresentationChanged?.());
   function fullscreenChanged() {
     // iOS can leave native fullscreen during loading, rotation, or app resume.
     // Keep the movie visible; only an explicit Dock action should hide it.
@@ -258,6 +260,7 @@
       exitFullscreen(); exitPiP(); layout("dock");
       syncPiPButton();
     },
+    isFullscreen() { return active && !nativePiP() && (mode === "fullscreen" || !!nativeFullscreen()); },
     present,
   };
 })();
