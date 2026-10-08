@@ -199,6 +199,7 @@ type Manager struct {
 	sessions map[string]*Session
 	sem      chan struct{}
 	hls      sync.Map
+	hlsStart sync.Mutex
 }
 
 func NewManager(cfg Config) *Manager {
