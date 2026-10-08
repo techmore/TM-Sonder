@@ -12,7 +12,7 @@
   const toolbar = document.createElement("div");
   toolbar.className = "np-presentation";
   toolbar.hidden = true;
-  toolbar.innerHTML = `<span class="np-move" role="button" tabindex="0" aria-label="Move floating player with arrow keys" title="Drag to move · arrow keys also work">⠿ <span>Video player</span></span><div class="np-view-actions"><button type="button" data-view="fullscreen">Fullscreen</button><button type="button" data-view="floating">Pop-out</button><button type="button" data-view="pip">Picture in picture</button><button type="button" data-view="dock">Dock</button></div><span class="np-view-status" role="status" aria-live="polite"></span>`;
+  toolbar.innerHTML = `<span class="np-move" role="button" tabindex="0" aria-label="Move floating player with arrow keys" title="Drag to move · arrow keys also work">⠿ <span>Video player</span></span><button type="button" class="np-resize" aria-label="Resize floating player" title="Drag to resize · arrow keys also work">↘</button><div class="np-view-actions"><button type="button" data-view="fullscreen">Fullscreen</button><button type="button" data-view="floating">Pop-out</button><button type="button" data-view="pip">Picture in picture</button><button type="button" data-view="dock">Dock</button></div><span class="np-view-status" role="status" aria-live="polite"></span>`;
   host.prepend(toolbar);
   const status = toolbar.querySelector(".np-view-status");
   const select = document.querySelector("#videoPresentationSel");
@@ -137,6 +137,26 @@
     host.style.left = rect.left + (event.key === "ArrowLeft" ? -delta : event.key === "ArrowRight" ? delta : 0) + "px";
     host.style.top = rect.top + (event.key === "ArrowUp" ? -delta : event.key === "ArrowDown" ? delta : 0) + "px";
     clampFloating();
+  });
+  const resizer = toolbar.querySelector(".np-resize");
+  let sizing;
+  function sizePlayer(width, height) {
+    const rect = host.getBoundingClientRect();
+    host.style.width = Math.max(Math.min(320, innerWidth), Math.min(width, innerWidth - rect.left)) + "px";
+    host.style.height = Math.max(Math.min(240, innerHeight), Math.min(height, innerHeight - rect.top)) + "px";
+    clampFloating();
+  }
+  resizer.addEventListener("pointerdown", event => {
+    if (mode !== "floating" || event.button !== 0) return;
+    event.preventDefault(); const rect = host.getBoundingClientRect();
+    sizing = { x:event.clientX, y:event.clientY, width:rect.width, height:rect.height }; resizer.setPointerCapture(event.pointerId);
+  });
+  resizer.addEventListener("pointermove", event => { if (sizing) sizePlayer(sizing.width + event.clientX - sizing.x, sizing.height + event.clientY - sizing.y); });
+  for (const event of ["pointerup", "pointercancel"]) resizer.addEventListener(event, () => { sizing = null; });
+  resizer.addEventListener("keydown", event => {
+    if (mode !== "floating" || !["ArrowLeft", "ArrowRight", "ArrowUp", "ArrowDown"].includes(event.key)) return;
+    event.preventDefault(); const rect = host.getBoundingClientRect(), delta = event.shiftKey ? 40 : 10;
+    sizePlayer(rect.width + (event.key === "ArrowLeft" ? -delta : event.key === "ArrowRight" ? delta : 0), rect.height + (event.key === "ArrowUp" ? -delta : event.key === "ArrowDown" ? delta : 0));
   });
   window.addEventListener("resize", clampFloating);
   if (window.ResizeObserver) new ResizeObserver(clampFloating).observe(host);

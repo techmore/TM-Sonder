@@ -2,32 +2,58 @@
 <html lang="en">
 <head>
   <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
   <meta name="application-name" content="TM Sonder">
   <title>Read · TM Sonder</title>
   <link rel="icon" type="image/png" href="/favicon.png">
   <style>
     :root { color-scheme: light; --bg:#e9e5da; --panel:#f8f6f0; --line:#d4cfbf; --text:#292a23; --muted:#727367; --accent:#576c44; }
     * { box-sizing:border-box; }
-    body { margin:0; min-height:100vh; color:var(--text); background:var(--bg); font:15px/1.5 system-ui,-apple-system,"Segoe UI",sans-serif; }
-    header { position:sticky; top:0; z-index:2; display:grid; grid-template-columns:minmax(120px,1fr) minmax(160px,360px) minmax(120px,1fr); gap:12px; align-items:center; padding:12px 18px; background:rgba(248,246,240,.96); border-bottom:1px solid var(--line); }
-    header a, button, select { color:var(--text); background:var(--panel); border:1px solid var(--line); border-radius:8px; padding:8px 11px; font:inherit; }
-    header a { justify-self:start; text-decoration:none; }
-    header select { width:100%; min-width:0; }
-    #title { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; text-align:right; color:var(--muted); font-size:13px; }
-    main { min-height:calc(100vh - 60px); display:grid; grid-template-columns:52px minmax(0,1fr) 52px; align-items:stretch; gap:14px; padding:20px clamp(8px,3vw,36px); }
-    #viewer { min-height:calc(100vh - 100px); overflow:hidden; background:var(--panel); border:1px solid var(--line); border-radius:12px; box-shadow:0 8px 28px #27281b12; }
+    body { margin:0; height:100dvh; overflow:hidden; color:var(--text); background:var(--bg); font:15px/1.5 system-ui,-apple-system,"Segoe UI",sans-serif; }
+    #reader { display:flex; flex-direction:column; height:100%; background:var(--bg); }
+    header { flex:0 0 auto; display:flex; flex-wrap:wrap; gap:8px; align-items:center; padding:max(8px,env(safe-area-inset-top)) 12px 8px; background:var(--panel); border-bottom:1px solid var(--line); }
+    a, button, select { color:var(--text); background:var(--panel); border:1px solid var(--line); border-radius:8px; padding:8px 11px; min-height:44px; font:inherit; }
+    a { text-decoration:none; }
+    button { cursor:pointer; }
+    button:focus-visible, select:focus-visible, a:focus-visible { outline:2px solid var(--accent); outline-offset:2px; }
+    header select { min-width:0; }
+    #toc { flex:1; max-width:380px; }
+    #title { flex:1; min-width:120px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; color:var(--muted); font-size:13px; }
+    #move { cursor:move; touch-action:none; min-width:44px; }
+    #move[aria-disabled="true"] { cursor:default; }
+    .views { display:flex; gap:6px; flex-wrap:wrap; }
+    .views button[aria-pressed="true"] { background:var(--accent); color:#fff; }
+    main { flex:1; min-height:0; display:grid; grid-template-columns:48px minmax(0,1fr) 48px; align-items:stretch; gap:10px; padding:12px; }
+    #viewer { min-height:0; height:100%; overflow:hidden; background:var(--panel); border:1px solid var(--line); border-radius:12px; }
     #viewer iframe { border:0; }
-    .turn { align-self:center; width:48px; height:56px; padding:0; font-size:24px; cursor:pointer; }
+    .turn { align-self:center; width:44px; height:56px; padding:0; font-size:24px; }
     button:disabled { opacity:.45; cursor:default; }
-    #status { position:fixed; z-index:3; left:50%; bottom:14px; transform:translateX(-50%); max-width:min(640px,calc(100vw - 24px)); padding:9px 14px; border:1px solid var(--line); border-radius:9px; background:#f8f6f0; color:var(--muted); box-shadow:0 4px 18px #27281b15; }
+    footer { flex:0 0 auto; display:flex; flex-wrap:wrap; align-items:center; justify-content:center; gap:10px; padding:8px 12px max(8px,env(safe-area-inset-bottom)); font-size:13px; }
+    footer select { font-size:13px; }
+    #status { padding:5px 12px; text-align:center; color:var(--muted); font-size:13px; }
     #status[hidden] { display:none; }
+    #reader[data-mode="floating"] { position:fixed; left:24px; top:24px; width:min(800px,calc(100vw - 32px)); height:min(760px,calc(100dvh - 48px)); min-width:min(320px,100vw); min-height:300px; max-width:100vw; max-height:100dvh; resize:both; overflow:hidden; border:1px solid var(--line); border-radius:14px; box-shadow:0 12px 60px #0004; }
+    #reader[data-mode="dock"] { position:fixed; inset:auto 0 0; height:auto; }
+    #reader[data-mode="dock"] main, #reader[data-mode="dock"] footer, #reader[data-mode="dock"] #toc { display:none; }
+    #reader[data-mode="fullscreen"] { position:fixed; inset:0; width:100%; height:100dvh; }
+    #resize { display:none; touch-action:none; cursor:nwse-resize; }
+    #reader[data-mode="floating"] #resize { display:block; }
+    #reader:fullscreen { width:100vw; height:100vh; }
+    #reader:-webkit-full-screen { width:100vw; height:100vh; }
     @media(max-width:650px) {
-      header { grid-template-columns:auto minmax(0,1fr); }
       #title { display:none; }
-      main { grid-template-columns:38px minmax(0,1fr) 38px; gap:6px; padding:10px 5px; }
-      .turn { width:36px; }
-      #viewer { min-height:calc(100vh - 84px); }
+      header { gap:6px; padding-left:8px; padding-right:8px; }
+      header a { font-size:13px; padding:8px; }
+      .views { width:100%; justify-content:center; }
+      .views button { flex:1; font-size:13px; padding:8px; }
+      main { grid-template-columns:minmax(0,1fr); padding:6px; gap:0; }
+      .turn { position:absolute; bottom:max(76px,calc(env(safe-area-inset-bottom) + 76px)); z-index:2; background:var(--panel); opacity:.9; height:44px; }
+      #previous { left:10px; } #next { right:10px; }
+      #reader[data-mode="floating"] { left:8px; top:8px; width:calc(100vw - 16px); height:calc(100dvh - 16px); }
+      #reader[data-mode="floating"] #previous { left:10px; } #reader[data-mode="floating"] #next { right:10px; }
+      footer { gap:6px; font-size:12px; }
+      footer label { display:flex; align-items:center; gap:4px; }
+      footer select { max-width:130px; padding:6px; }
     }
   </style>
   <script src="/shared.js"></script>
@@ -35,21 +61,36 @@
   <script src="/epub.js"></script>
 </head>
 <body>
+  <section id="reader" data-mode="fullscreen" aria-label="Ebook reader">
   <header>
+    <button id="move" aria-label="Move reading panel with arrow keys" aria-disabled="true" title="Drag to move reading panel">⠿</button>
     <a id="back" href="/ebooks">← Books</a>
     <select id="toc" aria-label="Table of contents" disabled><option>Loading book…</option></select>
     <div id="title">TM Sonder reader</div>
+    <button id="resize" aria-label="Resize reading panel" title="Drag to resize · arrow keys also work">↘</button>
+    <div class="views" aria-label="Reading view">
+      <button data-view="fullscreen" aria-pressed="true">Fullscreen</button>
+      <button data-view="floating" aria-pressed="false">Pop-out</button>
+      <button data-view="window" aria-pressed="false">Window</button>
+      <button data-view="dock" aria-pressed="false">Minimize</button>
+    </div>
   </header>
   <main>
     <button class="turn" id="previous" type="button" aria-label="Previous page" disabled>‹</button>
     <div id="viewer" aria-label="Book pages"></div>
     <button class="turn" id="next" type="button" aria-label="Next page" disabled>›</button>
   </main>
+  <footer>
+    <span id="pagePosition" aria-live="polite">Opening…</span>
+    <label>Text <select id="fontSize" aria-label="Reading text size"><option value="100">Normal</option><option value="120">Larger</option><option value="140">Largest</option></select></label>
+    <label>Open in <select id="readingView" aria-label="Default reading view"><option value="fullscreen">Fullscreen</option><option value="floating">Pop-out</option><option value="window">Window</option></select></label>
+  </footer>
   <div id="status" role="status">Loading book…</div>
+  </section>
   <script>
     (() => {
       "use strict";
-      const { api, escapeHTML } = window.Sonder;
+      const { api } = window.Sonder;
       const id = decodeURIComponent(location.pathname.split("/").filter(Boolean).pop() || "");
       const title = document.querySelector("#title");
       const status = document.querySelector("#status");
@@ -61,6 +102,76 @@
       let book;
       let currentLocation;
       let restoringPosition = false;
+      const reader = document.querySelector("#reader");
+      const viewer = document.querySelector("#viewer");
+      const viewSelect = document.querySelector("#readingView");
+      const fontSelect = document.querySelector("#fontSize");
+      const handle = document.querySelector("#move");
+      function saved(key, fallback) { try { return localStorage.getItem(key) || fallback; } catch (_) { return fallback; } }
+      function save(key, value) { try { localStorage.setItem(key, value); } catch (_) {} }
+      const preferenceKey = "sonder.readingView.v1";
+      const allowedViews = ["fullscreen", "floating", "window", "dock"];
+      viewSelect.value = ["fullscreen", "floating", "window"].includes(saved(preferenceKey, "fullscreen")) ? saved(preferenceKey, "fullscreen") : "fullscreen";
+      fontSelect.value = ["100", "120", "140"].includes(saved("sonder.readingFont.v1", "100")) ? saved("sonder.readingFont.v1", "100") : "100";
+      let resizeTimer, drag;
+      function clampPanel() {
+        if (reader.dataset.mode !== "floating") return;
+        const rect = reader.getBoundingClientRect();
+        reader.style.left = Math.max(0, Math.min(rect.left, innerWidth - Math.min(rect.width, innerWidth))) + "px";
+        reader.style.top = Math.max(0, Math.min(rect.top, innerHeight - Math.min(rect.height, innerHeight))) + "px";
+      }
+      function setView(mode) {
+        if (!allowedViews.includes(mode)) return;
+        reader.dataset.mode = mode;
+        if (mode !== "floating") for (const prop of ["left", "top", "width", "height"]) reader.style.removeProperty(prop);
+        handle.setAttribute("aria-disabled", String(mode !== "floating"));
+        document.querySelectorAll("[data-view]").forEach(button => button.setAttribute("aria-pressed", String(button.dataset.view === mode)));
+        clampPanel();
+      }
+      async function present(mode) {
+        if (mode !== "fullscreen" && document.fullscreenElement) await document.exitFullscreen().catch(() => {});
+        setView(mode);
+        if (mode === "fullscreen") {
+          try {
+            if (reader.requestFullscreen && document.fullscreenEnabled) await reader.requestFullscreen();
+            else if (reader.webkitRequestFullscreen) reader.webkitRequestFullscreen();
+          } catch (_) { showStatus("Full-window reading · browser fullscreen unavailable"); }
+        }
+      }
+      setView(viewSelect.value);
+      document.querySelectorAll("[data-view]").forEach(button => button.addEventListener("click", () => present(button.dataset.view)));
+      viewSelect.addEventListener("change", () => { save(preferenceKey, viewSelect.value); present(viewSelect.value); });
+      fontSelect.addEventListener("change", () => { save("sonder.readingFont.v1", fontSelect.value); rendition?.themes.fontSize(fontSelect.value + "%"); });
+      document.addEventListener("fullscreenchange", () => { if (!document.fullscreenElement && reader.dataset.mode === "fullscreen") setView("window"); });
+      document.addEventListener("keydown", event => { if (event.key === "Escape") present("window"); });
+      handle.addEventListener("pointerdown", event => {
+        if (reader.dataset.mode !== "floating" || event.button !== 0) return;
+        event.preventDefault(); const rect = reader.getBoundingClientRect();
+        drag = { x:event.clientX, y:event.clientY, left:rect.left, top:rect.top }; handle.setPointerCapture(event.pointerId);
+      });
+      handle.addEventListener("pointermove", event => { if (!drag) return; reader.style.left = drag.left + event.clientX - drag.x + "px"; reader.style.top = drag.top + event.clientY - drag.y + "px"; clampPanel(); });
+      for (const event of ["pointerup", "pointercancel"]) handle.addEventListener(event, () => { drag = null; });
+      handle.addEventListener("keydown", event => {
+        if (reader.dataset.mode !== "floating" || !["ArrowLeft", "ArrowRight", "ArrowUp", "ArrowDown"].includes(event.key)) return;
+        event.preventDefault(); const rect = reader.getBoundingClientRect(), delta = event.shiftKey ? 40 : 10;
+        reader.style.left = rect.left + (event.key === "ArrowLeft" ? -delta : event.key === "ArrowRight" ? delta : 0) + "px";
+        reader.style.top = rect.top + (event.key === "ArrowUp" ? -delta : event.key === "ArrowDown" ? delta : 0) + "px"; clampPanel();
+      });
+      const resizer = document.querySelector("#resize"); let sizing;
+      function sizePanel(width, height) {
+        const rect = reader.getBoundingClientRect();
+        reader.style.width = Math.max(Math.min(320, innerWidth), Math.min(width, innerWidth - rect.left)) + "px";
+        reader.style.height = Math.max(Math.min(300, innerHeight), Math.min(height, innerHeight - rect.top)) + "px"; clampPanel();
+      }
+      resizer.addEventListener("pointerdown", event => { if (reader.dataset.mode !== "floating" || event.button !== 0) return; event.preventDefault(); const rect = reader.getBoundingClientRect(); sizing = { x:event.clientX, y:event.clientY, width:rect.width, height:rect.height }; resizer.setPointerCapture(event.pointerId); });
+      resizer.addEventListener("pointermove", event => { if (sizing) sizePanel(sizing.width + event.clientX - sizing.x, sizing.height + event.clientY - sizing.y); });
+      for (const event of ["pointerup", "pointercancel"]) resizer.addEventListener(event, () => { sizing = null; });
+      resizer.addEventListener("keydown", event => { if (!["ArrowLeft", "ArrowRight", "ArrowUp", "ArrowDown"].includes(event.key)) return; event.preventDefault(); const rect = reader.getBoundingClientRect(); sizePanel(rect.width + (event.key === "ArrowLeft" ? -10 : event.key === "ArrowRight" ? 10 : 0), rect.height + (event.key === "ArrowUp" ? -10 : event.key === "ArrowDown" ? 10 : 0)); });
+      if (window.ResizeObserver) new ResizeObserver(() => {
+        clearTimeout(resizeTimer);
+        resizeTimer = setTimeout(() => { if (rendition && reader.dataset.mode !== "dock") rendition.resize(viewer.clientWidth, viewer.clientHeight); clampPanel(); }, 120);
+      }).observe(viewer);
+      window.addEventListener("resize", clampPanel);
       const positionKey = `sonder:epub-position:${id}`;
 
       function showStatus(message, hide = false) {
@@ -88,9 +199,24 @@
         const bytes = await file.arrayBuffer();
         if (!bytes.byteLength) throw new Error("The book file is empty.");
         book = ePub(bytes);
-        rendition = book.renderTo("viewer", { width:"100%", height:"100%", flow:"paginated", manager:"default", spread:"none", allowScriptedContent:false });
+        rendition = book.renderTo("viewer", { width:"100%", height:viewer.clientHeight, flow:"paginated", manager:"default", spread:"none", allowScriptedContent:false });
         rendition.themes.default({ body: { color:"#292a23", "font-family":"Georgia, serif", "line-height":"1.65", "font-size":"1.05em", "padding":"1em 1.5em" }, a: { color:"#576c44" }, img: { "max-width":"100%", height:"auto" } });
 
+        rendition.themes.fontSize(fontSelect.value + "%");
+        rendition.hooks.content.register(contents => {
+          let touch;
+          contents.document.addEventListener("touchstart", event => { if (event.touches.length === 1) touch = { x:event.touches[0].clientX, y:event.touches[0].clientY }; }, { passive:true });
+          contents.document.addEventListener("touchend", event => {
+            if (!touch || !event.changedTouches.length) return;
+            const dx = event.changedTouches[0].clientX - touch.x, dy = event.changedTouches[0].clientY - touch.y; touch = null;
+            if (Math.abs(dx) > 65 && Math.abs(dx) > Math.abs(dy) * 1.5 && !contents.window.getSelection()?.toString()) dx < 0 ? rendition.next() : rendition.prev();
+          }, { passive:true });
+          contents.document.addEventListener("keydown", event => {
+            if (event.target.closest("a,input,select,textarea,button") || event.altKey || event.ctrlKey || event.metaKey) return;
+            if (event.key === "ArrowLeft") { event.preventDefault(); rendition.prev(); }
+            if (event.key === "ArrowRight") { event.preventDefault(); rendition.next(); }
+          });
+        });
         const navigation = await book.loaded.navigation;
         const sections = flattenTOC(navigation.toc);
         toc.replaceChildren();
@@ -109,9 +235,10 @@
           const total = location?.start?.displayed?.total;
           const endPage = location?.end?.displayed?.page;
           const endTotal = location?.end?.displayed?.total;
+          document.querySelector("#pagePosition").textContent = page && total ? `Section page ${page} of ${total}` : "Reading";
           showStatus(page && total ? `Page ${page} of ${total}` : "Book opened", true);
           if (!restoringPosition && location?.start?.href && page) {
-            localStorage.setItem(positionKey, JSON.stringify({ href: location.start.href, page }));
+            save(positionKey, JSON.stringify({ cfi: location.start.cfi, href: location.start.href, page }));
           }
           previous.disabled = location?.start?.index === 0 && page <= 1;
           next.disabled = location?.end?.index >= book.spine.length - 1 && endPage >= endTotal;
@@ -121,10 +248,13 @@
           }
         });
         let savedPosition;
-        const storedPosition = localStorage.getItem(positionKey);
+        const storedPosition = saved(positionKey, "");
         try { savedPosition = JSON.parse(storedPosition || "null"); } catch {
           const savedSection = storedPosition && book.spine.get(storedPosition);
           if (savedSection) savedPosition = { href: savedSection.href, page: 1 };
+        }
+        if (savedPosition?.cfi && /^epubcfi\(/.test(savedPosition.cfi)) {
+          try { await rendition.display(savedPosition.cfi); return; } catch (_) { /* Older section position remains a fallback. */ }
         }
         if (savedPosition?.href && Number.isInteger(savedPosition.page) && savedPosition.page > 0) {
           showStatus("Restoring reading position…");
@@ -139,7 +269,7 @@
           }
           restoringPosition = false;
           if (currentLocation?.start?.href && currentLocation?.start?.displayed?.page) {
-            localStorage.setItem(positionKey, JSON.stringify({ href: currentLocation.start.href, page: currentLocation.start.displayed.page }));
+            save(positionKey, JSON.stringify({ cfi:currentLocation.start.cfi, href: currentLocation.start.href, page: currentLocation.start.displayed.page }));
           }
           return;
         }

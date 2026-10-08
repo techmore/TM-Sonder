@@ -2089,3 +2089,15 @@ body.np-video-immersive { overflow:hidden; padding-bottom:0; }
   .nowplaying.np-floating .np-controls #npBack, .nowplaying.np-floating .np-controls #npFwd { display:block; }
   .nowplaying.np-immersive .np-controls .np-play, .nowplaying.np-floating .np-controls .np-play { background:#bed0a3; color:#1b241e; }
 }
+
+.np-resize { display:none; touch-action:none; cursor:nwse-resize; min-width:44px; min-height:44px; color:#f5f5f1; background:#283328; border:1px solid #697969; border-radius:8px; }
+.np-floating .np-resize { display:block; }
+@media(max-width:700px) {
+  .nowplaying:not(.np-audio-mode) .np-bar { color:#f5f5f1; background:#182018; }
+  .nowplaying:not(.np-audio-mode) .np-seek { flex-basis:100%; }
+  .nowplaying:not(.np-audio-mode) .np-time { display:block; }
+  .nowplaying:not(.np-audio-mode) .np-seek-readouts { color:#c1cab9; }
+  .np-view-actions button { min-height:44px; }
+  .nowplaying.np-floating .np-presentation { flex:0 0 auto; }
+  .nowplaying.np-floating .np-view-actions { flex-basis:100%; }
+}
