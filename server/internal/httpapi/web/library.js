@@ -5816,8 +5816,12 @@
 
       // Playback lives in the persistent controller so it survives closing
       // this modal; here we only show metadata and a transport button.
-      const playerHTML = plan
-        ? `<div class="play-hint">${mediaLabel(plan.mode)} plays in the player at the bottom and keeps playing while you browse.</div>`
+      const readableBook = item.kind === "ebook" && ["epub", "pdf"].includes(String(item.format || "").toLowerCase());
+      const readerURL = api("/read/" + encodeURIComponent(item.id) + "?title=" + encodeURIComponent(item.title || "Book"));
+      const playerHTML = readableBook
+        ? `<div class="play-hint">Read fullscreen or in a movable panel. EPUB reading position and text size save on this device.</div>`
+        : plan
+        ? `<div class="play-hint">${plan.mode === "video" ? "Choose Fullscreen, Pop-out, Picture in picture, or Dock while watching. Set your default in Settings." : "Audio keeps playing while you browse."}</div>`
         : `<div class="not-playable"><strong>.${escapeHTML((item.format || "?").toUpperCase())}</strong> can't play here.
              <a href="${api("/stream/" + item.id)}" target="_blank" rel="noopener">Open in a native player</a>.</div>`;
       // A 147-file book has no meaningful "editions" list -- the files are its
@@ -5866,6 +5870,7 @@
         ${tags ? `<div class="tagrow">${tags}</div>` : ""}
         ${bookPartsForItem ? "" : editionsHTML(item)}
         <div class="actions">
+          ${readableBook ? `<a class="primary" href="${escapeHTML(readerURL)}">Read in browser</a>` : ""}
           ${plan ? `<button class="primary" onclick="startPlaybackById('${escapeHTML(item.id)}')">${playLabel}</button>` : ""}
           <a href="${api("/stream/" + item.id)}" target="_blank" rel="noopener">Open stream URL</a>
         </div>`;

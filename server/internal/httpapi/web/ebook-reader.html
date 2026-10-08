@@ -196,6 +196,15 @@
 
         const file = await fetch(api(`/stream/${encodeURIComponent(id)}`));
         if (!file.ok) throw new Error(file.status === 404 ? "The book file is missing." : "Could not open the book file.");
+        if (/application\/pdf/i.test(file.headers.get("content-type") || "")) {
+          await file.body?.cancel();
+          const frame = document.createElement("iframe"); frame.title = bookTitle + " PDF"; frame.src = api(`/stream/${encodeURIComponent(id)}`); frame.style.cssText = "width:100%;height:100%;border:0"; viewer.append(frame);
+          toc.replaceChildren(new Option("PDF · use document controls", "")); toc.disabled = true; fontSelect.disabled = true;
+          document.querySelector("#pagePosition").textContent = "PDF";
+          const original = document.createElement("a"); original.href = frame.src; original.target = "_blank"; original.rel = "noopener"; original.textContent = "Open PDF directly";
+          document.querySelector("footer").append(original);
+          showStatus("PDF page controls and zoom are provided by your browser."); return;
+        }
         const bytes = await file.arrayBuffer();
         if (!bytes.byteLength) throw new Error("The book file is empty.");
         book = ePub(bytes);

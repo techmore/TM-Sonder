@@ -1434,11 +1434,11 @@ func (s *Server) handleEbookBrowser(w http.ResponseWriter, r *http.Request) {
 	serveGzippableHTML(w, r, ebooksPage)
 }
 
-// handleEbookReader serves the in-browser reader for one cataloged EPUB.
+// handleEbookReader serves the in-browser reader for one cataloged EPUB or PDF.
 func (s *Server) handleEbookReader(w http.ResponseWriter, r *http.Request) {
 	item, ok := s.store.Get(r.PathValue("id"))
-	if !ok || item.Kind != api.KindEbook || item.Format != api.FormatEPUB {
-		writeError(w, http.StatusNotFound, "EPUB book not found")
+	if !ok || item.Kind != api.KindEbook || (item.Format != api.FormatEPUB && item.Format != api.FormatPDF) {
+		writeError(w, http.StatusNotFound, "Readable book not found")
 		return
 	}
 	serveGzippableHTML(w, r, ebookReaderPage)
