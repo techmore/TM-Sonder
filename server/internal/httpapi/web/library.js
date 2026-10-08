@@ -461,12 +461,6 @@
     // containers such as .m4b are MP4 audio and play directly when the browser
     // supports their probed codec (including Opus in MP4).
     const preparedVideos = new Map();
-    document.addEventListener("sonder:movie-prepared", event => {
-      const detail = event.detail;
-      if (!detail?.id) return;
-      if (detail.status === "ready" && detail.playlistURL) preparedVideos.set(detail.id, detail.playlistURL);
-      else preparedVideos.delete(detail.id);
-    });
 
     function playbackPlan(item) {
       if (preparedVideos.has(item.id)) {
@@ -5825,6 +5819,12 @@
       });
     }
 
+    document.addEventListener("sonder:movie-prepared", event => {
+      const detail = event.detail;
+      if (!detail?.id) return;
+      if (detail.status === "ready" && detail.playlistURL) preparedVideos.set(detail.id, detail.playlistURL);
+      else preparedVideos.delete(detail.id);
+    });
     restorePendingProgress();
     fetch(api("/api/library")).then(async response => {
       const etag = response.headers.get("ETag") || "";
