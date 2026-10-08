@@ -69,6 +69,94 @@ const librarySource = fs.readFileSync(`${__dirname}/library.js`, 'utf8');
 const libraryHTML = fs.readFileSync(`${__dirname}/library.html`, 'utf8');
 const libraryCSS = fs.readFileSync(`${__dirname}/library.css`, 'utf8');
 
+function presentationClient(platform = 'standard', readyState = 4) {
+  const node = () => ({ listeners: {}, attributes: {}, dataset: {}, hidden: false,
+    style: { removeProperty() {} }, classList: { add() {}, remove() {}, toggle() {} },
+    addEventListener(name, fn) { this.listeners[name] = fn; },
+    setAttribute(name, value) { this.attributes[name] = value; },
+    hasAttribute() { return false; }, prepend() {}, getBoundingClientRect() { return { left: 0, top: 0, width: 390, height: 300 }; } });
+  const host = node(), video = node(), button = node(), toolbar = node(), status = node();
+  const views = ['fullscreen', 'floating', 'pip', 'dock'].map(view => ({ ...node(), dataset: { view } }));
+  const handle = node(), resize = node(), calls = [];
+  toolbar.querySelector = selector => selector === '.np-view-status' ? status : selector === '.np-move' ? handle : selector === '.np-resize' ? resize : views[2];
+  toolbar.querySelectorAll = () => views;
+  video.readyState = readyState; video.src = '/movie/index.m3u8'; video.currentTime = 42;
+  const document = { listeners: {}, body: { classList: { toggle() {} } },
+    querySelector: selector => ({ '#nowPlaying': host, '#npMedia': video, '#npPictureInPicture': button, '#detail': { close() {} } })[selector] || null,
+    createElement: () => toolbar, addEventListener(name, fn) { this.listeners[name] = fn; } };
+  if (platform === 'webkit') {
+    video.webkitDisplayingFullscreen = true;
+    video.webkitSupportsPresentationMode = () => true;
+    video.webkitExitFullscreen = () => { calls.push('exitFullscreen'); video.webkitDisplayingFullscreen = false; };
+    video.webkitSetPresentationMode = mode => {
+      calls.push(mode); video.webkitPresentationMode = mode; video.webkitDisplayingFullscreen = false;
+      video.listeners.webkitpresentationmodechanged?.();
+    };
+  } else if (platform !== 'unsupported') {
+    document.pictureInPictureEnabled = true;
+    video.requestPictureInPicture = () => {
+      calls.push('enter');
+      if (platform === 'denied') return Promise.reject(new Error('NotAllowedError'));
+      document.pictureInPictureElement = video; video.listeners.enterpictureinpicture?.(); return Promise.resolve({});
+    };
+    document.exitPictureInPicture = () => {
+      calls.push('exit'); document.pictureInPictureElement = null; video.listeners.leavepictureinpicture?.(); return Promise.resolve();
+    };
+  }
+  const window = { addEventListener() {} };
+  vm.runInNewContext(fs.readFileSync(`${__dirname}/video-presentation.js`, 'utf8'), {
+    document, window, localStorage: { getItem: () => 'dock' }, innerWidth: 390, innerHeight: 844,
+  });
+  return { controller: window.SonderVideoPresentation, video, button, status, calls, host };
+}
+
+test('dedicated PiP button enters and returns without restarting video', async () => {
+  assert.match(libraryHTML, /id="npPictureInPicture"[^>]*aria-label="Open picture in picture"/);
+  const p = presentationClient();
+  p.controller.start('video');
+  assert.equal(p.button.hidden, false);
+  assert.equal(p.button.disabled, false);
+  p.button.listeners.click(); await Promise.resolve();
+  assert.deepEqual(p.calls, ['enter']);
+  assert.equal(p.button.attributes['aria-pressed'], 'true');
+  p.button.listeners.click(); await Promise.resolve();
+  assert.deepEqual(p.calls, ['enter', 'exit']);
+  assert.equal(p.button.attributes['aria-pressed'], 'false');
+  assert.equal(p.video.src, '/movie/index.m3u8');
+  assert.equal(p.video.currentTime, 42);
+  p.controller.start('audio');
+  assert.equal(p.button.hidden, true);
+});
+
+test('Safari enters native PiP directly from fullscreen during the tap', () => {
+  const p = presentationClient('webkit');
+  p.controller.start('video');
+  p.calls.length = 0;
+  p.video.webkitDisplayingFullscreen = true;
+  p.button.listeners.click();
+  assert.equal(p.calls[0], 'picture-in-picture');
+  assert.equal(p.button.attributes['aria-pressed'], 'true');
+  p.button.listeners.click();
+  assert.equal(p.calls[1], 'inline');
+  assert.equal(p.button.attributes['aria-pressed'], 'false');
+});
+
+test('PiP waits for a fresh tap after metadata and reports native rejection', async () => {
+  const p = presentationClient('standard', 0);
+  p.controller.start('video');
+  assert.equal(p.button.disabled, true);
+  p.controller.present('pip');
+  p.video.readyState = 4; p.video.listeners.loadedmetadata();
+  assert.deepEqual(p.calls, []);
+  assert.equal(p.button.disabled, false);
+  const denied = presentationClient('denied');
+  denied.controller.start('video'); denied.button.listeners.click(); await new Promise(resolve => setImmediate(resolve));
+  assert.equal(denied.button.attributes['aria-pressed'], 'false');
+  assert.match(denied.status.textContent, /could not open/);
+  const unavailable = presentationClient('unsupported'); unavailable.controller.start('video');
+  assert.equal(unavailable.button.disabled, true);
+});
+
 test('iPhone playback chooses HLS even when the MIME probe returns empty', () => {
   const get = catalog([movie('phone', 1999)]);
   get(`navigator.userAgent='Mozilla/5.0 (iPhone) AppleWebKit Safari/604.1'; $("#npMedia").canPlayType=()=>''; true`);

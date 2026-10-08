@@ -15,6 +15,20 @@
   toolbar.innerHTML = `<span class="np-move" role="button" tabindex="0" aria-label="Move floating player with arrow keys" title="Drag to move · arrow keys also work">⠿ <span>Video player</span></span><button type="button" class="np-resize" aria-label="Resize floating player" title="Drag to resize · arrow keys also work">↘</button><div class="np-view-actions"><button type="button" data-view="fullscreen">Fullscreen</button><button type="button" data-view="floating">Pop-out</button><button type="button" data-view="pip">Picture in picture</button><button type="button" data-view="dock">Dock</button></div><span class="np-view-status" role="status" aria-live="polite"></span>`;
   host.prepend(toolbar);
   const status = toolbar.querySelector(".np-view-status");
+  const pipButton = document.querySelector("#npPictureInPicture");
+  const nativePiP = () => document.pictureInPictureElement === video || video.webkitPresentationMode === "picture-in-picture";
+  const supportsPiP = () => !!((video.requestPictureInPicture && document.pictureInPictureEnabled) || video.webkitSupportsPresentationMode?.("picture-in-picture"));
+  function syncPiPButton() {
+    const available = supportsPiP(), opened = nativePiP();
+    for (const button of [pipButton, toolbar.querySelector('[data-view="pip"]')]) {
+      if (!button) continue;
+      button.disabled = !active || !video.readyState || !available;
+      button.setAttribute("aria-pressed", String(opened));
+      button.setAttribute("aria-label", opened ? "Return video from picture in picture" : "Open picture in picture");
+      button.title = !available ? "Picture in picture is unavailable in this browser" : !video.readyState ? "Available once video starts" : opened ? "Return video to Sonder" : "Watch video in picture in picture";
+    }
+    if (pipButton) pipButton.hidden = !active;
+  }
   const select = document.querySelector("#videoPresentationSel");
   if (select) {
     select.value = preference;
@@ -96,18 +110,26 @@
     raisePlayer();
   }
   async function pictureInPicture() {
-    layout("pip");
-    if (!video.readyState) { pending = "pip"; status.textContent = "Picture in picture opens when video is ready"; return; }
+    if (nativePiP()) {
+      exitPiP();
+      return;
+    }
+    if (!video.readyState) { status.textContent = "Tap PiP once video starts"; syncPiPButton(); return; }
     try {
-      if (video.requestPictureInPicture && document.pictureInPictureEnabled) await video.requestPictureInPicture();
-      else if (video.webkitSupportsPresentationMode?.("picture-in-picture")) video.webkitSetPresentationMode("picture-in-picture");
+      // Request PiP synchronously with the tap. Safari can transition directly
+      // from fullscreen; exiting fullscreen first can consume user activation.
+      if (video.webkitSupportsPresentationMode?.("picture-in-picture")) video.webkitSetPresentationMode("picture-in-picture");
+      else if (video.requestPictureInPicture && document.pictureInPictureEnabled) await video.requestPictureInPicture();
       else throw new Error("unavailable");
-    } catch (_) { layout("floating"); status.textContent = "Using a floating player · native picture in picture unavailable"; }
+      layout("pip");
+      exitFullscreen();
+      syncPiPButton();
+    } catch (_) { status.textContent = "Picture in picture could not open. Tap PiP again while video is playing."; syncPiPButton(); }
   }
   function present(next) {
     if (!active) return;
     document.querySelector("#detail")?.close?.();
-    if (next !== "fullscreen") exitFullscreen();
+    if (next !== "fullscreen" && next !== "pip") exitFullscreen();
     if (next !== "pip") exitPiP();
     if (next === "fullscreen") void fullscreen();
     else if (next === "pip") void pictureInPicture();
@@ -117,14 +139,20 @@
     const button = event.target.closest("[data-view]");
     if (button) present(button.dataset.view);
   });
+  pipButton?.addEventListener("click", () => { if (active) void pictureInPicture(); });
   video.addEventListener("loadedmetadata", () => {
     if (!active) return;
+    syncPiPButton();
     if (pending === "fullscreen") void fullscreen();
-    else if (pending === "pip") void pictureInPicture();
   });
-  video.addEventListener("leavepictureinpicture", () => { if (active && mode === "pip") layout("floating"); });
+  video.addEventListener("canplay", syncPiPButton);
+  video.addEventListener("emptied", syncPiPButton);
+  video.addEventListener("enterpictureinpicture", () => { if (active) layout("pip"); syncPiPButton(); });
+  video.addEventListener("leavepictureinpicture", () => { if (active && mode === "pip") layout("floating"); syncPiPButton(); });
   video.addEventListener("webkitpresentationmodechanged", () => {
-    if (active && mode === "pip" && video.webkitPresentationMode === "inline") layout("floating");
+    if (active && nativePiP()) layout("pip");
+    else if (active && mode === "pip") layout("floating");
+    syncPiPButton();
   });
   function fullscreenChanged() {
     // iOS can leave native fullscreen during loading, rotation, or app resume.
@@ -193,12 +221,15 @@
     start(mediaMode) {
       active = mediaMode === "video";
       toolbar.hidden = !active;
-      if (active) present(preference);
+      if (active && preference === "pip") { layout("floating"); status.textContent = "Tap PiP once video starts"; }
+      else if (active) present(preference);
       else { exitFullscreen(); exitPiP(); layout("dock"); host.classList.add("np-audio-mode"); }
+      syncPiPButton();
     },
     stop() {
       active = false; pending = ""; toolbar.hidden = true;
       exitFullscreen(); exitPiP(); layout("dock");
+      syncPiPButton();
     },
     present,
   };
