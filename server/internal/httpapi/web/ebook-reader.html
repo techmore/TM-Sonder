@@ -149,12 +149,19 @@
       }
       async function restoreFraction(fraction) {
         if (!Number.isFinite(fraction) || fraction < 0 || fraction >= 1) return;
+        const container = viewer.querySelector(".epub-container");
+        if (!container) return;
         const metrics = pageMetrics(), target = Math.min(metrics.total - 1, Math.floor(fraction * metrics.total + .0001));
-        for (let step = 0; step < metrics.total && pageMetrics().index !== target; step++) {
-          const relocated = new Promise(resolve => rendition.once("relocated", resolve));
-          if (pageMetrics().index < target) await rendition.next(); else await rendition.prev();
-          await relocated;
-        }
+        if (metrics.index === target) return;
+        const relocated = new Promise(resolve => rendition.once("relocated", resolve));
+        const direction = getComputedStyle(container).direction === "rtl" ? -1 : 1;
+        container.scrollLeft = direction * target * container.clientWidth;
+        await rendition.reportLocation(); await relocated;
+      }
+      function readingReady() {
+        reflowCFI = null; reflowFraction = null;
+        lastViewerSize = `${viewer.clientWidth}:${viewer.clientHeight}`;
+        readerReady = true; restoringPosition = false;
       }
       function preservePosition() {
         if (!reflowCFI) { reflowCFI = visibleAnchor(); reflowFraction = pageMetrics().fraction; }
@@ -351,7 +358,7 @@
           if (savedSection) savedPosition = { href: savedSection.href, page: 1 };
         }
         if (savedPosition?.cfi && /^epubcfi\(/.test(savedPosition.cfi)) {
-          try { restoringPosition = true; const relocated = new Promise(resolve => rendition.once("relocated", resolve)); await rendition.display(savedPosition.cfi); currentLocation = await relocated; if (savedPosition.fraction > 0 && pageMetrics().index === 0) await restoreFraction(savedPosition.fraction); readerReady = true; restoringPosition = false; savePosition(); return; } catch (_) { restoringPosition = false; /* Older section position remains a fallback. */ }
+          try { restoringPosition = true; const relocated = new Promise(resolve => rendition.once("relocated", resolve)); await rendition.display(savedPosition.cfi); currentLocation = await relocated; if (savedPosition.fraction > 0 && pageMetrics().index === 0) await restoreFraction(savedPosition.fraction); readingReady(); savePosition(); return; } catch (_) { restoringPosition = false; /* Older section position remains a fallback. */ }
         }
         if (savedPosition?.href && Number.isInteger(savedPosition.page) && savedPosition.page > 0) {
           showStatus("Restoring reading position…");
@@ -364,14 +371,14 @@
             await rendition.next();
             currentLocation = await nextLocation;
           }
-          restoringPosition = false; readerReady = true;
+          readingReady();
           if (currentLocation?.start?.href && currentLocation?.start?.displayed?.page) {
             save(positionKey, JSON.stringify({ cfi:currentLocation.start.cfi, href: currentLocation.start.href, page: currentLocation.start.displayed.page }));
           }
           return;
         }
         await rendition.display();
-        readerReady = true;
+        readingReady();
       }
 
       previous.addEventListener("click", () => rendition?.prev());
