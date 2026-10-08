@@ -132,7 +132,7 @@
   handle.addEventListener("pointercancel", () => { drag = null; });
   handle.addEventListener("keydown", event => {
     if (mode !== "floating" || !["ArrowLeft", "ArrowRight", "ArrowUp", "ArrowDown"].includes(event.key)) return;
-    event.preventDefault();
+    event.preventDefault(); event.stopPropagation();
     const rect = host.getBoundingClientRect(), delta = event.shiftKey ? 40 : 10;
     host.style.left = rect.left + (event.key === "ArrowLeft" ? -delta : event.key === "ArrowRight" ? delta : 0) + "px";
     host.style.top = rect.top + (event.key === "ArrowUp" ? -delta : event.key === "ArrowDown" ? delta : 0) + "px";
@@ -155,7 +155,7 @@
   for (const event of ["pointerup", "pointercancel"]) resizer.addEventListener(event, () => { sizing = null; });
   resizer.addEventListener("keydown", event => {
     if (mode !== "floating" || !["ArrowLeft", "ArrowRight", "ArrowUp", "ArrowDown"].includes(event.key)) return;
-    event.preventDefault(); const rect = host.getBoundingClientRect(), delta = event.shiftKey ? 40 : 10;
+    event.preventDefault(); event.stopPropagation(); const rect = host.getBoundingClientRect(), delta = event.shiftKey ? 40 : 10;
     sizePlayer(rect.width + (event.key === "ArrowLeft" ? -delta : event.key === "ArrowRight" ? delta : 0), rect.height + (event.key === "ArrowUp" ? -delta : event.key === "ArrowDown" ? delta : 0));
   });
   window.addEventListener("resize", clampFloating);

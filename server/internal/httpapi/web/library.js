@@ -1518,7 +1518,7 @@
 
     // Shared one-time setup for the player panel: visibility, the expand
     // control, the status line, and the media-session metadata.
-    function prepareNowPlayingShell(item, mode) {
+    function prepareNowPlayingShell(item, mode, preservePresentation = false) {
       const host = $("#nowPlaying");
       if (host) {
         host.hidden = false;
@@ -1540,7 +1540,7 @@
       // after the listener taps Minimize.
       if (mode === "video") {
         setPlayerExpanded(false);
-        window.SonderVideoPresentation?.start(mode);
+        if (!preservePresentation) window.SonderVideoPresentation?.start(mode);
       } else {
         window.SonderVideoPresentation?.stop();
         setPlayerExpanded(mode === "audio" && isMobileViewport());
@@ -1558,6 +1558,7 @@
       sampleReadTime(true);
       persistReadSession(false, true);
 
+      const preservePresentation = nowPlayingItem?.id === item.id && nowPlayingMode === "video" && plan.mode === "video";
       nowPlayingItem = item;
       // A single-file item clears any book queue, or the "ended" handler would
       // try to walk the previous book's parts.
@@ -1586,7 +1587,7 @@
         }
       };
 
-      prepareNowPlayingShell(item, plan.mode);
+      prepareNowPlayingShell(item, plan.mode, preservePresentation);
       renderNowPlaying();
       renderPlaybackProgress({ position: Math.max(0, resumeAt), total: item.durationSeconds || 0, multi: false });
       closeDetailOnMobile();
