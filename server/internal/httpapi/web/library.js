@@ -1632,7 +1632,7 @@
       if (!targetID) return;
       if (!force && Math.abs(media.currentTime - npLastSaved) < 15) return;
       npLastSaved = media.currentTime;
-      const payload = { seconds: media.currentTime, duration: media.duration };
+      const payload = { seconds: media.currentTime, duration: nowPlayingMode === "video" && item.durationSeconds > 0 ? item.durationSeconds : media.duration };
       const checkpoint = {
         itemID: targetID, seconds: payload.seconds, duration: payload.duration,
         updatedAt: nextProgressTimestamp(targetID),
@@ -1714,7 +1714,8 @@
       if (!part) {
         return {
           offset: 0,
-          total: (media && media.duration) || 0,
+          total: nowPlayingMode === "video" && nowPlayingItem?.durationSeconds > 0
+            ? nowPlayingItem.durationSeconds : (media && media.duration) || 0,
           position: npResumeCheckpoint?.position ?? ((media && media.currentTime) || 0),
           multi: false,
         };
