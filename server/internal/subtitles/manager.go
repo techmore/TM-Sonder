@@ -26,15 +26,20 @@ import (
 const apiURL = "https://api.opensubtitles.com/api/v1"
 const maxSubtitleBytes = 8 << 20
 
+// Version 1 moved maintained captions off the read-only media mounts. A record
+// written before that change may retry extraction once despite its cooldown.
+const subtitleStorageVersion = 1
+
 type Record struct {
-	Title       string    `json:"title"`
-	Language    string    `json:"language"`
-	Status      string    `json:"status"`
-	Detail      string    `json:"detail,omitempty"`
-	Source      string    `json:"source,omitempty"`
-	CheckedAt   time.Time `json:"checkedAt"`
-	RetryAt     time.Time `json:"retryAt,omitempty"`
-	Fingerprint string    `json:"fingerprint"`
+	Title          string    `json:"title"`
+	Language       string    `json:"language"`
+	Status         string    `json:"status"`
+	Detail         string    `json:"detail,omitempty"`
+	Source         string    `json:"source,omitempty"`
+	CheckedAt      time.Time `json:"checkedAt"`
+	RetryAt        time.Time `json:"retryAt,omitempty"`
+	Fingerprint    string    `json:"fingerprint"`
+	StorageVersion int       `json:"storageVersion,omitempty"`
 }
 type Status struct {
 	Running            bool              `json:"running"`
@@ -203,7 +208,7 @@ func (m *Manager) pass(ctx context.Context) {
 			key := it.ID + ":" + lang
 			now := time.Now().UTC()
 			fingerprint := fmt.Sprintf("%s|%d|%d", it.FilePath, it.SizeBytes, it.ModTime.UnixNano())
-			r := Record{Title: it.Title, Language: lang, CheckedAt: now, Fingerprint: fingerprint}
+			r := Record{Title: it.Title, Language: lang, CheckedAt: now, Fingerprint: fingerprint, StorageVersion: subtitleStorageVersion}
 			if p := m.existingSidecar(it, lang); p != "" {
 				m.attach(it, p)
 				r.Status = "available"
@@ -214,7 +219,11 @@ func (m *Manager) pass(ctx context.Context) {
 			m.mu.Lock()
 			old := m.state.Items[key]
 			m.mu.Unlock()
-			if old.Fingerprint == fingerprint && now.Before(old.RetryAt) && !strings.Contains(old.Detail, "text extraction failed") && !(old.Status == "blocked" && m.key != "" && strings.Contains(old.Detail, "not configured")) {
+			// Older failures may come from trying to write onto read-only NAS
+			// mounts. Retry those once in durable storage, then respect the
+			// ordinary cooldown even when extraction still cannot produce text.
+			needsStorageMigration := old.StorageVersion < subtitleStorageVersion && strings.Contains(old.Detail, "text extraction failed")
+			if old.Fingerprint == fingerprint && now.Before(old.RetryAt) && !needsStorageMigration && !(old.Status == "blocked" && m.key != "" && strings.Contains(old.Detail, "not configured")) {
 				continue
 			}
 			r.Status = "checking"
@@ -349,8 +358,9 @@ func (m *Manager) attach(it *library.Item, p string) {
 				return false
 			}
 		}
+		// Sidecar track IDs and URLs use this slice index. Preserve every
+		// existing index when maintenance adds captions during playback.
 		cur.SidecarPaths = append(cur.SidecarPaths, p)
-		sort.Strings(cur.SidecarPaths)
 		return true
 	})
 }
