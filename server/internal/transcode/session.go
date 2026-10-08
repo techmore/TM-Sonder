@@ -89,6 +89,7 @@ type Session struct {
 	idle    *time.Timer
 	done    chan struct{}
 	dead    bool
+	ready   chan struct{} // distributor waits until the initial reader is attached
 }
 
 type reader struct {
@@ -237,8 +238,8 @@ func (m *Manager) sessionCount() int {
 	return len(m.sessions)
 }
 
-// Attach returns a reader for the requested stream, reusing a warm session
-// when the seek target falls inside its fMP4 window; otherwise it respawns.
+// Attach starts a complete fragmented MP4 stream for each request. Joining a
+// running stdout stream loses initialization atoms and may begin inside mdat.
 func (m *Manager) Attach(ctx context.Context, item *library.Item, mode Mode, startSeconds float64, burnSub, audioTrack int) (io.ReadCloser, func(), error) {
 	if mode == ModeAuto {
 		mode = m.pickMode(item)
@@ -254,14 +255,6 @@ func (m *Manager) Attach(ctx context.Context, item *library.Item, mode Mode, sta
 
 	m.mu.Lock()
 	s, exists := m.sessions[req.key()]
-	if exists && !s.isDead() {
-		if absDiff(startSeconds, s.posSeconds) <= SeekWindow.Seconds() {
-			r := s.attach()
-			m.mu.Unlock()
-			go watchContext(ctx, s, r)
-			return r, func() { s.closeReader(r) }, nil
-		}
-	}
 	delete(m.sessions, req.key())
 	m.mu.Unlock()
 
@@ -276,6 +269,7 @@ func (m *Manager) Attach(ctx context.Context, item *library.Item, mode Mode, sta
 		return nil, nil, err
 	}
 	r := s.attach()
+	close(s.ready)
 	go watchContext(ctx, s, r)
 
 	cleanup := func() {
@@ -410,6 +404,7 @@ func (m *Manager) spawn(reqCtx context.Context, req Request) (*Session, error) {
 		stdout:     stdout,
 		readers:    make(map[*reader]struct{}),
 		done:       make(chan struct{}),
+		ready:      make(chan struct{}),
 	}
 
 	go func() {
@@ -425,6 +420,11 @@ func (m *Manager) spawn(reqCtx context.Context, req Request) (*Session, error) {
 			}
 			m.mu.Unlock()
 		}()
+		select {
+		case <-s.ready:
+		case <-ctx.Done():
+			return
+		}
 		buf := make([]byte, chunkSize)
 		for {
 			n, err := stdout.Read(buf)
