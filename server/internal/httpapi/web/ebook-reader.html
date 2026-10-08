@@ -118,7 +118,7 @@
         try {
           const visible = viewer.getBoundingClientRect();
           for (const contents of rendition?.getContents() || []) {
-            const doc = contents.document, frame = doc.defaultView.frameElement, bounds = frame.getBoundingClientRect();
+            const doc = contents.document, frame = viewer.querySelector("iframe"), bounds = frame.getBoundingClientRect();
             const walker = doc.createTreeWalker(doc.body, 4); let node;
             while ((node = walker.nextNode())) {
               if (!node.textContent.trim()) continue;
@@ -127,11 +127,12 @@
                 const left = Math.max(rect.left + bounds.left, visible.left + 2), top = Math.max(rect.top + bounds.top, visible.top + 2);
                 if (left >= Math.min(rect.right + bounds.left, visible.right) || top >= Math.min(rect.bottom + bounds.top, visible.bottom)) continue;
                 const point = doc.caretRangeFromPoint?.(left - bounds.left + 1, top - bounds.top + 1);
-                if (point?.startContainer.nodeType === 3) { point.collapse(true); return contents.cfiFromRange(point); }
+                if (point?.startContainer.nodeType === 3) { point.collapse(true); reader.dataset.anchorSource = "visible-text"; return contents.cfiFromRange(point); }
               }
             }
           }
-        } catch (_) { /* Engine-specific caret APIs are optional. */ }
+        } catch (error) { reader.dataset.anchorError = error.message; }
+        reader.dataset.anchorSource = "pagination";
         return currentLocation?.start?.cfi;
       }
       function preservePosition() {
