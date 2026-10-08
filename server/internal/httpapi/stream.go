@@ -218,6 +218,12 @@ func (s *Server) handleSubtitle(w http.ResponseWriter, r *http.Request) {
 
 // serveArtwork resolves and streams one artwork file with image content type.
 func (s *Server) serveArtwork(w http.ResponseWriter, r *http.Request, path string) {
+	path = s.relocatedArtworkPath(path)
+	if entry, ok := getCachedArtwork(path); ok {
+		serveCachedArtwork(w, r, filepath.Base(path), entry)
+		return
+	}
+	w.Header().Set("Cache-Control", "private, no-store")
 	if path == "" {
 		writeError(w, http.StatusNotFound, "Artwork not found")
 		return
@@ -248,6 +254,18 @@ func (s *Server) serveArtwork(w http.ResponseWriter, r *http.Request, path strin
 	default:
 		w.Header().Set("Content-Type", "image/jpeg")
 	}
+	if st.Size() > 0 && st.Size() <= artworkEntryLimit {
+		if data, err := readArtworkForCache(f); err == nil && len(data) == int(st.Size()) {
+			contentType := w.Header().Get("Content-Type")
+			rememberArtwork(path, data, st.ModTime(), contentType)
+			serveCachedArtwork(w, r, filepath.Base(path), cachedArtwork{data: data, modified: st.ModTime(), contentType: contentType})
+			return
+		}
+		if _, err := f.Seek(0, io.SeekStart); err != nil {
+			writeError(w, http.StatusInternalServerError, "Artwork unavailable")
+			return
+		}
+	}
 	// Posters are content-stable per item version; let clients cache a day.
 	w.Header().Set("Cache-Control", "private, max-age=86400")
 	http.ServeContent(w, r, filepath.Base(path), st.ModTime(), f)
@@ -264,9 +282,19 @@ func (s *Server) handlePoster(w http.ResponseWriter, r *http.Request) {
 	// artwork path while the image itself was copied into this data dir.
 	// Prefer the recorded path, then resolve the standard generated-artwork
 	// location by stable item ID.
-	path := item.PosterPath
+	path := s.relocatedArtworkPath(item.PosterPath)
+	if _, cached := getCachedArtwork(path); cached {
+		s.serveArtwork(w, r, path)
+		return
+	}
 	if path == "" || !fileExists(path) {
-		path = filepath.Join(s.cfg().DataDir, "artwork", item.ID+".jpg")
+		for _, extension := range []string{".jpg", ".png", ".webp", ".jpeg"} {
+			candidate := filepath.Join(s.cfg().DataDir, "artwork", item.ID+extension)
+			if fileExists(candidate) {
+				path = candidate
+				break
+			}
+		}
 	}
 	if fileExists(path) {
 		s.serveArtwork(w, r, path)
@@ -276,7 +304,22 @@ func (s *Server) handlePoster(w http.ResponseWriter, r *http.Request) {
 		s.serveMoviePlaceholder(w, r, item)
 		return
 	}
+	w.Header().Set("Cache-Control", "private, no-store")
 	writeError(w, http.StatusNotFound, "Artwork not found")
+}
+
+// Imported catalogs may keep a generated artwork path from the native host.
+func (s *Server) relocatedArtworkPath(path string) string {
+	const marker = "/.config/sonder/data/"
+	if index := strings.LastIndex(filepath.ToSlash(path), marker); index >= 0 {
+		suffix := path[index+len(marker):]
+		candidate := filepath.Join(s.cfg().DataDir, suffix)
+		relative, err := filepath.Rel(s.cfg().DataDir, candidate)
+		if err == nil && relative != ".." && !strings.HasPrefix(relative, ".."+string(filepath.Separator)) {
+			return candidate
+		}
+	}
+	return path
 }
 
 func fileExists(path string) bool {
@@ -294,7 +337,7 @@ func (s *Server) serveMoviePlaceholder(w http.ResponseWriter, r *http.Request, i
 		break
 	}
 	w.Header().Set("Content-Type", "image/svg+xml")
-	w.Header().Set("Cache-Control", "private, max-age=86400")
+	w.Header().Set("Cache-Control", "private, max-age=60")
 	w.WriteHeader(http.StatusOK)
 	_, _ = w.Write([]byte(`<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 300 450"><defs><linearGradient id="g" x1="0" y1="0" x2="1" y2="1"><stop stop-color="#1b2520"/><stop offset="1" stop-color="#536a59"/></linearGradient></defs><rect width="300" height="450" fill="url(#g)"/><circle cx="150" cy="165" r="64" fill="#d7e3d7" opacity=".18"/><text x="150" y="190" text-anchor="middle" font-family="Arial,sans-serif" font-size="72" font-weight="700" fill="#f2f5ed">` + initial + `</text></svg>`))
 }

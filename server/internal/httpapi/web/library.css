@@ -2023,3 +2023,8 @@ dialog#detail.movie-dialog { max-height:90dvh; }
   .movie-detail-content h2 { font-size:22px; }
   .movie-dialog .movie-cast-grid { grid-template-columns:repeat(2,minmax(0,1fr)); }
 }
+
+/* Failed artwork keeps its reserved cover space and the underlying fallback. */
+img[data-cover-src][data-cover-failed="true"] { opacity:0; }
+img[data-cover-src] { transition:opacity .15s ease; }
+@media (prefers-reduced-motion:reduce) { img[data-cover-src] { transition:none; } }

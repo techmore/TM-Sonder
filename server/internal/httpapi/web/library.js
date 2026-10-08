@@ -3299,6 +3299,89 @@
       document.querySelectorAll(".card-bookmark").forEach(button => syncCardBookmark(button));
     }
 
+    // Browsers may prefetch an entire horizontal shelf. Keep NAS artwork
+    // requests bounded and put the covers closest to the viewport first.
+    const coverQueue = new Set();
+    let coverRequests = 0;
+    let coverObserver = null;
+    const knownCovers = new WeakSet();
+    function pumpCoverQueue() {
+      if (navigator.onLine === false) return;
+      const pending = [...coverQueue].filter(image => {
+        if (!image.isConnected) { coverQueue.delete(image); return false; }
+        return true;
+      }).sort((a, b) => {
+        const distance = image => {
+          const rect = image.getBoundingClientRect();
+          return Math.max(0, -rect.bottom, rect.top - window.innerHeight) + Math.max(0, -rect.right, rect.left - window.innerWidth);
+        };
+        return distance(a) - distance(b);
+      });
+      while (coverRequests < 4 && pending.length) {
+        const image = pending.shift();
+        coverQueue.delete(image);
+        coverObserver?.unobserve(image);
+        coverRequests++;
+        let requestTimer;
+        const done = success => {
+          clearTimeout(requestTimer);
+          image.removeEventListener("load", loaded);
+          image.removeEventListener("error", failed);
+          coverRequests--;
+          image.dataset.coverFailed = String(!success);
+          if (!success && !image.dataset.coverRetried) {
+            image.dataset.coverRetried = "1";
+            setTimeout(() => {
+              if (!image.isConnected) return;
+              // Re-enter the viewport queue rather than retry offscreen art.
+              image.removeAttribute("src");
+              coverObserver ? coverObserver.observe(image) : coverQueue.add(image);
+              pumpCoverQueue();
+            }, 1500);
+          }
+          pumpCoverQueue();
+        };
+        const loaded = () => done(true);
+        const failed = () => done(false);
+        image.addEventListener("load", loaded, { once:true });
+        image.addEventListener("error", failed, { once:true });
+        requestTimer = setTimeout(() => {
+          done(false);
+          image.removeAttribute("src");
+        }, 15000);
+        image.loading = "eager";
+        image.decoding = "async";
+        const url = image.dataset.coverSrc;
+        image.src = image.dataset.coverRetried ? `${url}${url.includes("?") ? "&" : "?"}coverRetry=1` : url;
+      }
+    }
+    function observeCovers(root) {
+      const images = root.matches?.("img[data-cover-src]") ? [root] : [...(root.querySelectorAll?.("img[data-cover-src]") || [])];
+      for (const image of images) {
+        if (knownCovers.has(image)) continue;
+        knownCovers.add(image);
+        if (coverObserver) coverObserver.observe(image);
+        else coverQueue.add(image);
+      }
+      pumpCoverQueue();
+    }
+    if (typeof IntersectionObserver !== "undefined") {
+      coverObserver = new IntersectionObserver(entries => {
+        for (const entry of entries) {
+          if (entry.isIntersecting) coverQueue.add(entry.target);
+          else coverQueue.delete(entry.target);
+        }
+        pumpCoverQueue();
+      }, { rootMargin:"120px" });
+    }
+    if (typeof MutationObserver !== "undefined") {
+      new MutationObserver(records => {
+        for (const record of records) for (const node of record.addedNodes) observeCovers(node);
+      }).observe(document.body, { childList:true, subtree:true });
+      observeCovers(document.body);
+      window.addEventListener("online", pumpCoverQueue);
+    }
+
     function cardHTML(item, opts = {}) {
       const p = progressForItem(item);
       const watched = isWatched(p, item);
@@ -3308,7 +3391,7 @@
         return dur > 0 ? Math.min(100, p.seconds / dur * 100) : 0;
       })();
       const poster = item.posterURL
-        ? `<img class="poster" src="${api(item.posterURL)}" alt="" loading="lazy">`
+        ? `<img class="poster" data-cover-src="${api(item.posterURL)}" alt="" loading="lazy">`
         : "";
       const copies = opts.copyCount != null ? opts.copyCount : (dedupEnabled ? copiesOf(item).length : 1);
       const h = copies > 1 ? copyHeight(item) : 0;
@@ -3375,7 +3458,7 @@
       const percent = duration > 0 ? Math.min(100, seconds / duration * 100) : 0;
       const remaining = Math.max(0, duration - seconds);
       const left = duration > 0 ? `${Math.floor(remaining/3600)}h ${Math.floor(remaining%3600/60)}m left` : "Listening in progress";
-      return `<article class="listening-card"><button type="button" class="listening-art" data-action="open-detail" data-id="${escapeHTML(item.id)}" aria-label="Details for ${escapeHTML(item.title)}">${item.posterURL ? `<img src="${escapeHTML(api(item.posterURL))}" alt="" loading="lazy">` : escapeHTML((item.title || "A").slice(0,1))}</button><div class="listening-copy"><h3><button type="button" data-action="open-detail" data-id="${escapeHTML(item.id)}">${escapeHTML(item.title)}</button></h3><p>${escapeHTML(item.author || item.narrator || "Audiobook")}</p><progress max="100" value="${percent}" aria-label="${Math.round(percent)} percent listened"></progress><span>${escapeHTML(left)}</span></div><button type="button" class="listening-resume" data-action="play-item" data-id="${escapeHTML(item.id)}" aria-label="Resume ${escapeHTML(item.title)}">Resume <span aria-hidden="true">▶</span></button></article>`;
+      return `<article class="listening-card"><button type="button" class="listening-art" data-action="open-detail" data-id="${escapeHTML(item.id)}" aria-label="Details for ${escapeHTML(item.title)}">${item.posterURL ? `<img data-cover-src="${escapeHTML(api(item.posterURL))}" alt="" loading="lazy">` : escapeHTML((item.title || "A").slice(0,1))}</button><div class="listening-copy"><h3><button type="button" data-action="open-detail" data-id="${escapeHTML(item.id)}">${escapeHTML(item.title)}</button></h3><p>${escapeHTML(item.author || item.narrator || "Audiobook")}</p><progress max="100" value="${percent}" aria-label="${Math.round(percent)} percent listened"></progress><span>${escapeHTML(left)}</span></div><button type="button" class="listening-resume" data-action="play-item" data-id="${escapeHTML(item.id)}" aria-label="Resume ${escapeHTML(item.title)}">Resume <span aria-hidden="true">▶</span></button></article>`;
     }
     const movieMetadataByID = new Map();
     const movieMetadataLoading = new Set();
@@ -3443,7 +3526,7 @@
       const pct = epCount ? Math.round(watchedCount/epCount*100) : 0;
       const item = show.posterItem;
       const poster = item?.posterURL
-        ? `<img class="poster" src="${api(item.posterURL)}" alt="" loading="lazy">`
+        ? `<img class="poster" data-cover-src="${api(item.posterURL)}" alt="" loading="lazy">`
         : "";
       const badge = pct >= 100
         ? `<span class="badge watched">WATCHED</span>`
@@ -3802,7 +3885,7 @@
       })).filter(entry => entry.item && ["audiobook", "ebook"].includes(entry.item.kind));
       const rows = entries.map(({ id, index, item }) => {
         const poster = item.posterURL
-          ? `<img class="queue-cover" src="${escapeHTML(api(item.posterURL))}" alt="" loading="lazy">`
+          ? `<img class="queue-cover" data-cover-src="${escapeHTML(api(item.posterURL))}" alt="" loading="lazy">`
           : `<span class="queue-cover queue-cover-empty" aria-hidden="true">▧</span>`;
         const progress = item.kind === "audiobook" ? progressForItem(item) : null;
         const progressLabel = progress?.seconds > 0
@@ -3836,7 +3919,7 @@
       host.innerHTML = entries.length ? entries.map((entry, position) => {
         const { id, index, item, record } = entry;
         const poster = item.posterURL
-          ? `<img class="queue-cover" src="${escapeHTML(api(item.posterURL))}" alt="" loading="lazy">`
+          ? `<img class="queue-cover" data-cover-src="${escapeHTML(api(item.posterURL))}" alt="" loading="lazy">`
           : `<span class="queue-cover queue-cover-empty" aria-hidden="true">▧</span>`;
         const progress = item.kind === "audiobook" ? progressForItem(item) : null;
         const progressLabel = progress?.seconds > 0
@@ -3863,7 +3946,7 @@
         .sort((a, b) => a.item.title.localeCompare(b.item.title));
       if (!liked.length) return "";
       return `<section class="liked-books"><div class="reading-queue-head"><div><h3>Liked books</h3><p>Your saved favourites across audiobooks and ebooks.</p></div><span>${liked.length}</span></div><div class="liked-book-grid">${liked.slice(0, 48).map(({ record, item }) => {
-        const cover = item.posterURL ? `<img src="${escapeHTML(api(item.posterURL))}" alt="" loading="lazy">` : `<span aria-hidden="true">♥</span>`;
+        const cover = item.posterURL ? `<img data-cover-src="${escapeHTML(api(item.posterURL))}" alt="" loading="lazy">` : `<span aria-hidden="true">♥</span>`;
         return `<article class="liked-book">${cover}<button class="queue-title" data-action="open-detail" data-id="${escapeHTML(item.id)}">${escapeHTML(item.title)}</button><button type="button" data-action="toggle-book-like" data-id="${escapeHTML(record.itemID)}" aria-label="Unlike ${escapeHTML(item.title)}">♥</button></article>`;
       }).join("")}</div></section>`;
     }
@@ -4124,7 +4207,7 @@
       const saved = savedLists.map(list => {
         const entries = (list.items || []).map((entry, index) => {
           const item = entry.item || {};
-          const cover = item.posterURL ? `<img class="list-entry-cover" src="${escapeHTML(api(item.posterURL))}" alt="" loading="lazy">` : `<span class="list-entry-cover list-entry-cover-empty" aria-hidden="true">▧</span>`;
+          const cover = item.posterURL ? `<img class="list-entry-cover" data-cover-src="${escapeHTML(api(item.posterURL))}" alt="" loading="lazy">` : `<span class="list-entry-cover list-entry-cover-empty" aria-hidden="true">▧</span>`;
           const bookmark = listEntryBookmarkHTML(item);
           const tags = (entry.tags || []).map(tag => `<span class="tag">${escapeHTML(tag)}</span>`).join("");
           return `<li><span class="list-entry-art">${cover}${bookmark}</span><span class="list-position">${index + 1}.</span><button class="list-entry-title" data-action="open-detail" data-id="${escapeHTML(item.id || "")}">${escapeHTML(item.title || item.id || "Unknown title")}</button><span class="list-entry-tags">${tags}</span><span class="list-entry-actions"><button data-action="move-list-item" data-list-id="${escapeHTML(list.id)}" data-index="${index}" data-direction="up" ${index === 0 ? "disabled" : ""}>↑</button><button data-action="move-list-item" data-list-id="${escapeHTML(list.id)}" data-index="${index}" data-direction="down" ${index === list.items.length - 1 ? "disabled" : ""}>↓</button><button data-action="remove-list-item" data-list-id="${escapeHTML(list.id)}" data-item-id="${escapeHTML(item.id || "")}">Remove</button></span></li>`;
@@ -4331,7 +4414,7 @@
       const playLabel = playingNow ? "Pause" : resumeAt ? `Resume at ${formatTime(resumeAt)}` : "Play movie";
       const title = item.title || "Untitled movie";
       const poster = item.posterURL
-        ? `<img src="${escapeHTML(api(item.posterURL))}" alt="">`
+        ? `<img src="${escapeHTML(api(item.posterURL))}" alt="" fetchpriority="high" decoding="async">`
         : escapeHTML(title.slice(0, 1).toUpperCase() || "M");
       const meta = [item.year || "", runtimeLabel(item), item.probedHeight ? `${item.probedWidth || "?"}×${item.probedHeight}` : ""]
         .filter(Boolean).join(" · ");
@@ -5166,7 +5249,7 @@
       }
       const title = book.title || "Untitled book";
       const cover = book.posterURL
-        ? `<img src="${escapeHTML(api(book.posterURL))}" alt="" loading="lazy">`
+        ? `<img data-cover-src="${escapeHTML(api(book.posterURL))}" alt="" loading="lazy">`
         : `<span class="book-series-neighbor-cover-empty" aria-hidden="true">${escapeHTML(title.slice(0, 1).toUpperCase() || "B")}</span>`;
       return `<button type="button" class="book-series-neighbor" data-action="open-detail" data-id="${escapeHTML(book.id)}" aria-label="Open ${direction} book: ${escapeHTML(title)}"><span class="book-series-neighbor-label">${direction === "previous" ? "← PREVIOUS" : "NEXT →"}</span><span class="book-series-neighbor-body">${cover}<span><strong>${escapeHTML(title)}</strong><small>${escapeHTML(kindLabel(book.kind))}</small></span></span></button>`;
     }
@@ -5305,7 +5388,7 @@
       if (!item.author) return "";
       const related = items.filter(candidate => candidate.kind === "audiobook" && candidate.id !== item.id && !candidate.isPlaceholder && !isSameBook(candidate, item) && seriesTextKey(candidate.author) === seriesTextKey(item.author) && (!candidate.bookGroupID || Number(candidate.bookPartIndex) <= 1)).slice(0, 4);
       if (!related.length) return "";
-      return `<section class="book-content-panel book-related"><div class="book-panel-heading"><div><p class="book-section-kicker">IN YOUR LIBRARY</p><h3>More by ${escapeHTML(item.author)}</h3></div><button type="button" data-action="browse-author-books" data-id="${escapeHTML(item.id)}">See all →</button></div><div class="book-related-grid">${related.map(book => `<button type="button" class="book-related-card" data-action="open-detail" data-id="${escapeHTML(book.id)}"><span class="book-related-cover">${book.posterURL ? `<img loading="lazy" src="${escapeHTML(api(book.posterURL))}" alt="">` : `<span aria-hidden="true">${escapeHTML((book.title || "B").slice(0,1))}</span>`}</span><strong>${escapeHTML(book.title)}</strong><small>${escapeHTML(runtimeLabel(book))}</small></button>`).join("")}</div></section>`;
+      return `<section class="book-content-panel book-related"><div class="book-panel-heading"><div><p class="book-section-kicker">IN YOUR LIBRARY</p><h3>More by ${escapeHTML(item.author)}</h3></div><button type="button" data-action="browse-author-books" data-id="${escapeHTML(item.id)}">See all →</button></div><div class="book-related-grid">${related.map(book => `<button type="button" class="book-related-card" data-action="open-detail" data-id="${escapeHTML(book.id)}"><span class="book-related-cover">${book.posterURL ? `<img loading="lazy" data-cover-src="${escapeHTML(api(book.posterURL))}" alt="">` : `<span aria-hidden="true">${escapeHTML((book.title || "B").slice(0,1))}</span>`}</span><strong>${escapeHTML(book.title)}</strong><small>${escapeHTML(runtimeLabel(book))}</small></button>`).join("")}</div></section>`;
     }
     function conversionMarkup(item) {
       if (!bookIsMP3(item)) return `<p class="book-format-note">${escapeHTML(String(item.format || "audio").toUpperCase())} recording · ${audiobookSourceParts(item).length} ${audiobookSourceParts(item).length === 1 ? "file" : "files"}. Download the original audio below.</p>`;
@@ -5410,7 +5493,7 @@
       if (!host || !item) return;
       const title = item.title || "Untitled audiobook";
       const poster = item.posterURL
-        ? `<img src="${escapeHTML(api(item.posterURL))}" alt="Cover of ${escapeHTML(title)}">`
+        ? `<img src="${escapeHTML(api(item.posterURL))}" alt="Cover of ${escapeHTML(title)}" fetchpriority="high" decoding="async">`
         : `<span class="book-detail-cover-empty" aria-hidden="true">${escapeHTML(title.slice(0, 1).toUpperCase() || "B")}</span>`;
       const seriesContexts = resolveBookSeries(item);
       const primarySeries = seriesContexts[0] || null;
@@ -6761,7 +6844,7 @@
                   `<button type="button" data-optimization-review="${escapeHTML(job.id)}" data-optimization-decision="needs-revision">Flag for revision</button></div>`
                 : job.receipt.playbackReview?.startsWith("accepted")
                   ? `<div><button type="button" data-optimization-promote="${escapeHTML(job.id)}">Install Opus and remove original</button></div>` : "") : "";
-            const poster = job.posterURL ? `<img class="optimization-job-poster" src="${escapeHTML(api(job.posterURL))}" alt="" loading="lazy">` : `<div class="optimization-job-poster optimization-job-poster-empty" aria-hidden="true">A</div>`;
+            const poster = job.posterURL ? `<img class="optimization-job-poster" data-cover-src="${escapeHTML(api(job.posterURL))}" alt="" loading="lazy">` : `<div class="optimization-job-poster optimization-job-poster-empty" aria-hidden="true">A</div>`;
             return `<article class="optimization-job"><div class="optimization-job-heading">${poster}<div><strong>${escapeHTML(job.title)}</strong><span class="optimization-state">${escapeHTML(job.status)}</span></div></div>` +
               `Opus ${Number(job.bitrateKbps)} kb/s · attempt ${Number(job.attempt)} · ${escapeHTML(job.phase)} · ${progress.toFixed(0)}%${optimizationETA(job)}<progress max="100" value="${progress}"></progress>` +
               (job.error ? `<p role="alert">${escapeHTML(job.error)}</p>` : "") + receipt +
