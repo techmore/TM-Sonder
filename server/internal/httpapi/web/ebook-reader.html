@@ -190,7 +190,14 @@
       viewSelect.addEventListener("change", () => { save(preferenceKey, viewSelect.value); present(viewSelect.value); });
       fontSelect.addEventListener("change", () => {
         save("sonder.readingFont.v1", fontSelect.value);
-        const cfi = visibleAnchor();
+        const cfi = visibleAnchor(), fraction = pageMetrics().fraction;
+        if (cfi) {
+          restoringPosition = true;
+          rendition.once("relocated", async () => {
+            if (fraction > 0 && pageMetrics().index === 0) await restoreFraction(fraction);
+            restoringPosition = false; savePosition();
+          });
+        }
         rendition?.themes.fontSize(fontSelect.value + "%");
         if (cfi) rendition.display(cfi);
       });
@@ -344,7 +351,7 @@
           if (savedSection) savedPosition = { href: savedSection.href, page: 1 };
         }
         if (savedPosition?.cfi && /^epubcfi\(/.test(savedPosition.cfi)) {
-          try { restoringPosition = true; const relocated = new Promise(resolve => rendition.once("relocated", resolve)); await rendition.display(savedPosition.cfi); currentLocation = await relocated; await restoreFraction(savedPosition.fraction); readerReady = true; restoringPosition = false; savePosition(); return; } catch (_) { restoringPosition = false; /* Older section position remains a fallback. */ }
+          try { restoringPosition = true; const relocated = new Promise(resolve => rendition.once("relocated", resolve)); await rendition.display(savedPosition.cfi); currentLocation = await relocated; if (savedPosition.fraction > 0 && pageMetrics().index === 0) await restoreFraction(savedPosition.fraction); readerReady = true; restoringPosition = false; savePosition(); return; } catch (_) { restoringPosition = false; /* Older section position remains a fallback. */ }
         }
         if (savedPosition?.href && Number.isInteger(savedPosition.page) && savedPosition.page > 0) {
           showStatus("Restoring reading position…");
