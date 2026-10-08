@@ -268,6 +268,7 @@ func run(configFlag, plexDB, exportPath, importPath, importMode, importPathMap s
 	}
 
 	scanner := library.NewScanner(store)
+	scanner.SetSubtitleDir(filepath.Join(cfg.DataDir, "subtitles"))
 	scanner.SetSafeScan(cfg.SafeScan)
 	if backfilled := scanner.BackfillStableKeys(cfg.Libraries); backfilled > 0 {
 		logger.Printf("backfilled %d portable media identity(ies)", backfilled)

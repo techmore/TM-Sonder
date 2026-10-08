@@ -45,6 +45,7 @@ type Status struct {
 	Items              map[string]Record `json:"items"`
 }
 type Manager struct {
+	cacheDir                                        string
 	lastSaved                                       time.Time
 	mu                                              sync.Mutex
 	state                                           Status
@@ -55,7 +56,7 @@ type Manager struct {
 }
 
 func New(store *library.Store, dataDir, snapshot, ffmpeg string) *Manager {
-	m := &Manager{store: store, path: filepath.Join(dataDir, "subtitle-maintenance.json"), snapshot: snapshot, ffmpeg: ffmpeg,
+	m := &Manager{cacheDir: filepath.Join(dataDir, "subtitles"), store: store, path: filepath.Join(dataDir, "subtitle-maintenance.json"), snapshot: snapshot, ffmpeg: ffmpeg,
 		key: os.Getenv("SONDER_OPENSUBTITLES_API_KEY"), username: os.Getenv("SONDER_OPENSUBTITLES_USERNAME"), password: os.Getenv("SONDER_OPENSUBTITLES_PASSWORD"),
 		client: &http.Client{Timeout: 30 * time.Second}, wake: make(chan struct{}, 1)}
 	if b, err := os.ReadFile(m.path); err == nil {
@@ -138,7 +139,7 @@ func (m *Manager) record(key string, r Record) {
 	}
 }
 func videoItem(it *library.Item) bool {
-	return it.FilePath != "" && (it.Kind == api.KindMovie || it.Kind == api.KindTVShow || it.Kind == api.KindDocumentary)
+	return it.ID != "" && filepath.Base(it.ID) == it.ID && it.ID != "." && it.ID != ".." && it.FilePath != "" && (it.Kind == api.KindMovie || it.Kind == api.KindTVShow || it.Kind == api.KindDocumentary)
 }
 func (m *Manager) pass(ctx context.Context) {
 	m.mu.Lock()
@@ -203,7 +204,7 @@ func (m *Manager) pass(ctx context.Context) {
 			now := time.Now().UTC()
 			fingerprint := fmt.Sprintf("%s|%d|%d", it.FilePath, it.SizeBytes, it.ModTime.UnixNano())
 			r := Record{Title: it.Title, Language: lang, CheckedAt: now, Fingerprint: fingerprint}
-			if p := existingSidecar(it, lang); p != "" {
+			if p := m.existingSidecar(it, lang); p != "" {
 				m.attach(it, p)
 				r.Status = "available"
 				r.Source = "sidecar"
@@ -213,12 +214,12 @@ func (m *Manager) pass(ctx context.Context) {
 			m.mu.Lock()
 			old := m.state.Items[key]
 			m.mu.Unlock()
-			if old.Fingerprint == fingerprint && now.Before(old.RetryAt) && !(old.Status == "blocked" && m.key != "" && strings.Contains(old.Detail, "not configured")) {
+			if old.Fingerprint == fingerprint && now.Before(old.RetryAt) && !strings.Contains(old.Detail, "text extraction failed") && !(old.Status == "blocked" && m.key != "" && strings.Contains(old.Detail, "not configured")) {
 				continue
 			}
 			r.Status = "checking"
 			m.record(key, r)
-			target := strings.TrimSuffix(it.FilePath, filepath.Ext(it.FilePath)) + "." + lang + ".sonder.vtt"
+			target := library.SubtitleCacheBase(m.cacheDir, it) + "." + lang + ".sonder.vtt"
 			extracted := false
 			embedded := false
 			for _, track := range it.EmbeddedSubtitleTracks {
@@ -297,7 +298,12 @@ func languageMatches(v, lang string) bool {
 	}
 	return v == lang
 }
-func existingSidecar(it *library.Item, lang string) string {
+func (m *Manager) existingSidecar(it *library.Item, lang string) string {
+	for _, p := range library.CachedSidecarPaths(m.cacheDir, it) {
+		if strings.HasSuffix(p, "."+lang+".sonder.vtt") || strings.HasSuffix(p, "."+lang+".opensubtitles.srt") {
+			return p
+		}
+	}
 	base := strings.TrimSuffix(filepath.Base(it.FilePath), filepath.Ext(it.FilePath))
 	entries, _ := os.ReadDir(filepath.Dir(it.FilePath))
 	for _, e := range entries {
@@ -349,6 +355,9 @@ func (m *Manager) attach(it *library.Item, p string) {
 	})
 }
 func (m *Manager) extract(ctx context.Context, path string, index int, target string) error {
+	if err := os.MkdirAll(filepath.Dir(target), 0755); err != nil {
+		return err
+	}
 	if m.ffmpeg == "" {
 		return fmt.Errorf("ffmpeg unavailable")
 	}
@@ -549,10 +558,13 @@ func (m *Manager) download(ctx context.Context, it *library.Item, lang, token st
 	if err != nil || !validSubtitle(b) {
 		return "", fmt.Errorf("subtitle file is empty or invalid")
 	}
-	target := strings.TrimSuffix(it.FilePath, filepath.Ext(it.FilePath)) + "." + lang + ".opensubtitles.srt"
+	target := library.SubtitleCacheBase(m.cacheDir, it) + "." + lang + ".opensubtitles.srt"
+	if err = os.MkdirAll(filepath.Dir(target), 0755); err != nil {
+		return "", fmt.Errorf("cannot create subtitle storage")
+	}
 	f, err := os.CreateTemp(filepath.Dir(target), ".sonder-subtitle-*.srt")
 	if err != nil {
-		return "", fmt.Errorf("cannot write subtitles beside media")
+		return "", fmt.Errorf("cannot write subtitles in Sonder storage")
 	}
 	defer os.Remove(f.Name())
 	_, err = f.Write(b)

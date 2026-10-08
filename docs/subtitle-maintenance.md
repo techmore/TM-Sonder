@@ -4,7 +4,7 @@ Sonder checks every movie, documentary and TV episode from the saved catalog
 immediately on startup, again after the startup scan discovers new titles,
 then hourly. English (`en`) is the default target. Existing language-tagged
 sidecars are attached immediately. Embedded tracks in the requested language
-are exported to WebVTT beside the source media where possible, making them
+are exported to WebVTT in permanent Sonder storage where possible, making them
 available to the browser without burning text into the video. Bitmap subtitles
 remain available through the existing burn-in playback path.
 
@@ -15,11 +15,14 @@ confusing series/remakes. Forced-only, machine-translated, AI-translated and
 multipart subtitle results are excluded. Title/year matches may still need
 playback timing review because different releases can have different cuts.
 
-Downloaded subtitles are saved next to the video as
-`<video base>.en.opensubtitles.srt`; extracted subtitles use
-`<video base>.en.sonder.vtt`. Existing files are never overwritten. The catalog
-is updated immediately so the player can offer them without a rescan. Files
-remain on the NAS for future scans and other players.
+Downloaded and extracted subtitles are saved under
+`<dataDir>/subtitles/<item ID>/`, using the media filename and a fingerprint of
+the exact source revision. They survive restarts and rescans; replaced video
+files do not silently reuse captions from a different cut. Existing media
+sidecars are never overwritten. The catalog is updated immediately so the
+player offers maintained subtitles without a rescan. Production media mounts
+are read-only; this storage is on SER8's permanent Sonder data volume and does
+not require granting the application write access to the NAS library.
 
 The worker runs sequentially, with a three-minute extraction timeout per track,
 bounded HTTP downloads, and a pause between remote searches. Not-found results

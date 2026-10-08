@@ -47,6 +47,7 @@ type ScanState struct {
 
 // Scanner walks configured libraries and reconciles them into the Store.
 type Scanner struct {
+	subtitleDir  string
 	store        *Store
 	prober       Prober
 	thumbFn      ThumbFunc
@@ -106,6 +107,9 @@ type Prober interface {
 // ThumbFunc generates a poster image for one item, returning the stored
 // path. Implementations must tolerate being called twice (idempotent).
 type ThumbFunc func(ctx context.Context, itemID, videoPath string, durationSeconds float64) (string, error)
+
+// SetSubtitleDir records durable maintained subtitles outside read-only media mounts.
+func (sc *Scanner) SetSubtitleDir(dir string) { sc.subtitleDir = dir }
 
 func NewScanner(store *Store) *Scanner {
 	ctx, cancel := context.WithCancel(context.Background())
@@ -869,7 +873,7 @@ func (sc *Scanner) scanLibraryInto(lib config.Library, keep map[string]bool, pen
 		unchanged := found && !libStale && !pathChanged &&
 			existing.SizeBytes == st.Size() && existing.ModTime.Equal(st.ModTime()) &&
 			existing.ParseVersion == ParserVersion &&
-			len(existing.SidecarPaths) == sc.sidecarCount(path)
+			len(existing.SidecarPaths) == sc.sidecarCount(path)+len(CachedSidecarPaths(sc.subtitleDir, existing))
 		wantsFirstProbe := unchanged && sc.thumbFn != nil &&
 			existing.PosterPath == "" && existing.TrackProbeUpdatedAt == nil
 		wantsOptimizationProbe := unchanged && existing.Kind == api.KindAudiobook && format == api.FormatM4B &&
@@ -1049,7 +1053,7 @@ func (sc *Scanner) buildItem(path, id string, st os.FileInfo, format api.MediaFo
 	}
 	item.SeriesNumber = parsed.SeriesNumber
 
-	item.SidecarPaths = findSidecars(path)
+	item.SidecarPaths = append(findSidecars(path), CachedSidecarPaths(sc.subtitleDir, item)...)
 	item.ParseVersion = ParserVersion
 
 	// Artwork discovery.
