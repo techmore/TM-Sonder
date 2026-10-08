@@ -473,6 +473,8 @@
 
     let nowPlayingItem = null;
     let nowPlayingMode = "audio";
+    let npVideoTranscoded = false;
+    let npVideoOffset = 0;
     let npSeeking = false;
     let npLastSaved = 0;
     let npPlaybackAttempt = null;
@@ -771,6 +773,14 @@
 
     function npMedia() { return $("#npMedia"); }
 
+    function playbackPosition(media = npMedia()) {
+      return (npVideoTranscoded ? npVideoOffset : 0) + ((media && media.currentTime) || 0);
+    }
+
+    function transcodedVideoURL(item, offset) {
+      return api("/stream/" + item.id + "?transcode=1&ss=" + Math.max(0, offset).toFixed(3));
+    }
+
     function renderAirPlayWirelessState() {
       const media = npMedia();
       const button = $("#npAirPlay");
@@ -846,7 +856,7 @@
       if (!item) return;
       if (nowPlayingItem && nowPlayingItem.id === id) {
         togglePlay();
-        if (isMobileViewport() && nowPlayingMode === "audio") setPlayerExpanded(true);
+        if (isMobileViewport()) setPlayerExpanded(true);
         closeDetailOnMobile();
         return;
       }
@@ -872,6 +882,8 @@
       nowPlayingParts = parts;
       nowPlayingPartIndex = Math.min(Math.max(index | 0, 0), parts.length - 1);
       nowPlayingMode = "audio";
+      npVideoTranscoded = false;
+      npVideoOffset = 0;
       npLastSaved = 0;
       npSeeking = false;
       prepareNowPlayingShell(item, "audio");
@@ -1346,7 +1358,8 @@
       const savedPosition = saved?.seconds > 0 && (!saved.duration || saved.seconds < saved.duration - 8) ? saved.seconds : 0;
       const currentPosition = Number.isFinite(media.currentTime) ? media.currentTime : 0;
       const position = npResumeCheckpoint?.position ??
-        (currentPosition > 0 || (media.readyState >= 1 && !media.error) ? currentPosition : savedPosition);
+        (npVideoTranscoded ? currentPosition :
+        (currentPosition > 0 || (media.readyState >= 1 && !media.error) ? currentPosition : savedPosition));
       const rate = npResumeCheckpoint?.rate ?? (media.playbackRate || 1);
       cancelPlaybackAttempt();
       const attempt = { media, source: media.src, target: currentProgressTargetID(),
@@ -1389,6 +1402,14 @@
       };
       const recover = () => {
         if (!active() || attempt.retried) return;
+        if (npVideoTranscoded) {
+          // Live fragmented MP4 cannot seek into bytes that have not arrived.
+          // Ask ffmpeg to start a new stream at the absolute movie position.
+          npVideoOffset += Math.max(0, attempt.position);
+          attempt.position = 0;
+          media.src = transcodedVideoURL(nowPlayingItem, npVideoOffset);
+          attempt.source = media.src;
+        }
         attempt.retried = true;
         attempt.loading = true;
         // A reload can emit pause/timeupdate at zero. Keep that transient state
@@ -1398,7 +1419,7 @@
           if (!active()) return;
           try {
             const duration = media.duration;
-            media.currentTime = Number.isFinite(duration) && duration > 0
+            if (!npVideoTranscoded) media.currentTime = Number.isFinite(duration) && duration > 0
               ? Math.min(attempt.position, Math.max(0, duration - 0.01)) : attempt.position;
             media.defaultPlaybackRate = attempt.rate;
             media.playbackRate = attempt.rate;
@@ -1417,7 +1438,7 @@
         play();
       };
       status("");
-      if (npResumeCheckpoint || media.error || media.networkState === 3) recover();
+      if (npResumeCheckpoint || media.error || media.networkState === 3 || (npVideoTranscoded && media.ended)) recover();
       else play();
     }
 
@@ -1506,7 +1527,7 @@
       // Audiobooks should feel like a listening app on a phone. Open the
       // dedicated surface immediately; the compact dock remains available
       // after the listener taps Minimize.
-      setPlayerExpanded(mode === "audio" && isMobileViewport());
+      setPlayerExpanded(isMobileViewport());
       syncAirPlayAvailabilityListener();
       updateMediaSession(item);
     }
@@ -1525,13 +1546,16 @@
       nowPlayingParts = null;
       nowPlayingPartIndex = 0;
       nowPlayingMode = plan.mode;
+      npVideoTranscoded = plan.mode === "video" && plan.url.includes("transcode=1");
+      npVideoOffset = npVideoTranscoded ? Math.max(0, Number(resumeAt) || 0) : 0;
+      if (npVideoTranscoded && item.durationSeconds > 0 && npVideoOffset >= item.durationSeconds - 1) npVideoOffset = 0;
       npLastSaved = 0;
       npSeeking = false;
       loadBookChapters(item);
 
       cancelPlaybackAttempt();
       npResumeCheckpoint = null;
-      media.src = api(plan.url);
+      media.src = npVideoTranscoded ? transcodedVideoURL(item, npVideoOffset) : api(plan.url);
       syncPlaybackRate(media);
       media.onerror = () => {
         const codecs = Array.isArray(item.probedAudioCodecs) ? item.probedAudioCodecs : [];
@@ -1554,7 +1578,7 @@
         if (media.src !== expectedSrc) return;
         syncPlaybackRate(media);
         const duration = media.duration || 0;
-        if (explicitSeek ? resumeAt >= 0 && resumeAt < duration : resumeAt > 5 && resumeAt < Math.max(duration - 8, 0)) media.currentTime = resumeAt;
+        if (!npVideoTranscoded && (explicitSeek ? resumeAt >= 0 && resumeAt < duration : resumeAt > 5 && resumeAt < Math.max(duration - 8, 0))) media.currentTime = resumeAt;
         onTimeUpdate();
       }, { once: true });
       requestPlayback(media);
@@ -1572,7 +1596,9 @@
 
     function skipBy(delta) {
       const media = npMedia();
-      if (!nowPlayingItem || !media || !Number.isFinite(media.duration)) return;
+      if (!nowPlayingItem || !media) return;
+      if (npVideoTranscoded) { seekBookTo(playbackPosition(media) + delta); return; }
+      if (!Number.isFinite(media.duration)) return;
       cancelPlaybackAttempt();
       npResumeCheckpoint = null;
       media.currentTime = Math.min(Math.max(media.currentTime + delta, 0), media.duration || 0);
@@ -1630,9 +1656,9 @@
       const part = nowPlayingParts && nowPlayingParts[nowPlayingPartIndex];
       const targetID = currentProgressTargetID();
       if (!targetID) return;
-      if (!force && Math.abs(media.currentTime - npLastSaved) < 15) return;
-      npLastSaved = media.currentTime;
-      const payload = { seconds: media.currentTime, duration: nowPlayingMode === "video" && item.durationSeconds > 0 ? item.durationSeconds : media.duration };
+      if (!force && Math.abs(playbackPosition(media) - npLastSaved) < 15) return;
+      npLastSaved = playbackPosition(media);
+      const payload = { seconds: playbackPosition(media), duration: nowPlayingMode === "video" && item.durationSeconds > 0 ? item.durationSeconds : media.duration };
       const checkpoint = {
         itemID: targetID, seconds: payload.seconds, duration: payload.duration,
         updatedAt: nextProgressTimestamp(targetID),
@@ -1716,7 +1742,7 @@
           offset: 0,
           total: nowPlayingMode === "video" && nowPlayingItem?.durationSeconds > 0
             ? nowPlayingItem.durationSeconds : (media && media.duration) || 0,
-          position: npResumeCheckpoint?.position ?? ((media && media.currentTime) || 0),
+          position: npResumeCheckpoint ? npResumeCheckpoint.position + (npVideoTranscoded ? npVideoOffset : 0) : playbackPosition(media),
           multi: false,
         };
       }
@@ -1798,7 +1824,17 @@
       if (!media) return;
       cancelPlaybackAttempt();
       npResumeCheckpoint = null;
-      if (!part) { media.currentTime = Math.max(0, seconds); onTimeUpdate(); return; }
+      if (!part) {
+        if (npVideoTranscoded && nowPlayingItem) {
+          const item = nowPlayingItem;
+          const shouldPlay = !media.paused;
+          const target = Math.max(0, Math.min(seconds, Math.max(0, (item.durationSeconds || seconds + 1) - 1)));
+          startPlayback(item, target, true);
+          if (!shouldPlay) pausePlayback();
+          return;
+        }
+        media.currentTime = Math.max(0, seconds); onTimeUpdate(); return;
+      }
       let offset = 0;
       for (let i = 0; i < nowPlayingParts.length; i++) {
         const d = nowPlayingParts[i].durationSeconds || 0;
@@ -1974,10 +2010,16 @@
         const target = view.start + (Number(event.target.value) / 1000) * view.total;
         const cur = $("#npCur");
         if (cur) cur.textContent = formatTime(target - view.start);
-        seekBookTo(target);
+        if (!npVideoTranscoded) seekBookTo(target);
       }
     });
-    on("#npSeek", "change", () => { npSeeking = false; });
+    on("#npSeek", "change", event => {
+      npSeeking = false;
+      if (npVideoTranscoded) {
+        const tl = bookTimeline();
+        if (tl.total > 0) seekBookTo(Number(event.target.value) / 1000 * tl.total);
+      }
+    });
     on("#npMedia", "timeupdate", () => onTimeUpdate());
     on("#npMedia", "play", () => {
       if (!npResumeCheckpoint) startReadSession();
