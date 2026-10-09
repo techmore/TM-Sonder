@@ -58,6 +58,7 @@ type Snapshot struct {
 	Blocked         string          `json:"blocked,omitempty"`
 	Active          string          `json:"active,omitempty"`
 	Dependencies    map[string]bool `json:"dependencies"`
+	Checking        string          `json:"checking,omitempty"`
 	KnownArchiveIDs int             `json:"knownArchiveIDs"`
 }
 type Manager struct {
@@ -68,6 +69,10 @@ type Manager struct {
 	ctx                             context.Context
 	cancel                          context.CancelFunc
 	activeCancel                    context.CancelFunc
+	checkCancel                     context.CancelFunc
+	checking                        string
+	checkWake                       chan struct{}
+	checkDone                       chan struct{}
 	active, activeChannel, blocked  string
 	wake                            chan struct{}
 	done                            chan struct{}

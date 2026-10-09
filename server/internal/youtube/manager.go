@@ -19,7 +19,7 @@ var videoID = regexp.MustCompile(`^[A-Za-z0-9_-]{11}$`)
 var channelURL = regexp.MustCompile(`^https://(?:www\.)?youtube\.com/(?:@[A-Za-z0-9_.-]+|channel/UC[A-Za-z0-9_-]{22}|c/[A-Za-z0-9_.-]+|user/[A-Za-z0-9_.-]+)(?:/(?:videos|shorts|streams))?/?$`)
 
 func New(dataDir, root, yt, ffmpeg, ffprobe string, onComplete func()) (*Manager, error) {
-	m := &Manager{path: filepath.Join(dataDir, "youtube-subscriptions.json"), root: root, yt: yt, ffmpeg: ffmpeg, ffprobe: ffprobe, known: map[string]bool{}, wake: make(chan struct{}, 1), done: make(chan struct{}), onComplete: onComplete}
+	m := &Manager{path: filepath.Join(dataDir, "youtube-subscriptions.json"), root: root, yt: yt, ffmpeg: ffmpeg, ffprobe: ffprobe, known: map[string]bool{}, wake: make(chan struct{}, 1), done: make(chan struct{}), checkWake: make(chan struct{}, 1), checkDone: make(chan struct{}), onComplete: onComplete}
 	m.state = State{Settings: Settings{MinFreeGB: 500, MaxHeight: 1080, Profile: "efficient"}, Channels: []Channel{}, Jobs: []Job{}}
 	b, err := os.ReadFile(m.path)
 	if err == nil {
@@ -54,6 +54,7 @@ func New(dataDir, root, yt, ffmpeg, ffprobe string, onComplete func()) (*Manager
 	}
 	m.ctx, m.cancel = context.WithCancel(context.Background())
 	go m.worker()
+	go m.checkWorker()
 	return m, nil
 }
 func validateSettings(s Settings) error {
@@ -93,6 +94,10 @@ func (m *Manager) saveLocked() error {
 }
 func (m *Manager) notify() {
 	select {
+	case m.checkWake <- struct{}{}:
+	default:
+	}
+	select {
 	case m.wake <- struct{}{}:
 	default:
 	}
@@ -105,6 +110,7 @@ func (m *Manager) Close() {
 	}
 	m.mu.Unlock()
 	<-m.done
+	<-m.checkDone
 }
 func free(path string) (int64, error) {
 	var st syscall.Statfs_t
@@ -124,10 +130,10 @@ func (m *Manager) Status() Snapshot {
 	b, _ := json.Marshal(m.state)
 	var st State
 	_ = json.Unmarshal(b, &st)
-	active, blocked, known := m.active, m.blocked, len(m.known)
+	active, blocked, known, checking := m.active, m.blocked, len(m.known), m.checking
 	m.mu.Unlock()
 	d := map[string]bool{"yt-dlp": available(m.yt), "ffmpeg": available(m.ffmpeg), "ffprobe": available(m.ffprobe), "deno": available("deno")}
-	s := Snapshot{State: st, StoragePath: m.root, Dependencies: d, Active: active, Blocked: blocked, KnownArchiveIDs: known}
+	s := Snapshot{State: st, StoragePath: m.root, Dependencies: d, Active: active, Blocked: blocked, KnownArchiveIDs: known, Checking: checking}
 	s.Ready = d["yt-dlp"] && d["ffmpeg"] && d["ffprobe"] && d["deno"] && m.root != ""
 	if m.root == "" {
 		s.Blocked = "Set SONDER_YOUTUBE_DIR to the mounted NAS download folder"
@@ -177,6 +183,11 @@ func (m *Manager) Configure(s Settings) error {
 	defer m.mu.Unlock()
 	old := m.state.Settings
 	m.state.Settings = s
+	if old.Paused && !s.Paused {
+		for i := range m.state.Channels {
+			m.state.Channels[i].NextCheck = time.Time{}
+		}
+	}
 	m.blocked = ""
 	if err := m.saveLocked(); err != nil {
 		m.state.Settings = old
@@ -184,6 +195,9 @@ func (m *Manager) Configure(s Settings) error {
 	}
 	if m.activeCancel != nil {
 		m.activeCancel()
+	}
+	if m.checkCancel != nil {
+		m.checkCancel()
 	}
 	m.notify()
 	return nil
@@ -237,6 +251,22 @@ func (m *Manager) ChannelAction(id, action string, hours int) error {
 		}
 		old := *c
 		switch action {
+		case "remove":
+			m.state.Channels = append(m.state.Channels[:i], m.state.Channels[i+1:]...)
+			for k := range m.state.Jobs {
+				j := &m.state.Jobs[k]
+				if j.ChannelID == id && j.Status != "completed" && j.Status != "skipped" {
+					j.Status = "cancelled"
+					j.Detail = "Channel unsubscribed; files preserved"
+				}
+			}
+			if m.activeChannel == id && m.activeCancel != nil {
+				m.activeCancel()
+			}
+			if m.checking == id && m.checkCancel != nil {
+				m.checkCancel()
+			}
+			return m.saveLocked()
 		case "pause":
 			c.Paused = true
 		case "resume":
@@ -255,6 +285,9 @@ func (m *Manager) ChannelAction(id, action string, hours int) error {
 		if err := m.saveLocked(); err != nil {
 			*c = old
 			return err
+		}
+		if c.Paused && m.checking == id && m.checkCancel != nil {
+			m.checkCancel()
 		}
 		if c.Paused && m.activeChannel == id && m.activeCancel != nil {
 			m.activeCancel()

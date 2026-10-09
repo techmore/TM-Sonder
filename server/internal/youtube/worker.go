@@ -40,20 +40,6 @@ func (m *Manager) step() bool {
 		return false
 	}
 	m.mu.Lock()
-	now := time.Now()
-	var ch *Channel
-	for _, c := range m.state.Channels {
-		if !c.Paused && !c.NextCheck.After(now) {
-			copy := c
-			ch = &copy
-			break
-		}
-	}
-	if ch != nil {
-		m.mu.Unlock()
-		m.check(*ch)
-		return true
-	}
 	var job *Job
 	var channel Channel
 	for _, j := range m.state.Jobs {
@@ -153,9 +139,15 @@ func (m *Manager) end() {
 	m.mu.Unlock()
 }
 func (m *Manager) check(c Channel) {
-	ctx, cancel := m.begin("check:"+c.ID, c.ID, 3*time.Minute)
-	defer cancel()
-	defer m.end()
+	ctx, cancel := context.WithTimeout(m.ctx, 3*time.Minute)
+	m.mu.Lock()
+	if m.state.Settings.Paused {
+		cancel()
+	}
+	m.checking = c.ID
+	m.checkCancel = cancel
+	m.mu.Unlock()
+	defer func() { cancel(); m.mu.Lock(); m.checking = ""; m.checkCancel = nil; m.mu.Unlock() }()
 	raw, err := m.run(ctx, m.yt, []string{"--ignore-config", "--no-plugin-dirs", "--flat-playlist", "--dump-single-json", "--playlist-end", "200", "--socket-timeout", "20", "--retries", "2", "--", c.URL + "/videos"}, 12*1024*1024)
 	var info struct {
 		Channel   string `json:"channel"`
@@ -343,6 +335,10 @@ func (m *Manager) download(j Job, c Channel, s Settings) {
 		m.update(j.ID, "failed", "NAS reserve reached before publishing; complete file retained in staging")
 		return
 	}
+	if err = os.Chmod(work, 0o755); err != nil {
+		m.update(j.ID, "failed", err.Error())
+		return
+	}
 	if err = os.MkdirAll(filepath.Dir(destination), 0o755); err == nil {
 		err = os.Rename(work, destination)
 	}
@@ -479,5 +475,43 @@ func (m *Manager) complete(j Job, destination string) {
 	m.mu.Unlock()
 	if err == nil && m.onComplete != nil {
 		m.onComplete()
+	}
+}
+
+// Polling has its own bounded worker so a long encode cannot delay hourly checks.
+func (m *Manager) checkWorker() {
+	defer close(m.checkDone)
+	tick := time.NewTicker(time.Minute)
+	defer tick.Stop()
+	for {
+		select {
+		case <-m.ctx.Done():
+			return
+		default:
+		}
+		ready := m.Status().Ready
+		m.mu.Lock()
+		var due *Channel
+		if ready && !m.state.Settings.Paused {
+			for _, c := range m.state.Channels {
+				if !c.Paused && !c.NextCheck.After(time.Now()) {
+					copy := c
+					due = &copy
+					break
+				}
+			}
+		}
+		m.mu.Unlock()
+		if due != nil {
+			m.check(*due)
+			m.notify()
+			continue
+		}
+		select {
+		case <-m.ctx.Done():
+			return
+		case <-m.checkWake:
+		case <-tick.C:
+		}
 	}
 }

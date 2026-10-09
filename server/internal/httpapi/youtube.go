@@ -45,8 +45,8 @@ func (s *Server) handleYouTube(w http.ResponseWriter, r *http.Request) {
 		_, err = s.youtubeManager.Add(p.URL, p.IntervalHours, p.Backfill)
 	case "checkAll":
 		err = s.youtubeManager.CheckAll()
-	case "channelPause", "channelResume", "channelCheck", "channelInterval":
-		actions := map[string]string{"channelPause": "pause", "channelResume": "resume", "channelCheck": "check", "channelInterval": "interval"}
+	case "channelPause", "channelResume", "channelCheck", "channelInterval", "channelRemove":
+		actions := map[string]string{"channelPause": "pause", "channelResume": "resume", "channelCheck": "check", "channelInterval": "interval", "channelRemove": "remove"}
 		err = s.youtubeManager.ChannelAction(p.ID, actions[p.Action], p.IntervalHours)
 	case "jobRetry", "jobCancel":
 		action := "retry"
@@ -67,23 +67,36 @@ func (s *Server) handleYouTube(w http.ResponseWriter, r *http.Request) {
 
 // Coalesce download completions into a scan; never overlap an existing scan.
 func (s *Server) QueueYouTubeCatalogScan() {
-	if s.scanner == nil || !s.youtubeScanPending.CompareAndSwap(false, true) {
+	if s.scanner == nil {
+		return
+	}
+	s.youtubeScanDirty.Store(true)
+	if !s.youtubeScanPending.CompareAndSwap(false, true) {
 		return
 	}
 	go func() {
-		defer s.youtubeScanPending.Store(false)
+		defer func() {
+			s.youtubeScanPending.Store(false)
+			if s.youtubeScanDirty.Load() {
+				s.QueueYouTubeCatalogScan()
+			}
+		}()
 		for attempt := 0; attempt < 10; attempt++ {
 			time.Sleep(time.Minute)
 			if s.scanner.State().Scanning {
 				continue
 			}
+			s.youtubeScanDirty.Store(false)
 			if _, err := s.scanner.ScanAll(s.cfg().Libraries); err == nil {
 				if s.snapshotPath != "" {
 					_ = s.store.Flush(s.snapshotPath)
 				}
 				atomic.AddInt64(&s.settingsVersion, 1)
-				return
+				if !s.youtubeScanDirty.Load() {
+					return
+				}
 			}
+			s.youtubeScanDirty.Store(true)
 		}
 	}()
 }

@@ -62,6 +62,7 @@ type ChapterProvider interface {
 type Server struct {
 	youtubeManager     *youtube.Manager
 	youtubeScanPending atomic.Bool
+	youtubeScanDirty   atomic.Bool
 	subtitleManager    *subtitles.Manager
 	cfgPtr             atomic.Pointer[config.Config]
 	store              *library.Store

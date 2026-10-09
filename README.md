@@ -233,3 +233,47 @@ Set `PI_BIN` if `pi` is not on OpenCode's `PATH`:
 ```bash
 PI_BIN="$HOME/.local/bin/pi" opencode
 ```
+
+## YouTube subscriptions (`yt-dlp` branch)
+
+The owner can open **YouTube** from the library toolbar (or `/youtube`) to add
+channel URLs, choose hourly/daily checks and choose an initial backfill of
+0–100 uploads. A separate polling worker keeps checks running during long
+conversions. Checks inspect the latest 200 entries in the channel's Videos tab;
+Shorts, active live streams and uploads absent from that tab are not included.
+
+The queue persists in `dataDir/youtube-subscriptions.json`. Existing YouTube IDs
+from the NAS `downloaded.txt` archive are imported for deduplication; the old
+archive and media are preserved. Global pause cancels active subprocess groups
+and keeps partial files for resume. Per-channel pause, unsubscribe, retry and
+cancel are also available. Unsubscribing preserves completed and partial files.
+
+Storage defaults to a **500 GB decimal free-space reserve**. Work starts only
+above that reserve plus a 24 GB workspace allowance. Downloads are serial,
+limited to 20 MB/s and an 8 GiB format-size hint; a running guard stops work if
+the NAS approaches its reserve, disappears, or the job workspace exceeds 24 GB.
+Other writers can consume NAS space between checks, so this is a protective
+policy rather than a filesystem quota. No automatic media deletion is performed.
+Completed files are atomically published into `Sonder Channels/<subscription>/<video>`;
+hidden `.sonder-staging` files are excluded from catalog scans. Failed jobs retain
+partial files and require a retry. Download completions schedule a coalesced library
+scan and snapshot update.
+
+Formats:
+
+- **Efficient original:** prefer YouTube's AV1/VP9 formats at the chosen resolution.
+- **Compatible original:** request H.264 with AAC for broader direct playback.
+- **Compact:** encode a new download with software AV1, two threads and AAC.
+  Replace its source only if the result is smaller and passes audio/video/duration
+  checks. Existing NAS videos are not bulk converted. Unsupported codecs use
+  Sonder's normal playback transcoding path.
+
+Run `sudo ./deploy/install-youtube.sh /mounted/NAS/ytdl` on the Incus host. It
+verifies pinned official yt-dlp/Deno binaries, exposes only that NAS directory
+at `/media/ytdl`, configures `SONDER_YOUTUBE_DIR`, adds a YouTube library, and
+allows the service to write that directory. Deploy the feature branch using
+the existing Deploy workflow's manual branch selector. The installer does not
+restart or replace the application by itself. For other deployments, install
+yt-dlp, Deno, FFmpeg and FFprobe, set `SONDER_YOUTUBE_DIR`, allow service writes,
+and configure a library for that path. Downloads require normal source access;
+no browser cookies or account credentials are imported.

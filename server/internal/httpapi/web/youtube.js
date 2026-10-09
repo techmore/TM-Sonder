@@ -14,7 +14,7 @@
   $('#queue').textContent=(state.counts?.queued||0)+' / '+((state.active&&!state.active.startsWith('check:'))?'1':'0');
   $('#saved').textContent=bytes(state.savedBytes||0);
   $('#pause').textContent=state.settings.paused?'Resume sync':'Pause sync';$('#pause').disabled=!state.ready;$('#check').disabled=!state.ready||state.settings.paused;
-  $('#notice').textContent=state.settings.paused?'Sync paused. Channel checks and new downloads are paused.':state.blocked|| (state.active?'Working: '+state.active:'Watching for new uploads.');
+  $('#notice').textContent=state.settings.paused?'Sync paused. Channel checks and new downloads are paused.':state.blocked|| (state.checking?'Checking channel uploads…':state.active?'Working: '+state.active:'Watching for new uploads.');
   $('#storagePath').textContent='Storage: '+(state.storagePath||'Not configured')+' · '+state.knownArchiveIDs+' IDs from existing NAS archive';
   $('#dependencies').textContent=Object.entries(state.dependencies||{}).map(([k,v])=>k+': '+(v?'ready':'missing')).join(' · ');
   if(!editing){$('#minFree').value=state.settings.minFreeGB;$('#height').value=state.settings.maxHeight;$('#profile').value=state.settings.profile;}
@@ -23,7 +23,7 @@
    const title=element('div'),a=element('a',c.name);a.href=c.url;a.target='_blank';a.rel='noopener noreferrer';title.append(a);if(c.error)title.append(element('small',c.error));if(c.paused)title.append(element('small','Paused'));
    const interval=element('select');for(const [v,label] of [[1,'Hourly'],[24,'Daily']]){const o=element('option',label);o.value=v;interval.append(o);}interval.value=c.intervalHours;interval.addEventListener('change',()=>change({action:'channelInterval',id:c.id,intervalHours:Number(interval.value)}));
    const dates=element('div',date(c.lastCheck));dates.append(element('small','Next: '+date(c.nextCheck)));
-   const actions=element('div');actions.className='yt-actions';actions.append(button(c.paused?'Resume':'Pause',{action:c.paused?'channelResume':'channelPause',id:c.id}),button('Check now',{action:'channelCheck',id:c.id}));return rowCells(title,interval,dates,actions);
+   const actions=element('div');actions.className='yt-actions';actions.append(button(c.paused?'Resume':'Pause',{action:c.paused?'channelResume':'channelPause',id:c.id}),button('Check now',{action:'channelCheck',id:c.id}),button('Unsubscribe',{action:'channelRemove',id:c.id}));return rowCells(title,interval,dates,actions);
   }));
   const filter=$('#filter').value;
   $('#jobs').replaceChildren(...[...(state.jobs||[])].reverse().filter(j=>filter==='all'||(filter==='completed'?j.status==='completed':!['completed','skipped'].includes(j.status))).map(j=>{
