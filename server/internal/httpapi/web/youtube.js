@@ -15,7 +15,7 @@
   $('#saved').textContent=bytes(state.savedBytes||0);
   $('#pause').textContent=state.settings.paused?'Resume sync':'Pause sync';$('#pause').disabled=!state.ready;$('#check').disabled=!state.ready||state.settings.paused;
   $('#notice').textContent=state.settings.paused?'Sync paused. Channel checks and new downloads are paused.':state.blocked|| (state.checking?'Checking channel uploads…':state.active?'Working: '+state.active:'Watching for new uploads.');
-  $('#storagePath').textContent='Storage: '+(state.storagePath||'Not configured')+' · '+state.knownArchiveIDs+' IDs from existing NAS archive';
+  $('#storagePath').textContent='Storage: '+(state.storagePath||'Not configured')+' · '+state.knownArchiveIDs+' known video IDs from the existing archive';
   $('#dependencies').textContent=Object.entries(state.dependencies||{}).map(([k,v])=>k+': '+(v?'ready':'missing')).join(' · ');
   if(!editing){$('#minFree').value=state.settings.minFreeGB;$('#height').value=state.settings.maxHeight;$('#profile').value=state.settings.profile;}
   $('#empty').hidden=state.channels.length>0;

@@ -34,9 +34,12 @@ incus exec "$instance" -- runuser -u ubuntu -- test -w /media/ytdl
 # Unprivileged containers may not read a legacy root-owned archive. Copy its
 # deduplication IDs into private app state without altering the source file.
 if [[ -r "$source_dir/downloaded.txt" ]]; then
- cp "$source_dir/downloaded.txt" "$stage/existing-archive.txt"
+ if ! cp "$source_dir/downloaded.txt" "$stage/existing-archive.txt"; then
+  echo "Legacy archive cannot be read; provide a readable private youtube-existing-archive.txt in app state for deduplication."
+ else
  incus file push --quiet "$stage/existing-archive.txt" "$instance/var/lib/sonder/youtube-existing-archive.txt" --mode=0600
  incus exec "$instance" -- chown ubuntu:ubuntu /var/lib/sonder/youtube-existing-archive.txt
+ fi
 fi
 incus exec "$instance" -- mkdir -p /etc/systemd/system/sonder.service.d
 printf '%s\n' '[Service]' 'Environment=SONDER_YOUTUBE_DIR=/media/ytdl' 'ReadWritePaths=/media/ytdl' > "$stage/youtube.conf"

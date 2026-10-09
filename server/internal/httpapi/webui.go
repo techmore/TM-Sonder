@@ -89,7 +89,7 @@ func libraryPageForThemeAndLayout(preset, layout string) *gzippedPage {
 			{placeholder: "/movie-downloads.js?v=asset", page: movieDownloadsJS},
 			{placeholder: "/video-presentation.js?v=asset", page: videoPresentationJS},
 			{placeholder: "/subtitle-maintenance.js?v=asset", page: subtitleMaintenanceJS},
- {placeholder:"/youtube-link.js?v=asset",page:youtubeLinkJS},
+			{placeholder: "/youtube-link.js?v=asset", page: youtubeLinkJS},
 			{placeholder: "/shared.js?v=asset", page: sharedJS},
 			{placeholder: "/favicon.png?v=asset", page: faviconPNG},
 		} {
