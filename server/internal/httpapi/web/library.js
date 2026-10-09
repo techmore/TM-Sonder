@@ -2091,6 +2091,7 @@
       checkSleepTimer();
     });
     on("#npMedia", "playing", () => {
+      window.ProjectAnalytics?.event(nowPlayingMode === "video" ? "video_playing" : "audio_playing");
       const status = $("#npStatus");
       if (status && ["Starting video…", "Buffering video…", "Reconnecting at your saved position…", playbackPrompt()].includes(status.textContent)) status.textContent = "";
       onPlayStateChange();
@@ -2124,6 +2125,7 @@
     });
     on("#npMedia", "loadedmetadata", () => onTimeUpdate());
     on("#npMedia", "error", () => {
+      window.ProjectAnalytics?.event(nowPlayingMode === "video" ? "video_error" : "audio_error");
       const status = $("#npStatus");
       if (npPlaybackAttempt) return; // The active attempt owns recovery and its status.
       if (status) status.textContent = "Playback disconnected. Tap Play to reconnect at your saved position.";
@@ -6047,6 +6049,7 @@
       void copyBrandInviteLink();
     });
     document.querySelector("#settingsBtn").addEventListener("click", openSettings);
+    if (new URLSearchParams(location.search).get("settings") === "1") openSettings();
     const profileButton = document.querySelector("#profileBtn");
     const profileMenu = document.querySelector("#profileMenu");
     profileButton.addEventListener("click", () => {
