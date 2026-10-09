@@ -113,3 +113,16 @@ func (s *Server) handleYouTubePage(w http.ResponseWriter, r *http.Request) {
 	}
 	serveGzippableHTML(w, r, youtubePage)
 }
+
+var youtubeLinkJS = newGzippedPage(func() []byte { return mustReadWeb("web/youtube-link.js") })
+
+func (s *Server) handleYouTubeLinkJS(w http.ResponseWriter, r *http.Request) {
+	serveAsset(w, r, youtubeLinkJS, "text/javascript; charset=utf-8")
+}
+func (s *Server) handleYouTubePermission(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Cache-Control", "no-store")
+	if !s.requireSubtitleOwner(w, r) {
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]bool{"owner": true})
+}

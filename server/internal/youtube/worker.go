@@ -298,7 +298,7 @@ func (m *Manager) download(j Job, c Channel, s Settings) {
 	if s.Profile == "compatible" {
 		format = fmt.Sprintf("bv*[height<=%d][vcodec^=avc1]+ba[ext=m4a]/b[height<=%d][ext=mp4]", s.MaxHeight, s.MaxHeight)
 	}
-	args := []string{"--ignore-config", "--no-plugin-dirs", "--no-playlist", "--no-progress", "--continue", "--socket-timeout", "20", "--retries", "3", "--fragment-retries", "3", "--abort-on-unavailable-fragments", "--max-filesize", "8G", "--limit-rate", "20M", "--match-filters", "!is_live & !is_upcoming", "--format", format, "--format-sort", "vcodec:av01,vcodec:vp9", "--merge-output-format", "mkv", "--write-info-json", "--write-thumbnail", "--convert-thumbnails", "jpg", "--write-subs", "--write-auto-subs", "--sub-langs", "en.*,es.*", "--sub-format", "vtt", "--no-simulate", "--ffmpeg-location", m.ffmpeg, "--output", filepath.Join(work, "%(title).160B [%(id)s].%(ext)s"), "--", "https://www.youtube.com/watch?v=" + j.ID}
+	args := []string{"--ignore-config", "--no-plugin-dirs", "--no-playlist", "--no-progress", "--continue", "--socket-timeout", "20", "--retries", "3", "--fragment-retries", "3", "--abort-on-unavailable-fragments", "--max-filesize", "8G", "--limit-rate", "20M", "--match-filters", "!is_live & !is_upcoming", "--format", format, "--format-sort", "vcodec:av01", "--merge-output-format", "mkv", "--write-info-json", "--write-thumbnail", "--convert-thumbnails", "jpg", "--write-subs", "--write-auto-subs", "--sub-langs", "en.*,es.*", "--sub-format", "vtt", "--no-simulate", "--ffmpeg-location", m.ffmpeg, "--output", filepath.Join(work, "%(title).160B [%(id)s].%(ext)s"), "--", "https://www.youtube.com/watch?v=" + j.ID}
 	_, err := m.run(ctx, m.yt, args, 1024*1024)
 	if err == nil {
 		var file string

@@ -40,11 +40,13 @@ func New(dataDir, root, yt, ffmpeg, ffprobe string, onComplete func()) (*Manager
 		}
 	}
 	if root != "" {
-		if b, err := os.ReadFile(filepath.Join(root, "downloaded.txt")); err == nil {
-			for _, line := range strings.Split(string(b), "\n") {
-				p := strings.Fields(line)
-				if len(p) == 2 && strings.EqualFold(p[0], "youtube") && videoID.MatchString(p[1]) {
-					m.known[p[1]] = true
+		for _, archive := range []string{filepath.Join(root, "downloaded.txt"), filepath.Join(dataDir, "youtube-existing-archive.txt")} {
+			if b, err := os.ReadFile(archive); err == nil {
+				for _, line := range strings.Split(string(b), "\n") {
+					p := strings.Fields(line)
+					if len(p) == 2 && strings.EqualFold(p[0], "youtube") && videoID.MatchString(p[1]) {
+						m.known[p[1]] = true
+					}
 				}
 			}
 		}

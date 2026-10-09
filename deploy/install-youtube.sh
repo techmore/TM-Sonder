@@ -21,7 +21,7 @@ with zipfile.ZipFile(p/'deno.zip') as z:
     (p/'deno').write_bytes(z.read('deno'))
 PY
 for name in yt-dlp deno; do
- incus file push "$stage/$name" "$instance/usr/local/bin/$name" --mode=0755
+ incus file push --quiet "$stage/$name" "$instance/usr/local/bin/$name" --mode=0755
  incus exec "$instance" -- chown root:root "/usr/local/bin/$name"
 done
 # Re-running must never silently switch an existing device's source.
@@ -31,9 +31,16 @@ else
  incus config device add "$instance" youtube-media disk "source=$source_dir" path=/media/ytdl readonly=false shift=false
 fi
 incus exec "$instance" -- runuser -u ubuntu -- test -w /media/ytdl
+# Unprivileged containers may not read a legacy root-owned archive. Copy its
+# deduplication IDs into private app state without altering the source file.
+if [[ -r "$source_dir/downloaded.txt" ]]; then
+ cp "$source_dir/downloaded.txt" "$stage/existing-archive.txt"
+ incus file push --quiet "$stage/existing-archive.txt" "$instance/var/lib/sonder/youtube-existing-archive.txt" --mode=0600
+ incus exec "$instance" -- chown ubuntu:ubuntu /var/lib/sonder/youtube-existing-archive.txt
+fi
 incus exec "$instance" -- mkdir -p /etc/systemd/system/sonder.service.d
 printf '%s\n' '[Service]' 'Environment=SONDER_YOUTUBE_DIR=/media/ytdl' 'ReadWritePaths=/media/ytdl' > "$stage/youtube.conf"
-incus file push "$stage/youtube.conf" "$instance/etc/systemd/system/sonder.service.d/youtube.conf" --mode=0644
+incus file push --quiet "$stage/youtube.conf" "$instance/etc/systemd/system/sonder.service.d/youtube.conf" --mode=0644
 incus exec "$instance" -- python3 - <<'PY'
 import json,shutil,time
 from pathlib import Path
