@@ -31,6 +31,7 @@ import (
 	"tm-sonder/server/internal/runtimecontrol"
 	"tm-sonder/server/internal/subtitles"
 	"tm-sonder/server/internal/transcode"
+	"tm-sonder/server/internal/youtube"
 )
 
 const (
@@ -59,6 +60,8 @@ type ChapterProvider interface {
 
 // Server wires the catalog, scanner, and transcoder into the HTTP contract.
 type Server struct {
+	youtubeManager     *youtube.Manager
+	youtubeScanPending atomic.Bool
 	subtitleManager    *subtitles.Manager
 	cfgPtr             atomic.Pointer[config.Config]
 	store              *library.Store
@@ -355,6 +358,10 @@ func (s *Server) routes() {
 	m.HandleFunc("GET /read/{id}", s.handleEbookReader)
 	m.HandleFunc("GET /epub.js", s.handleEpubJS)
 	m.HandleFunc("GET /jszip.js", s.handleJSZipJS)
+	m.HandleFunc("GET /youtube", s.handleYouTubePage)
+	m.HandleFunc("GET /youtube.js", s.handleYouTubeJS)
+	m.HandleFunc("GET /api/settings/youtube", s.handleYouTube)
+	m.HandleFunc("POST /api/settings/youtube", s.handleYouTube)
 	m.HandleFunc("GET /api/settings", s.handleSettingsGet)
 	m.HandleFunc("GET /api/settings/browse", s.handleSettingsBrowse)
 	m.HandleFunc("PUT /api/settings", s.handleSettingsPut)

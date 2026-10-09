@@ -35,6 +35,7 @@ import (
 	"tm-sonder/server/internal/runtimecontrol"
 	"tm-sonder/server/internal/subtitles"
 	"tm-sonder/server/internal/transcode"
+	"tm-sonder/server/internal/youtube"
 	"tm-sonder/server/internal/zeroconf"
 )
 
@@ -309,6 +310,14 @@ func run(configFlag, plexDB, exportPath, importPath, importMode, importPathMap s
 	srv.SetTrackRefresher(scanner)
 	srv.SetConfigPath(path)
 	srv.SetSnapshotPath(snapshotPath)
+	youtubeManager, youtubeErr := youtube.New(cfg.DataDir, os.Getenv("SONDER_YOUTUBE_DIR"), "yt-dlp", cfg.FFmpegPath, cfg.FFprobePath, srv.QueueYouTubeCatalogScan)
+	if youtubeErr != nil {
+		logger.Printf("YouTube subscriptions unavailable: %v", youtubeErr)
+	} else {
+		srv.SetYouTubeManager(youtubeManager)
+		defer youtubeManager.Close()
+	}
+
 	cacheDir := cfg.MediaCache.Dir
 	if cacheDir == "" {
 		cacheDir = filepath.Join(cfg.DataDir, "media-cache")
