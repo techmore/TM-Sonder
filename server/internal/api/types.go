@@ -98,24 +98,24 @@ type MediaItem struct {
 	Tags            []string    `json:"tags"`
 	// Genres is the curated genre list (distinct from Tags, which also holds
 	// free-form provider keywords and people names).
-	Genres           []string `json:"genres,omitempty"`
-	Summary          string   `json:"summary"`
-	ProgressSeconds  float64  `json:"progressSeconds"`
-	ShowTitle        *string  `json:"showTitle"`
-	ShowGroupID      *string  `json:"showGroupID,omitempty"`
-	ShowGroupTitle   *string  `json:"showGroupTitle,omitempty"`
+	Genres          []string `json:"genres,omitempty"`
+	Summary         string   `json:"summary"`
+	ProgressSeconds float64  `json:"progressSeconds"`
+	ShowTitle       *string  `json:"showTitle"`
+	ShowGroupID     *string  `json:"showGroupID,omitempty"`
+	ShowGroupTitle  *string  `json:"showGroupTitle,omitempty"`
 	// ShowPosterURL renders the art stored in the show folder itself, so a
 	// show card never displays a season- or extras-folder poster. Season
 	// art falls back to the show poster when a season has no art of its own.
 	// Both are derived per request from the same artwork files as posterURL.
-	ShowPosterURL   *string `json:"showPosterURL,omitempty"`
-	SeasonPosterURL *string `json:"seasonPosterURL,omitempty"`
-	SeasonNumber     *int     `json:"seasonNumber"`
-	EpisodeNumber    *int     `json:"episodeNumber"`
-	MetadataIDSource *string  `json:"metadataIDSource"`
-	MetadataID       *string  `json:"metadataID"`
-	Edition          *string  `json:"edition"`
-	SplitPart        *string  `json:"splitPart"`
+	ShowPosterURL    *string `json:"showPosterURL,omitempty"`
+	SeasonPosterURL  *string `json:"seasonPosterURL,omitempty"`
+	SeasonNumber     *int    `json:"seasonNumber"`
+	EpisodeNumber    *int    `json:"episodeNumber"`
+	MetadataIDSource *string `json:"metadataIDSource"`
+	MetadataID       *string `json:"metadataID"`
+	Edition          *string `json:"edition"`
+	SplitPart        *string `json:"splitPart"`
 	// Author/Narrator are populated for audiobooks and ebooks (enrichment
 	// and filename parsing); they are distinct from Tags, which holds
 	// genres plus provider keywords.
