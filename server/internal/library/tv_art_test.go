@@ -21,9 +21,9 @@ func TestTVArtStampsShowAndSeasonPosters(t *testing.T) {
 			MediaItem: api.MediaItem{ID: id, Kind: api.KindTVShow, LibraryID: &lib, ShowTitle: &show,
 				Title: "Ep " + id, PosterURL: &u, SeasonNumber: season, EpisodeNumber: ep},
 			FilePath:           "/TV/" + rel,
-			SourceRelativePath:   rel,
-			PosterPath:           poster,
-			PosterSource:         "local",
+			SourceRelativePath: rel,
+			PosterPath:         poster,
+			PosterSource:       "local",
 		})
 	}
 	// Show-folder art, season-folder art, and an extras folder whose art must
