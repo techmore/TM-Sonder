@@ -13,6 +13,13 @@ Different folders/libraries have distinct group IDs. Grouping itself leaves
 media IDs unchanged; folder renames are not part of this operation. Mixed-content diagnostics are
 available at `GET /api/library/health`; warnings do not imply safe file merging.
 
+TV items may also carry `showPosterURL` (art from the show folder) and
+`seasonPosterURL` (art from the item's season folder, falling back to the
+show poster). Show cards must prefer `showPosterURL` over any episode's
+`posterURL`, because extras-folder art parses into regular season numbers
+and would otherwise hijack the show cover. Season cards must prefer
+`seasonPosterURL`. Both are omitted when the item has no group or no art.
+
 > **Reference implementations:** the macOS app (`xcode-TM-Sonder/SonderHTTPServer.swift`) and the Go server (`server/`, branch `go-port`). The Go server additionally supports `GET /stream/{id}?transcode=1` (see Streaming below); all other routes are wire-compatible with the shapes in this file.
 
 Base URL comes from `/api/discovery` as `localURL` or `lanURL`.
@@ -349,6 +356,8 @@ Media items expose relative artwork URLs instead:
 
 - `posterURL`: `/artwork/poster/{id}` when artwork exists
 - `backdropURL`: `/artwork/backdrop/{id}` when artwork exists
+- `showPosterURL` / `seasonPosterURL`: TV-only show/season-folder art endpoints
+  (same `/artwork/poster/{id}` form, resolved to a representative episode)
 
 `serverSettings` on the wire:
 

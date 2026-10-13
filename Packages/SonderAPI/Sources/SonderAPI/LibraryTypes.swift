@@ -21,6 +21,10 @@ public struct SonderPublicMediaItem: Codable, Sendable, Identifiable, Hashable {
     public var showTitle: String?
     public var showGroupID: String? = nil
     public var showGroupTitle: String? = nil
+    /// Show-folder art for show cards; season-folder art (falling back to the
+    /// show poster) for season cards. Omitted when the item has no group/art.
+    public var showPosterURL: String? = nil
+    public var seasonPosterURL: String? = nil
     public var seasonNumber: Int?
     public var episodeNumber: Int?
     public var metadataIDSource: String?

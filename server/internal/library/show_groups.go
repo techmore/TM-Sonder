@@ -48,6 +48,7 @@ func (s *Store) GroupedItems(libraries []config.Library) []api.MediaItem {
 	books := BookGroupings(internal, libraries)
 
 	result := make([]api.MediaItem, 0, len(internal))
+	pairItems := make([]*Item, 0, len(internal))
 	for _, item := range internal {
 		wire := item.MediaItem
 		wire.CoverEmbedded = item.ProbedHasCover
@@ -91,7 +92,16 @@ func (s *Store) GroupedItems(libraries []config.Library) []api.MediaItem {
 			wire.PublicationYear = parts.Year
 		}
 		result = append(result, wire)
+		pairItems = append(pairItems, item)
 	}
+	// Show/season poster URLs are derived per request from stored art paths.
+	// They never touch the catalog, so no parser bump is needed.
+	// Pairs are built after the loop because append may move result's array.
+	pairs := make([]tvArtPair, len(result))
+	for i := range result {
+		pairs[i] = tvArtPair{internal: pairItems[i], wire: &result[i]}
+	}
+	applyTVArtPosters(pairs, roots)
 	// Store updates are copy-on-write, so the wire values and their nested
 	// slices remain stable after the read lock is released. Sorting outside the
 	// lock keeps catalog assembly from blocking individual artwork requests.

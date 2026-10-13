@@ -104,6 +104,12 @@ type MediaItem struct {
 	ShowTitle        *string  `json:"showTitle"`
 	ShowGroupID      *string  `json:"showGroupID,omitempty"`
 	ShowGroupTitle   *string  `json:"showGroupTitle,omitempty"`
+	// ShowPosterURL renders the art stored in the show folder itself, so a
+	// show card never displays a season- or extras-folder poster. Season
+	// art falls back to the show poster when a season has no art of its own.
+	// Both are derived per request from the same artwork files as posterURL.
+	ShowPosterURL   *string `json:"showPosterURL,omitempty"`
+	SeasonPosterURL *string `json:"seasonPosterURL,omitempty"`
 	SeasonNumber     *int     `json:"seasonNumber"`
 	EpisodeNumber    *int     `json:"episodeNumber"`
 	MetadataIDSource *string  `json:"metadataIDSource"`
