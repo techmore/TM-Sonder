@@ -17,7 +17,7 @@ import (
 // JSON routes the iOS client uses. When opened with ?token= (LAN pairing),
 // the embedded JS propagates the token to every same-origin request.
 
-//go:embed web/library.html web/library.css web/library.js web/movie-downloads.js web/video-presentation.js web/subtitle-maintenance.js web/audiobooks.html web/audiobooks-beta.html web/ebooks.html web/ebook-reader.html web/shared.js web/vendor/epub.min.js web/vendor/jszip.min.js web/vendor/LICENSES.txt web/favicon.svg web/favicon.png
+//go:embed web/youtube-link.js web/youtube.html web/youtube.js web/library.html web/library.css web/library.js web/movie-downloads.js web/video-presentation.js web/subtitle-maintenance.js web/audiobooks.html web/audiobooks-beta.html web/ebooks.html web/ebook-reader.html web/shared.js web/vendor/epub.min.js web/vendor/jszip.min.js web/vendor/LICENSES.txt web/favicon.svg web/favicon.png
 var webFS embed.FS
 
 func mustReadWeb(name string) []byte {
@@ -89,6 +89,7 @@ func libraryPageForThemeAndLayout(preset, layout string) *gzippedPage {
 			{placeholder: "/movie-downloads.js?v=asset", page: movieDownloadsJS},
 			{placeholder: "/video-presentation.js?v=asset", page: videoPresentationJS},
 			{placeholder: "/subtitle-maintenance.js?v=asset", page: subtitleMaintenanceJS},
+			{placeholder: "/youtube-link.js?v=asset", page: youtubeLinkJS},
 			{placeholder: "/shared.js?v=asset", page: sharedJS},
 			{placeholder: "/favicon.png?v=asset", page: faviconPNG},
 		} {
