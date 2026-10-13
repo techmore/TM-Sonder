@@ -581,6 +581,31 @@ test('TV show cards honor the visible episode filter and search episode metadata
  assert.match(get('buildShowGroups().find(s => s.name === "Beta").searchText'), /Finale/);
 });
 
+test('show cards use show-folder art and season cards use season art', () => {
+  // The extras episode sorts first, so the legacy first-poster rule would
+  // show extras art on the show card. Server-stamped show/season URLs win.
+  const ep = (id, seasonNumber, episodeNumber, extra) => ({ id, kind: 'tvShow', title: 'Ep ' + id,
+    showTitle: 'Show', showGroupID: 'g', showGroupTitle: 'Show',
+    seasonNumber, episodeNumber, posterURL: '/artwork/poster/' + id, ...extra });
+  const get = catalog([
+    ep('x', 2, 1, { posterURL: '/artwork/poster/x', showPosterURL: '/artwork/poster/s1', seasonPosterURL: '/artwork/poster/s2' }),
+    ep('s2', 2, 2, { posterURL: '/artwork/poster/s2', showPosterURL: '/artwork/poster/s1', seasonPosterURL: '/artwork/poster/s2' }),
+    ep('s1', 1, 1, { posterURL: '/artwork/poster/s1', showPosterURL: '/artwork/poster/s1', seasonPosterURL: '/artwork/poster/s1' }),
+  ]);
+  assert.equal(get('buildShowGroups()[0].posterItem.id'), 'x');
+  assert.equal(get('buildShowGroups()[0].artURL'), '/artwork/poster/s1');
+  assert.equal(get('buildShowGroups()[0].seasonArt.get(1)'), '/artwork/poster/s1');
+  assert.equal(get('buildShowGroups()[0].seasonArt.get(2)'), '/artwork/poster/s2');
+});
+
+test('show cards fall back to episode art without stamped URLs', () => {
+  const get = catalog([{ id: 'a', kind: 'tvShow', title: 'Pilot', showTitle: 'Show',
+    showGroupID: 'g', showGroupTitle: 'Show', seasonNumber: 1, episodeNumber: 1,
+    posterURL: '/artwork/poster/a' }]);
+  assert.equal(get('buildShowGroups()[0].artURL'), '/artwork/poster/a');
+  assert.equal(get('buildShowGroups()[0].seasonArt.get(1)'), '/artwork/poster/a');
+});
+
 test('packed episode duplicate suffix groups only with same-season sibling', () => {
  const ep=(id,title,seasonNumber)=>({id,title,seasonNumber,kind:'tvShow',showTitle:'Jack',showGroupID:'jack'});
  const get=catalog([ep('a','102 - Jack',1),ep('b','102 - Jack-1',1),ep('c','102 - Jack-1',2),ep('d','103 - Different-1',1)]);

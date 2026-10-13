@@ -3698,7 +3698,7 @@
         const groupID = i.showGroupID || i.showTitle;
         let show = map.get(groupID);
         if (!show) {
-          show = { id:groupID, name:i.showGroupTitle || i.showTitle, searchText:"", seasons:new Map(), posterItem:null };
+          show = { id:groupID, name:i.showGroupTitle || i.showTitle, searchText:"", seasons:new Map(), seasonArt:new Map(), posterItem:null, showPosterURL:null, curatedURL:null, artURL:null };
           map.set(groupID, show);
         }
         show.searchText += ` ${i.showTitle || ""} ${i.title || ""} ${i.subtitle || ""}`;
@@ -3706,10 +3706,23 @@
         if (!show.seasons.has(sn)) show.seasons.set(sn, []);
         show.seasons.get(sn).push(representative);
         if (i.posterURL && (!show.posterItem || !show.posterItem.posterURL)) show.posterItem = i;
+        // Show cards use the show-folder art (or a curated poster), never a
+        // season/extras poster that happens to sort first. Season cards use
+        // the season-folder art with the same fallback chain.
+        if (i.coverSource === "wikimedia-curated" && i.posterURL && !show.curatedURL) show.curatedURL = i.posterURL;
+        if (i.showPosterURL && !show.showPosterURL) show.showPosterURL = i.showPosterURL;
+        if (i.seasonPosterURL && !show.seasonArt.has(sn)) show.seasonArt.set(sn, i.seasonPosterURL);
       }
       for (const show of map.values()) {
         for (const eps of show.seasons.values())
           eps.sort((a,b)=>(a.episodeNumber??0)-(b.episodeNumber??0)||a.title.localeCompare(b.title));
+        show.artURL = show.curatedURL || show.showPosterURL || show.posterItem?.posterURL || null;
+        for (const [sn, eps] of show.seasons) {
+          if (!show.seasonArt.has(sn) || !show.seasonArt.get(sn)) {
+            const epArt = eps.map(e => e.seasonPosterURL || e.posterURL).find(Boolean);
+            show.seasonArt.set(sn, epArt || show.artURL);
+          }
+        }
       }
       return Array.from(map.values()).sort((a,b)=>a.name.localeCompare(b.name));
     }
@@ -3725,9 +3738,9 @@
       for (const eps of show.seasons.values())
         for (const e of eps) if (isWatched(progressFor(e.id), e)) watchedCount++;
       const pct = epCount ? Math.round(watchedCount/epCount*100) : 0;
-      const item = show.posterItem;
-      const poster = item?.posterURL
-        ? `<img class="poster" data-cover-src="${api(item.posterURL)}" alt="" loading="lazy">`
+      const artURL = show.artURL || show.posterItem?.posterURL || null;
+      const poster = artURL
+        ? `<img class="poster" data-cover-src="${api(artURL)}" alt="" loading="lazy">`
         : "";
       const badge = pct >= 100
         ? `<span class="badge watched">WATCHED</span>`
@@ -3785,8 +3798,12 @@
       if (openSeason == null) {
         grid.className = "grid";
         seasons.innerHTML = "";
-        grid.innerHTML = numbers.map(n => `<button class="card" data-action="open-season" data-season="${n}">
-          <h3>${seasonLabel(n)}</h3><p class="meta">${show.seasons.get(n).length} episodes</p></button>`).join("");
+        grid.innerHTML = numbers.map(n => {
+          const art = show.seasonArt.get(n) || show.artURL;
+          const artHTML = art ? `<div class="frame"><img class="poster" data-cover-src="${api(art)}" alt="" loading="lazy"></div>` : "";
+          return `<button class="card" data-action="open-season" data-season="${n}">
+          ${artHTML}<h3>${seasonLabel(n)}</h3><p class="meta">${show.seasons.get(n).length} episodes</p></button>`;
+        }).join("");
         return;
       }
       seasons.innerHTML = numbers.filter(n => n === openSeason).map(n => `
