@@ -386,7 +386,7 @@ func (s *Server) routes() {
 
 // Handler returns the fully wrapped HTTP handler.
 func (s *Server) Handler() http.Handler {
-	return s.withIdentity(withLocalPprof(s.withAccessLog(s.withGzip(s.withAuth(s.withRecovery(s.mux))))))
+	return withSecurityHeaders(s.withIdentity(withLocalPprof(s.withAccessLog(s.withGzip(s.withAuth(s.withRecovery(s.mux)))))))
 }
 
 // WebHandler is the LAN-facing frontend. It enforces the original request's
