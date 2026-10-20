@@ -16,17 +16,25 @@ KEEP="${KEEP:-14}"
 umask 077
 mkdir -p "$DEST_DIR"
 
+find "$DEST_DIR" -maxdepth 1 -name '*.partial' -type f -delete   # interrupted earlier run
 STAMP="$(date -u +%Y%m%dT%H%M%SZ)"
 OUT="$DEST_DIR/sonder-state-$STAMP.tar.gz"
 TMP="$OUT.partial"
 
-# Exclusions are regenerable bulk: transcodes, HLS segments, thumbnails and
-# metadata caches. Everything else under the data dir is state worth keeping.
-tar -C "$DATA_DIR" -czf "$TMP" \
-  --warning=no-file-changed \
-  --exclude='./hls-runtime' --exclude='./transcode*' --exclude='./metadata-cache' \
-  --exclude='./thumbs' --exclude='./thumbnails' --exclude='./media-cache' \
-  --exclude='*.partial' --exclude='*.tmp' .
+# Only top-level regular files are archived: accounts, sessions, progress,
+# settings, the catalog snapshot, pairing token, subscriptions. Every bulk
+# directory (artwork, caches, HLS/VOD output, subtitles, logs) is regenerable
+# and can be many GB, so a directory walk would be slow and unbounded.
+# The server config lives outside the data dir; include it when present.
+mapfile -d '' FILES < <(cd "$DATA_DIR" && find . -maxdepth 1 -type f ! -name '*.partial' ! -name '*.tmp' ! -name '.*.tmp' -print0)
+[[ ${#FILES[@]} -gt 0 ]] || { echo "no state files found in $DATA_DIR" >&2; exit 1; }
+EXTRA=()
+[[ -f "${SONDER_CONFIG:-/etc/sonder/server.json}" ]] && EXTRA=(-C / "${SONDER_CONFIG:-/etc/sonder/server.json}")
+# tar exits 1 when a file changed while being read (the server rewrites its
+# JSON atomically, so this is a harmless race); anything higher is a failure.
+rc=0
+tar -czf "$TMP" -C "$DATA_DIR" "${FILES[@]}" "${EXTRA[@]}" || rc=$?
+[[ $rc -le 1 ]] || { rm -f "$TMP"; echo "tar failed ($rc)" >&2; exit "$rc"; }
 tar -tzf "$TMP" >/dev/null   # refuse to keep an unreadable archive
 mv "$TMP" "$OUT"
 
