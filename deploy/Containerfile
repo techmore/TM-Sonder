@@ -2,7 +2,7 @@
 # Build: container build -t tm-sonder   (from repo root)
 # Run:   container run --name tm-sonder -p 8096:8096 \
 #          --volume /path/to/media:/media:ro --volume sonder-data:/data tm-sonder
-FROM golang:1.25 AS build
+FROM golang:1.26 AS build
 ARG TARGETOS=linux
 ARG TARGETARCH=arm64
 WORKDIR /src
