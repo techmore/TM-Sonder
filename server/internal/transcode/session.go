@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"os/exec"
+	"runtime"
 	"strconv"
 	"strings"
 	"sync"
@@ -213,7 +214,13 @@ func NewManager(cfg Config) *Manager {
 		cfg.Preset = "veryfast"
 	}
 	if cfg.HWAccel == "" {
-		cfg.HWAccel = "videotoolbox"
+		// Mirror config.DefaultHWAccel: VideoToolbox is macOS-only, and asking
+		// ffmpeg for h264_videotoolbox on Linux fails every encode.
+		if runtime.GOOS == "darwin" {
+			cfg.HWAccel = "videotoolbox"
+		} else {
+			cfg.HWAccel = "none"
+		}
 	}
 	return &Manager{
 		cfg:       cfg,

@@ -3,6 +3,7 @@ package config
 import (
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 )
@@ -30,7 +31,7 @@ func TestDefaults(t *testing.T) {
 	if cfg.AudiobookLayout != DefaultAudiobookLayout {
 		t.Errorf("audiobookLayout = %q, want %q", cfg.AudiobookLayout, DefaultAudiobookLayout)
 	}
-	if cfg.Transcode.MaxConcurrent != 2 || cfg.Transcode.HWAccel != "videotoolbox" {
+	if cfg.Transcode.MaxConcurrent != 2 || cfg.Transcode.HWAccel != DefaultHWAccel() {
 		t.Errorf("transcode defaults wrong: %+v", cfg.Transcode)
 	}
 	if !cfg.MediaCache.Enabled || cfg.MediaCache.MaxBytes != DefaultMediaCacheMaxBytes ||
@@ -220,5 +221,29 @@ func TestWriteTemplateRoundTrip(t *testing.T) {
 	after, _ := os.ReadFile(p)
 	if string(before) != string(after) {
 		t.Error("WriteTemplate overwrote existing file")
+	}
+}
+
+// The generated template must load back with the platform default for
+// hardware acceleration, so a first run on Linux does not ask ffmpeg for
+// the macOS-only VideoToolbox encoder.
+func TestTemplateUsesPlatformHWAccelDefault(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "server.json")
+	if err := WriteTemplate(path); err != nil {
+		t.Fatal(err)
+	}
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := `"hwaccel": "` + DefaultHWAccel() + `"`
+	if !strings.Contains(string(raw), want) {
+		t.Errorf("template lacks %s", want)
+	}
+	if strings.Contains(string(raw), "h264_videotoolbox") {
+		t.Error("template should not name an encoder")
+	}
+	if runtime.GOOS != "darwin" && strings.Contains(string(raw), `"hwaccel": "videotoolbox"`) {
+		t.Errorf("template on %s still defaults to videotoolbox", runtime.GOOS)
 	}
 }

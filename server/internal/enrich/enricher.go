@@ -214,7 +214,7 @@ func (e *Enricher) throttle(ctx context.Context) error {
 		interval = 200 * time.Millisecond
 	}
 	e.rateMu.Lock()
-	wait := e.nextAllowed.Sub(time.Now())
+	wait := time.Until(e.nextAllowed)
 	e.nextAllowed = e.nextAllowed.Add(interval)
 	e.rateMu.Unlock()
 	if wait <= 0 {

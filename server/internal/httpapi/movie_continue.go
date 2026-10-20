@@ -13,6 +13,19 @@ func (s *Server) handleMovieContinue(w http.ResponseWriter, r *http.Request) {
 	if username == "" && s.accounts != nil {
 		username = s.accounts.Username() // Trusted local and paired-owner clients.
 	}
+	if username == "" {
+		// No owner account exists yet, or the caller is an anonymous paired
+		// client, so there is no activity store to read. This used to fall
+		// through to ensureAccountActivity and answer 500 on every library
+		// page load until the first account was created.
+		if r.Method == http.MethodPatch {
+			writeError(w, http.StatusUnauthorized, "Sign in required")
+			return
+		}
+		w.Header().Set("Cache-Control", "private, no-store")
+		writeJSON(w, http.StatusOK, map[string]any{"dismissedMovieIDs": []string{}})
+		return
+	}
 	if err := s.ensureAccountActivity(username); err != nil {
 		writeError(w, http.StatusInternalServerError, "Movie shelf preferences unavailable")
 		return
