@@ -15,7 +15,7 @@ RUN CGO_ENABLED=0 GOOS=${TARGETOS} GOARCH=${TARGETARCH} go build \
       -trimpath -ldflags "-s -w -X main.version=${VERSION} -X tm-sonder/server/internal/httpapi.Version=${VERSION} -X tm-sonder/server/internal/httpapi.Build=${BUILD}" \
       -o /out/sonder ./cmd/sonder
 
-FROM alpine:3.20
+FROM alpine:3.24
 ARG VERSION=0.2.0-dev
 RUN apk add --no-cache ffmpeg ca-certificates tzdata && \
     command -v ffmpeg >/dev/null && command -v ffprobe >/dev/null && \
