@@ -59,7 +59,7 @@ RUN apt-get update && \
 
 # Go, from the tarball rather than a PPA: the toolchain version is pinned here
 # so the machine, CI and the release build cannot drift apart.
-ARG GO_VERSION=1.25.1
+ARG GO_VERSION=1.26.9
 ARG TARGETARCH
 RUN set -eux; \
     case "${TARGETARCH:-amd64}" in \

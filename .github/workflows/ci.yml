@@ -14,7 +14,7 @@ jobs:
     name: SonderAPI package
     runs-on: macos-15
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - name: Test SonderAPI
         run: |
           cd Packages/SonderAPI
@@ -26,7 +26,7 @@ jobs:
     env:
       DEVELOPER_DIR: /Applications/Xcode_27.0.app/Contents/Developer
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - name: Report pinned toolchain
         run: |
           xcodebuild -version
@@ -56,10 +56,10 @@ jobs:
       run:
         working-directory: server
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-go@v5
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
         with:
-          go-version: "1.25"
+          go-version: "1.26"
       - name: Format check
         run: |
           unformatted=$(gofmt -l .)
@@ -94,7 +94,7 @@ jobs:
         working-directory: deploy
         run: go test ./...
       - name: Upload artifacts
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: sonder-binaries
           path: bin/
@@ -105,7 +105,7 @@ jobs:
     env:
       DEVELOPER_DIR: /Applications/Xcode_27.0.app/Contents/Developer
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - name: Report pinned toolchain
         run: |
           xcodebuild -version

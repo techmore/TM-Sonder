@@ -2,4 +2,4 @@
 // `go test ./...` in CI covers it without needing a second test runner.
 module tm-sonder/deploy
 
-go 1.25
+go 1.26
