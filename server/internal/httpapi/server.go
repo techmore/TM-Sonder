@@ -76,6 +76,7 @@ type Server struct {
 	runtimeControl     *runtimecontrol.Controller
 	mediaCache         *mediacache.Manager
 	accounts           *auth.Store
+	loginLimit         loginThrottle
 	authLoadErr        error
 	accountActivity    *accountActivityStore
 	activityErr        error

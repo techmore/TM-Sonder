@@ -8,6 +8,7 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"strconv"
 	"strings"
 	"time"
 
@@ -67,7 +68,33 @@ func (s *Server) setupAuthorized(r *http.Request) bool {
 	return s.tokenMatches(r)
 }
 
-func (s *Server) issueAccountSession(username, password string) (string, time.Time, error) {
+// authenticate verifies a password login behind the failed-attempt throttle.
+// A throttled caller gets errLoginThrottled without any password work done.
+// allowCompat admits the environment-only compatibility pair (media-server
+// logins only, never the browser form); the bool reports a match on it.
+func (s *Server) authenticate(r *http.Request, username, password string, allowCompat bool) (bool, error) {
+	peer := peerHost(r)
+	if s.loginLimit.check(peer, username) > 0 {
+		return false, errLoginThrottled
+	}
+	err := s.accounts.Authenticate(username, password)
+	if err != nil {
+		// Compatibility logins count too: they guard the same session store.
+		cfg := s.cfg()
+		if allowCompat && cfg.CompatibilityUsername != "" &&
+			subtle.ConstantTimeCompare([]byte(strings.TrimSpace(username)), []byte(cfg.CompatibilityUsername)) == 1 &&
+			subtle.ConstantTimeCompare([]byte(password), []byte(cfg.CompatibilityPassword)) == 1 {
+			s.loginLimit.succeed(username)
+			return true, nil
+		}
+		s.loginLimit.fail(peer, username)
+		return false, err
+	}
+	s.loginLimit.succeed(username)
+	return false, nil
+}
+
+func (s *Server) issueAccountSession(r *http.Request, username, password string) (string, time.Time, error) {
 	if !s.accountReady() {
 		if s.authLoadErr != nil {
 			return "", time.Time{}, s.authLoadErr
@@ -75,17 +102,15 @@ func (s *Server) issueAccountSession(username, password string) (string, time.Ti
 		return "", time.Time{}, auth.ErrNoAccount
 	}
 	username = strings.TrimSpace(username)
-	if err := s.accounts.Authenticate(username, password); err != nil {
-		// Media-server clients often keep their server definition but ask for
-		// credentials again after a token reset. An optional, environment-only
-		// compatibility pair gives BookPlayer/Audiobookshelf a stable login
-		// without weakening browser or private-API authentication.
-		cfg := s.cfg()
-		if cfg.CompatibilityUsername == "" ||
-			subtle.ConstantTimeCompare([]byte(username), []byte(cfg.CompatibilityUsername)) != 1 ||
-			subtle.ConstantTimeCompare([]byte(password), []byte(cfg.CompatibilityPassword)) != 1 {
-			return "", time.Time{}, err
-		}
+	// Media-server clients often keep their server definition but ask for
+	// credentials again after a token reset. An optional, environment-only
+	// compatibility pair gives BookPlayer/Audiobookshelf a stable login
+	// without weakening browser or private-API authentication.
+	compat, err := s.authenticate(r, username, password, true)
+	if err != nil {
+		return "", time.Time{}, err
+	}
+	if compat {
 		username = s.accounts.Username()
 	}
 	return s.accounts.CreateSession(username)
@@ -179,7 +204,17 @@ func (s *Server) handleAccountLogin(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "Invalid login request")
 		return
 	}
-	if err := s.accounts.Authenticate(credentials.Username, credentials.Password); err != nil {
+	if _, err := s.authenticate(r, credentials.Username, credentials.Password, false); err != nil {
+		if errors.Is(err, errLoginThrottled) {
+			w.Header().Set("Retry-After", strconv.Itoa(int(loginLockout/time.Second)))
+			if form {
+				w.WriteHeader(http.StatusTooManyRequests)
+				renderAccountPage(w, false, safeNext(credentials.Next), loginThrottleBody, "")
+				return
+			}
+			writeError(w, http.StatusTooManyRequests, loginThrottleBody)
+			return
+		}
 		if form {
 			renderAccountPage(w, false, safeNext(credentials.Next), "Incorrect username or password.", "")
 			return

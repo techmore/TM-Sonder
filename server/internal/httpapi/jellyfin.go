@@ -1,11 +1,13 @@
 package httpapi
 
 import (
+	"errors"
 	"net/http"
 	"os"
 	"path/filepath"
 	"strconv"
 	"strings"
+	"time"
 
 	"tm-sonder/server/internal/api"
 	"tm-sonder/server/internal/library"
@@ -36,8 +38,13 @@ func (s *Server) handleJellyfinAuthenticate(w http.ResponseWriter, r *http.Reque
 		writeError(w, http.StatusBadRequest, "Invalid authentication request")
 		return
 	}
-	token, _, err := s.issueAccountSession(login.Username, login.Password)
+	token, _, err := s.issueAccountSession(r, login.Username, login.Password)
 	if err != nil {
+		if errors.Is(err, errLoginThrottled) {
+			w.Header().Set("Retry-After", strconv.Itoa(int(loginLockout/time.Second)))
+			writeError(w, http.StatusTooManyRequests, loginThrottleBody)
+			return
+		}
 		writeError(w, http.StatusUnauthorized, "Invalid username or password")
 		return
 	}
