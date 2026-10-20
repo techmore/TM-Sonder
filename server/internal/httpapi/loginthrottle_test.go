@@ -86,3 +86,26 @@ func TestLoginEndpointsReturn429AfterRepeatedFailures(t *testing.T) {
 		t.Fatalf("jellyfin login while locked = %d", rec.Code)
 	}
 }
+
+func TestClientAddrOnlyTrustsForwardedHeaderFromInternalPeers(t *testing.T) {
+	mk := func(remote, xff string) *http.Request {
+		r := httptest.NewRequest(http.MethodGet, "/", nil)
+		r.RemoteAddr = remote
+		if xff != "" {
+			r.Header.Set("X-Forwarded-For", xff)
+		}
+		return r
+	}
+	cases := []struct{ remote, xff, want string }{
+		{"127.0.0.1:1", "203.0.113.9", "203.0.113.9"},
+		{"10.96.131.1:1", "1.1.1.1, 203.0.113.9", "203.0.113.9"}, // spoofed prefix ignored
+		{"127.0.0.1:1", "not-an-ip", "127.0.0.1"},
+		{"127.0.0.1:1", "", "127.0.0.1"},
+		{"198.51.100.4:1", "203.0.113.9", "198.51.100.4"}, // public peer cannot choose its identity
+	}
+	for _, c := range cases {
+		if got := clientAddr(mk(c.remote, c.xff)); got != c.want {
+			t.Errorf("clientAddr(%s, %q) = %s, want %s", c.remote, c.xff, got, c.want)
+		}
+	}
+}

@@ -73,7 +73,7 @@ func (s *Server) setupAuthorized(r *http.Request) bool {
 // allowCompat admits the environment-only compatibility pair (media-server
 // logins only, never the browser form); the bool reports a match on it.
 func (s *Server) authenticate(r *http.Request, username, password string, allowCompat bool) (bool, error) {
-	peer := peerHost(r)
+	peer := clientAddr(r)
 	if s.loginLimit.check(peer, username) > 0 {
 		return false, errLoginThrottled
 	}

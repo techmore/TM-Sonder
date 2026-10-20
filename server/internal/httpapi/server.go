@@ -418,7 +418,7 @@ func (s *Server) WebHandler(privateAPIAddress string) http.Handler {
 		// pairing/LAN policy before this proxy hop.
 		r.Host = target.Host
 	}
-	return s.withAccessLog(s.withAuth(s.withRecovery(proxy)))
+	return withSecurityHeaders(s.withAccessLog(s.withAuth(s.withRecovery(proxy))))
 }
 
 // withIdentity adds a stable product identity to every response. The standard

@@ -2,6 +2,8 @@ package httpapi
 
 import (
 	"errors"
+	"net"
+	"net/http"
 	"strings"
 	"sync"
 	"time"
@@ -116,4 +118,23 @@ func (t *loginThrottle) pruneLocked(now time.Time) {
 			delete(t.buckets, key)
 		}
 	}
+}
+
+// clientAddr is the address the throttle attributes a request to. Behind the
+// reverse proxy every connection arrives from the proxy's own loopback/private
+// address, so using the socket peer would let any one client lock every user
+// out. When the peer is loopback or private, the last X-Forwarded-For entry
+// (the one appended by the nearest proxy, never a client-supplied value) is
+// used instead. Public peers are never trusted to supply it.
+func clientAddr(r *http.Request) string {
+	peer := peerHost(r)
+	ip := net.ParseIP(peer)
+	if ip == nil || !(ip.IsLoopback() || ip.IsPrivate()) {
+		return peer
+	}
+	parts := strings.Split(r.Header.Get("X-Forwarded-For"), ",")
+	if last := strings.TrimSpace(parts[len(parts)-1]); net.ParseIP(last) != nil {
+		return last
+	}
+	return peer
 }
