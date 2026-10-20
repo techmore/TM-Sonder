@@ -130,6 +130,14 @@ jobs:
       - name: Install the daily state backup (and keep an off-container copy)
         run: ./deploy/install-backup.sh
 
+      - name: Confirm the backup timer is armed
+        run: |
+          set -euo pipefail
+          incus exec sonder -- systemctl is-enabled sonder-backup.timer
+          incus exec sonder -- systemctl is-active sonder-backup.timer
+          incus exec sonder -- systemctl list-timers sonder-backup.timer --no-pager
+          test -n "$(ls "$HOME"/sonder-backups/sonder-state-*.tar.gz 2>/dev/null)"
+
       - name: Confirm the public site serves this revision
         run: |
           set -euo pipefail
