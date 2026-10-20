@@ -478,6 +478,9 @@ func (s *Store) Authenticate(username, password string) error {
 	record, exists := s.account.Accounts[username]
 	s.mu.RUnlock()
 	if !exists {
+		// Burn the same PBKDF2 cost as a real check so response time does not
+		// reveal which usernames exist.
+		_ = deriveKey(password, decoyAuthSalt)
 		return ErrInvalidCredentials
 	}
 	salt, saltErr := base64.RawStdEncoding.DecodeString(record.Salt)
@@ -751,6 +754,9 @@ func cloneAccount(account *accountFile) *accountFile {
 	}
 	return &updated
 }
+
+// decoyAuthSalt is only used to equalize timing for unknown usernames.
+var decoyAuthSalt = []byte("tm-sonder-decoy-salt-0123456789")
 
 func randomBytes(n int) ([]byte, error) {
 	b := make([]byte, n)

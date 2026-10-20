@@ -76,6 +76,7 @@ type Server struct {
 	runtimeControl     *runtimecontrol.Controller
 	mediaCache         *mediacache.Manager
 	accounts           *auth.Store
+	loginLimit         loginThrottle
 	authLoadErr        error
 	accountActivity    *accountActivityStore
 	activityErr        error
@@ -385,7 +386,7 @@ func (s *Server) routes() {
 
 // Handler returns the fully wrapped HTTP handler.
 func (s *Server) Handler() http.Handler {
-	return s.withIdentity(withLocalPprof(s.withAccessLog(s.withGzip(s.withAuth(s.withRecovery(s.mux))))))
+	return withSecurityHeaders(s.withIdentity(withLocalPprof(s.withAccessLog(s.withGzip(s.withAuth(s.withRecovery(s.mux)))))))
 }
 
 // WebHandler is the LAN-facing frontend. It enforces the original request's
@@ -417,7 +418,7 @@ func (s *Server) WebHandler(privateAPIAddress string) http.Handler {
 		// pairing/LAN policy before this proxy hop.
 		r.Host = target.Host
 	}
-	return s.withAccessLog(s.withAuth(s.withRecovery(proxy)))
+	return withSecurityHeaders(s.withAccessLog(s.withAuth(s.withRecovery(proxy))))
 }
 
 // withIdentity adds a stable product identity to every response. The standard

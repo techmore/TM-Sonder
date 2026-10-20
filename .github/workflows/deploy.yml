@@ -127,6 +127,9 @@ jobs:
           incus exec sonder -- /usr/local/bin/sonder app status --json --config /etc/sonder/server.json \
             | python3 -c 'import json,sys; d=json.load(sys.stdin); s=d.get("status",{}); assert s.get("webHealthy") and s.get("apiHealthy"), d; print("version", d.get("version"), "web/API healthy")'
 
+      - name: Install the daily state backup (and keep an off-container copy)
+        run: ./deploy/install-backup.sh
+
       - name: Confirm the public site serves this revision
         run: |
           set -euo pipefail

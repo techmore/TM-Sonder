@@ -5,6 +5,7 @@ package httpapi
 
 import (
 	"context"
+	"errors"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -44,8 +45,13 @@ func (s *Server) handleAudiobookshelfLogin(w http.ResponseWriter, r *http.Reques
 			return
 		}
 	}
-	token, _, err := s.issueAccountSession(login.Username, login.Password)
+	token, _, err := s.issueAccountSession(r, login.Username, login.Password)
 	if err != nil {
+		if errors.Is(err, errLoginThrottled) {
+			w.Header().Set("Retry-After", strconv.Itoa(int(loginLockout/time.Second)))
+			writeError(w, http.StatusTooManyRequests, loginThrottleBody)
+			return
+		}
 		writeError(w, http.StatusUnauthorized, "Invalid username or password")
 		return
 	}

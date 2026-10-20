@@ -163,3 +163,26 @@ func TestOpenRejectsUnknownVersionWithoutChangingFile(t *testing.T) {
 		t.Fatalf("unsupported account store was modified: %s", after)
 	}
 }
+
+func TestAuthenticateUnknownUserPerformsKeyDerivation(t *testing.T) {
+	store, err := Open(filepath.Join(t.TempDir(), "account.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := store.Setup("sean", "a-long-test-password"); err != nil {
+		t.Fatal(err)
+	}
+	timeAuth := func(user string) time.Duration {
+		start := time.Now()
+		_ = store.Authenticate(user, "wrong-password-123")
+		return time.Since(start)
+	}
+	known, unknown := timeAuth("sean"), timeAuth("nobody")
+	// Unknown users used to return instantly, leaking which names exist.
+	if unknown < known/4 {
+		t.Fatalf("unknown-user check took %v vs %v for a real user", unknown, known)
+	}
+	if err := store.Authenticate("nobody", "wrong-password-123"); !errors.Is(err, ErrInvalidCredentials) {
+		t.Fatalf("unknown user error = %v", err)
+	}
+}
