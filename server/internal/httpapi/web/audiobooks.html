@@ -41,6 +41,11 @@
     .chapter.current { border-color:var(--accent); background:#202819; }
     .time { color:var(--muted); font-variant-numeric:tabular-nums; }
     .empty { padding:30px; color:var(--muted); }
+    button:focus-visible, a:focus-visible, input:focus-visible, select:focus-visible { outline:2px solid var(--accent); outline-offset:2px; }
+    .load-error { display:grid; gap:10px; justify-items:start; padding:22px 16px; color:var(--muted); }
+    .load-error strong { color:var(--text); }
+    .load-error button { font:inherit; }
+    @media (prefers-reduced-motion: reduce) { *, *::before, *::after { transition:none !important; animation:none !important; scroll-behavior:auto !important; } }
     @media (max-width: 820px) {
       header { grid-template-columns:1fr; }
       main { grid-template-columns:1fr; }
@@ -57,16 +62,16 @@
 <body>
   <header>
     <h1>Audiobooks</h1> <span class="layout-badge">CLASSIC</span>
-    <input id="q" placeholder="Search title, author, narrator, series, or tag">
+    <input id="q" type="search" placeholder="Search title, author, narrator, series, or tag" aria-label="Search audiobooks by title, author, narrator, series, or tag" autocomplete="off">
     <span><a class="button" id="railsLink" href="/audiobooks">Rails layout</a>
     <a class="button" id="libraryLink" href="/">Library</a></span>
   </header>
   <main>
     <aside>
-      <div class="listHeader"><strong id="count">0 titles</strong><span class="time" id="updated"></span></div>
-      <div id="results" class="empty">Loading audiobooks...</div>
+      <div class="listHeader"><strong id="count" role="status">0 titles</strong><span class="time" id="updated"></span></div>
+      <div id="results" class="empty" aria-live="polite" aria-busy="true">Loading audiobooks…</div>
     </aside>
-    <section class="detail" id="detail"><p>Select an audiobook.</p></section>
+    <section class="detail" id="detail" aria-live="polite"><p>Select an audiobook.</p></section>
   </main>
   <script>
     let books = [];
@@ -90,17 +95,37 @@
     document.querySelector("#railsLink").href = api("/audiobooks?layout=rails");
 
     async function loadBooks() {
-      const response = await fetch(api(`/api/audiobooks?q=${encodeURIComponent(q.value)}`));
-      const data = await response.json();
-      books = data.items ?? [];
-      count.textContent = `${data.count ?? books.length} title${(data.count ?? books.length) === 1 ? "" : "s"}`;
-      updated.textContent = data.generatedAt ? new Date(data.generatedAt).toLocaleTimeString([], { hour:"numeric", minute:"2-digit" }) : "";
-      renderList();
-      if (!selectedID && books.length > 0) openBook(books[0].id);
-      if (selectedID && !books.some(book => book.id === selectedID)) {
-        selectedID = null;
-        detail.innerHTML = `<p>No matching audiobook selected.</p>`;
+      results.setAttribute("aria-busy", "true");
+      try {
+        const response = await fetch(api(`/api/audiobooks?q=${encodeURIComponent(q.value)}`));
+        if (!response.ok) throw Object.assign(new Error(`Request failed (${response.status})`), { status: response.status });
+        const data = await response.json();
+        books = data.items ?? [];
+        count.textContent = `${data.count ?? books.length} title${(data.count ?? books.length) === 1 ? "" : "s"}`;
+        updated.textContent = data.generatedAt ? new Date(data.generatedAt).toLocaleTimeString([], { hour:"numeric", minute:"2-digit" }) : "";
+        renderList();
+        if (!selectedID && books.length > 0) openBook(books[0].id);
+        if (selectedID && !books.some(book => book.id === selectedID)) {
+          selectedID = null;
+          detail.innerHTML = `<p>No matching audiobook selected.</p>`;
+        }
+      } catch (error) {
+        renderLoadError(error);
+      } finally {
+        results.removeAttribute("aria-busy");
       }
+    }
+
+    // A failed catalog request used to leave "Loading audiobooks…" on screen
+    // forever. Name the failure and offer a retry; an expired browser session
+    // gets a sign-in link instead of a retry that cannot succeed.
+    function renderLoadError(error) {
+      const status = Number(error?.status) || 0;
+      const auth = status === 401 || status === 403;
+      count.textContent = "—";
+      results.className = "";
+      const next = encodeURIComponent(location.pathname + location.search);
+      results.innerHTML = `<div class="load-error" role="alert"><strong>${auth ? "Sign in to browse audiobooks" : "Could not load audiobooks"}</strong><span>${escapeHTML(auth ? "Your session has ended or this library needs an account." : status ? `The server answered with status ${status}.` : "The server could not be reached.")}</span>${auth ? `<a class="button" href="/account/login?next=${next}">Sign in</a>` : `<button type="button" onclick="loadBooks()">Try again</button>`}</div>`;
     }
 
     function renderList() {
@@ -117,7 +142,7 @@
         if (book.seriesPosition) bits.push("Part " + book.seriesPosition);
         if (book.bookConflict) bits.push(book.bookConflict.kind.replace(/_/g, " "));
         return `
-        <button class="book ${book.id === selectedID ? "selected" : ""}" onclick="openBook('${book.id}')">
+        <button type="button" class="book ${book.id === selectedID ? "selected" : ""}" aria-pressed="${book.id === selectedID}" data-id="${escapeHTML(book.id)}" onclick="openBook(this.dataset.id)">
           <div class="cover">${book.posterURL ? `<img src="${api(book.posterURL)}" alt="">` : "A"}</div>
           <div>
             <h3>${escapeHTML(book.title)}</h3>
@@ -134,8 +159,8 @@
       metadataReady = false;
       selectedID = id;
       renderList();
-      detail.innerHTML = `<p>Loading...</p>`;
-      const response = await fetch(api(`/api/audiobooks/${id}`));
+      detail.innerHTML = `<p>Loading…</p>`;
+      const response = await fetch(api(`/api/audiobooks/${encodeURIComponent(id)}`));
       if (!response.ok) {
         detail.innerHTML = `<p>Audiobook unavailable.</p>`;
         return;
@@ -230,7 +255,7 @@
       return `<div class="chapter" data-chapter="${chapter.index}">
         <span class="time">${formatTime(chapter.startSeconds)}</span>
         <div><strong>${escapeHTML(chapter.title)}</strong><p>${formatTime(chapter.endSeconds ? chapter.endSeconds - chapter.startSeconds : 0)}</p></div>
-        <button onclick="jumpTo(${chapter.startSeconds})">Play</button>
+        <button type="button" onclick="jumpTo(${Number(chapter.startSeconds) || 0})" aria-label="Play from ${escapeHTML(chapter.title)}">Play</button>
       </div>`;
     }
 

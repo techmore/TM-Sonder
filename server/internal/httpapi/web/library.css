@@ -313,6 +313,10 @@
     .not-playable { background:var(--panel2); border:1px dashed var(--line); border-radius:8px; padding:18px; text-align:center; color:var(--muted); }
     .play-hint { background:var(--panel2); border:1px solid var(--line); border-radius:8px; padding:12px 14px; color:var(--muted); font-size:13px; margin-bottom:14px; }
     .empty-state { padding:60px 22px; text-align:center; color:var(--muted); }
+    .library-load-error { display:grid; gap:14px; justify-items:center; }
+    .library-load-error p { margin:0; max-width:46ch; line-height:1.45; }
+    .library-load-error button, .library-load-error .button-like { background:var(--panel2); border:1px solid var(--line); color:var(--text); border-radius:8px; padding:9px 16px; font:inherit; cursor:pointer; }
+    .library-load-error button:hover, .library-load-error .button-like:hover { border-color:var(--accent); color:var(--accent); }
     .pager { display:flex; gap:8px; justify-content:center; align-items:center; padding:0 22px 40px; }
     .pager button { background:var(--panel2); border:1px solid var(--line); color:var(--text);
       border-radius:8px; padding:8px 14px; cursor:pointer; }

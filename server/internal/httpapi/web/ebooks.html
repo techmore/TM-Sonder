@@ -1,5 +1,5 @@
 <!doctype html>
-<html>
+<html lang="en">
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
@@ -18,7 +18,7 @@
     h3 { margin:0; font-size:15px; }
     p { margin:0; color:var(--muted); line-height:1.35; }
     input { width:100%; background:var(--panel); border:1px solid var(--line); color:var(--text); border-radius:8px; padding:10px 12px; }
-    a.button { background:var(--panel2); border:1px solid var(--line); color:var(--text); border-radius:8px; padding:8px 10px; text-decoration:none; }
+    a.button, button.button { background:var(--panel2); border:1px solid var(--line); color:var(--text); border-radius:8px; padding:8px 10px; text-decoration:none; cursor:pointer; font:inherit; }
     main { display:grid; grid-template-columns:minmax(280px, 420px) minmax(0, 1fr); min-height:calc(100vh - 65px); }
     aside { border-right:1px solid var(--line); background:#12170f; overflow:auto; }
     .listHeader { display:flex; justify-content:space-between; align-items:center; padding:14px 16px; border-bottom:1px solid var(--line); }
@@ -33,6 +33,11 @@
     .hero .cover { width:150px; }
     .actions { display:flex; gap:10px; margin-top:16px; flex-wrap:wrap; }
     .empty { padding:30px; color:var(--muted); }
+    button:focus-visible, a:focus-visible, input:focus-visible, select:focus-visible { outline:2px solid var(--accent); outline-offset:2px; }
+    .load-error { display:grid; gap:10px; justify-items:start; padding:22px 16px; color:var(--muted); }
+    .load-error strong { color:var(--text); }
+    .load-error button { font:inherit; }
+    @media (prefers-reduced-motion: reduce) { *, *::before, *::after { transition:none !important; animation:none !important; scroll-behavior:auto !important; } }
     @media (max-width: 820px) {
       header { grid-template-columns:1fr; }
       main { grid-template-columns:1fr; }
@@ -47,13 +52,13 @@
 <body>
   <header>
     <h1>Ebooks</h1>
-    <input id="q" placeholder="Search title or author">
+    <input id="q" type="search" placeholder="Search title or author" aria-label="Search ebooks by title or author" autocomplete="off">
     <a class="button" id="libraryLink" href="/">Library</a>
   </header>
   <main>
     <aside>
-      <div class="listHeader"><strong id="count">0 titles</strong><span class="time" id="updated"></span></div>
-      <div id="results" class="empty">Loading ebooks...</div>
+      <div class="listHeader"><strong id="count" role="status">0 titles</strong><span class="time" id="updated"></span></div>
+      <div id="results" class="empty" aria-live="polite" aria-busy="true">Loading ebooks…</div>
     </aside>
     <section class="detail" id="detail"><p>Select an ebook.</p></section>
   </main>
@@ -70,13 +75,33 @@
     document.querySelector("#libraryLink").href = api("/");
 
     async function loadBooks() {
-      const response = await fetch(api(`/api/ebooks?q=${encodeURIComponent(q.value)}`));
-      const data = await response.json();
-      books = data.items ?? [];
-      count.textContent = `${data.count ?? books.length} title${(data.count ?? books.length) === 1 ? "" : "s"}`;
-      updated.textContent = data.generatedAt ? new Date(data.generatedAt).toLocaleTimeString([], { hour:"numeric", minute:"2-digit" }) : "";
-      renderList();
-      if (!selectedID && books.length > 0) openBook(books[0].id);
+      results.setAttribute("aria-busy", "true");
+      try {
+        const response = await fetch(api(`/api/ebooks?q=${encodeURIComponent(q.value)}`));
+        if (!response.ok) throw Object.assign(new Error(`Request failed (${response.status})`), { status: response.status });
+        const data = await response.json();
+        books = data.items ?? [];
+        count.textContent = `${data.count ?? books.length} title${(data.count ?? books.length) === 1 ? "" : "s"}`;
+        updated.textContent = data.generatedAt ? new Date(data.generatedAt).toLocaleTimeString([], { hour:"numeric", minute:"2-digit" }) : "";
+        renderList();
+        if (!selectedID && books.length > 0) openBook(books[0].id);
+      } catch (error) {
+        renderLoadError(error);
+      } finally {
+        results.removeAttribute("aria-busy");
+      }
+    }
+
+    // A failed catalog request used to leave "Loading ebooks…" on screen
+    // forever. Name the failure and offer a retry; an expired browser session
+    // gets a sign-in link instead of a retry that cannot succeed.
+    function renderLoadError(error) {
+      const status = Number(error?.status) || 0;
+      const auth = status === 401 || status === 403;
+      count.textContent = "—";
+      results.className = "";
+      const next = encodeURIComponent(location.pathname + location.search);
+      results.innerHTML = `<div class="load-error" role="alert"><strong>${auth ? "Sign in to browse ebooks" : "Could not load ebooks"}</strong><span>${escapeHTML(auth ? "Your session has ended or this library needs an account." : status ? `The server answered with status ${status}.` : "The server could not be reached.")}</span>${auth ? `<a class="button" href="/account/login?next=${next}">Sign in</a>` : `<button type="button" class="button" onclick="loadBooks()">Try again</button>`}</div>`;
     }
 
     function renderList() {
@@ -87,7 +112,7 @@
       }
       results.className = "";
       results.innerHTML = books.map(book => `
-        <button class="book ${book.id === selectedID ? "selected" : ""}" onclick="openBook('${book.id}')">
+        <button type="button" class="book ${book.id === selectedID ? "selected" : ""}" aria-pressed="${book.id === selectedID}" data-id="${escapeHTML(book.id)}" onclick="openBook(this.dataset.id)">
           <div class="cover">${book.posterURL ? `<img src="${api(book.posterURL)}" alt="">` : "B"}</div>
           <div>
             <h3>${escapeHTML(book.title)}</h3>

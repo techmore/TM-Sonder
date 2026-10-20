@@ -26,13 +26,21 @@ func (s *Server) handleSubtitleMaintenance(w http.ResponseWriter, r *http.Reques
 
 // Runtime control is restricted to the owner account or direct loopback access.
 func (s *Server) requireSubtitleOwner(w http.ResponseWriter, r *http.Request) bool {
+	if s.isRuntimeOwner(r) {
+		return true
+	}
+	writeError(w, http.StatusForbidden, "Owner account required")
+	return false
+}
+
+// isRuntimeOwner reports whether the request may use owner-only runtime
+// controls without writing a response, so page handlers can answer a browser
+// with HTML (a sign-in redirect or an explanation) instead of the JSON error
+// that API routes send.
+func (s *Server) isRuntimeOwner(r *http.Request) bool {
 	if r.Header.Get("X-Forwarded-Host") == "" && isLoopback(peerHost(r)) && hostIsLoopback(r.Host) {
 		return true
 	}
 	username, ok := s.sessionUsername(r)
-	if !ok || username != s.accounts.Username() {
-		writeError(w, http.StatusForbidden, "Owner account required")
-		return false
-	}
-	return true
+	return ok && s.accounts != nil && username == s.accounts.Username()
 }
