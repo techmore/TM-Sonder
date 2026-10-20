@@ -59,3 +59,19 @@ Audiobook feature follow-ups:
 - [x] Add a pure chapter-aware playback snapshot model.
 - [x] Surface current chapter, chapter jumping, resume, and progress sync in the web browser.
 - [x] Add richer audiobook metadata matching against an external Audnexus-compatible provider.
+
+Go server follow-ups (open, found in the 2026-10 audit):
+
+- [ ] Remove dead code reported by `staticcheck`: `(*Server).toCatalogItem`,
+      `(*Server).collapseIntoBooks`, `libraryPageForTheme`,
+      `library.cleanBookFolder`, the unused `store.onSave` field, and the
+      never-read `paused` value in `audiobookopt.(*Manager).worker`.
+- [ ] Decide what serves `/project-analytics.js`: every embedded page requests
+      it and the Go server 404s, which logs a console error per page view.
+      Either serve a no-op stub or inject the tag at the reverse proxy.
+- [ ] The generated config template hardcodes the macOS data dir and Caddyfile
+      paths; make them platform-aware for first runs on Linux.
+- [ ] Phone layout: the header tools strip scrolls horizontally with a hidden
+      scrollbar, so Profile/Settings sit off-screen with no affordance.
+- [ ] Add `staticcheck` (or `golangci-lint`) to the CI Go job once the dead
+      code is removed, so new findings fail the build.

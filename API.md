@@ -20,7 +20,7 @@ show poster). Show cards must prefer `showPosterURL` over any episode's
 and would otherwise hijack the show cover. Season cards must prefer
 `seasonPosterURL`. Both are omitted when the item has no group or no art.
 
-> **Reference implementations:** the macOS app (`xcode-TM-Sonder/SonderHTTPServer.swift`) and the Go server (`server/`, branch `go-port`). The Go server additionally supports `GET /stream/{id}?transcode=1` (see Streaming below); all other routes are wire-compatible with the shapes in this file.
+> **Reference implementations:** the Go server (`server/` on `main`) is authoritative; the macOS app's embedded server (`xcode-TM-Sonder/SonderHTTPServer.swift`) is legacy and implements a subset. The Go server additionally supports `GET /stream/{id}?transcode=1` (see Streaming below) and the routes listed under [Route index](#route-index); all other routes are wire-compatible with the shapes in this file.
 
 Base URL comes from `/api/discovery` as `localURL` or `lanURL`.
 
@@ -535,9 +535,26 @@ For a Japanese-audio, English-subtitle preference, the client should choose the 
 | --- | --- | --- |
 | GET | `/api/audiobooks` | Audiobook catalog, optionally filtered with `?q=`. |
 | GET | `/api/audiobooks/{itemID}` | Audiobook detail with chapter/playback snapshot. |
-| GET | `/audiobooks` | Browser audiobook interface. |
+| GET | `/api/audiobooks/{itemID}/chapters` | Embedded chapter markers across every file of the book, with whole-book start times. |
+| GET | `/api/audiobooks/{itemID}/download` | Original file download with HEAD/Range support (no transcode). |
+| POST | `/api/audiobooks/{itemID}/chapter-lookup` | Look up chapter timings for the recording from the configured external provider (returns a preview to review). |
+| POST/DELETE | `/api/audiobooks/{itemID}/chapter-map` | Apply or remove reviewed chapter timings. Owner/administrator only. |
+| GET | `/api/audiobooks/{itemID}/conversion` | MP3→M4B conversion eligibility and job state for the book. |
+| POST | `/api/audiobooks/{itemID}/conversion` | Start a staged M4B conversion; originals are retained. |
+| GET | `/api/audiobooks/{itemID}/conversion/{stream\|download}` | Stream or download the converted M4B for review. |
+| GET | `/audiobooks` | Browser audiobook player (rails layout). `/audiobooks-classic` is the list layout; `/audiobooks-beta` is an alias of the rails page. |
 
-Audiobook catalog items also omit host filesystem paths.
+Audiobook catalog items also omit host filesystem paths. See
+[`docs/audiobook-detail-tools.md`](docs/audiobook-detail-tools.md) for the
+conversion and chapter tooling behaviour.
+
+## Ebooks
+
+| Method | Path | Purpose |
+| --- | --- | --- |
+| GET | `/api/ebooks` | Ebook catalog, optionally filtered with `?q=`. |
+| GET | `/ebooks` | Browser ebook interface. |
+| GET | `/read/{itemID}` | In-browser EPUB reader for one cataloged item (epub.js, self-hosted at `/epub.js` and `/jszip.js`). |
 
 ## Plex-style library root (`kind: "plex"`)
 
@@ -569,5 +586,107 @@ with a clear error. Example:
 | --- | --- | --- |
 | GET | `/artwork/poster/{itemID}` | Poster image. |
 | GET | `/artwork/backdrop/{itemID}` | Backdrop image. |
+| GET | `/artwork/curated/{itemID}` | Curated poster stored under `<dataDir>/curated-posters`, when one exists for the item. |
 
 Same auth rules as all other routes. Clients must send the Bearer token when pairing is required.
+
+## Route index
+
+Routes registered by the Go server that are not covered by the sections
+above. All of them follow the [Auth](#auth) rules unless noted.
+
+### Movies
+
+| Method | Path | Purpose |
+| --- | --- | --- |
+| GET | `/api/movies/continue` | Movie IDs the account dismissed from the Continue Watching shelf. |
+| PATCH | `/api/movies/{id}/continue` | Body `{ "dismissed": true\|false }`; hide or restore a movie on that shelf. |
+| GET | `/api/movies/{id}/preparation` | Status, progress, and ready asset URLs for prepared (HLS VOD + fast-start MP4) playback. |
+| POST | `/api/movies/{id}/prepare` | Queue or reuse a preparation. |
+| GET | `/stream/{id}/vod/{fingerprint}/{asset}` | Prepared playlists, segments, and MP4. |
+| GET | `/stream/{id}/hls/{session}/{asset}` | Live HLS session playlists and segments produced by the on-the-fly transcoder. |
+
+See [`docs/movie-preparation.md`](docs/movie-preparation.md).
+
+### Reading lists
+
+| Method | Path | Purpose |
+| --- | --- | --- |
+| GET | `/api/lists` | The account's lists (name, description, tags, ordered items). |
+| POST | `/api/lists` | Create a list; `name` is required. |
+| PATCH | `/api/lists/{listID}` | Update name, description, or tags (the `series` tag marks a reading order). |
+| DELETE | `/api/lists/{listID}` | Delete a list; catalog items are untouched. |
+| POST | `/api/lists/{listID}/items` | Add an item (`itemID`, optional `position`). |
+| DELETE | `/api/lists/{listID}/items/{itemID}` | Remove an item. |
+| POST | `/api/lists/{listID}/reorder` | Set item order with `{ "itemIDs": [...] }`. |
+
+### Shared reading queue and Google link
+
+| Method | Path | Purpose |
+| --- | --- | --- |
+| GET/PATCH | `/api/people/public-queue` | Read or set (`{ "enabled": true\|false }`) public sharing of the account's reading queue; the response carries `enabled` and, when on, the share `url`. |
+| GET | `/shared/queue/{token}` | **Unauthenticated.** The shared queue page for a token; revoked when sharing is turned off. |
+| GET | `/api/auth/invite` | The signed-in account's invite link and referral count. |
+| GET | `/oauth2/start`, `/oauth2/link` | Begin Google sign-in / account linking (only when Google OAuth is configured). |
+| GET | `/oauth2/callback` | OAuth redirect target. |
+
+### Catalog reports
+
+| Method | Path | Purpose |
+| --- | --- | --- |
+| GET | `/api/library/insights` | Counts, indexed storage, genres, largest entries, and personal activity for the Catalog insights panel. |
+| GET | `/api/library/storage` | Indexed media sizes by directory; never walks the storage roots. |
+| GET | `/api/library/health` | Read-only TV folder/identity consistency warnings. |
+
+See [`docs/catalog-insights.md`](docs/catalog-insights.md) and
+[`docs/library-health.md`](docs/library-health.md).
+
+### Settings and maintenance
+
+| Method | Path | Purpose |
+| --- | --- | --- |
+| GET | `/api/settings` | Current server settings (libraries, LAN, theme, layouts, media cache). |
+| PUT/PATCH | `/api/settings` | Update settings; library changes trigger a rescan. |
+| GET | `/api/settings/browse?path=` | Directory navigator for the add-library flow. |
+| POST | `/api/settings/rescan` | Start a library scan (`202`), or report one already running. |
+| POST | `/api/settings/enrich` | Fetch missing book descriptions and posters. |
+| GET/POST | `/api/settings/subtitles` | Subtitle maintenance status / trigger a pass (owner or loopback only). |
+| GET/POST | `/api/settings/youtube` | YouTube subscription state and actions (owner or loopback only). |
+| GET | `/api/settings/youtube/permission` | `{ "owner": true }` when the caller may manage subscriptions; the library page uses it to show the YouTube link. |
+| POST | `/api/optimization/audiobooks/jobs/{id}/prioritize` | Move a queued job to the front of the queue. |
+| POST | `/api/optimization/audiobooks/jobs/{id}/promote` | Replace the original with a staged output that passed review. |
+
+### Compatibility endpoints
+
+Jellyfin-shaped routes used by BookPlayer and similar clients:
+
+| Method | Path |
+| --- | --- |
+| GET | `/System/Info/Public`, `/QuickConnect/Enabled` (public) |
+| POST | `/Users/AuthenticateByName` (public; returns `AccessToken`) |
+| GET | `/UserViews`, `/Users/{userID}/Views`, `/Items`, `/Users/{userID}/Items` |
+| GET | `/Items/{itemID}`, `/Users/{userID}/Items/{itemID}`, `/Items/{itemID}/Download` |
+| GET | `/Items/{itemID}/Images/Primary` (public for known audiobook ids, see Auth) |
+| GET | `/Artists/AlbumArtists`, `/Persons` |
+
+Audiobookshelf-shaped routes:
+
+| Method | Path |
+| --- | --- |
+| GET | `/ping`, `/status` (public) |
+| POST | `/login` (public; returns `user.token`) |
+| GET | `/api/libraries`, `/api/libraries/{libraryID}/items` |
+| GET | `/api/items/{id}`, `/api/items/{id}/cover`, `/api/items/{id}/file/{ino}/download` |
+
+### Browser pages and static assets
+
+Pages: `/`, `/audiobooks`, `/audiobooks-classic`, `/audiobooks-beta`,
+`/ebooks`, `/read/{id}`, `/youtube`, `/account/login`, `/account/setup`,
+`/account/signup`. Unauthenticated browser requests for protected pages are
+redirected to `/account/login?next=…`.
+
+Assets (public, immutable when requested with the hashed `?v=` the page
+emits): `/library.css`, `/library.js`, `/shared.js`, `/movie-downloads.js`,
+`/video-presentation.js`, `/subtitle-maintenance.js`, `/youtube.js`,
+`/youtube-link.js`, `/epub.js`, `/jszip.js`, `/favicon.svg`, `/favicon.png`,
+`/favicon.ico`.
