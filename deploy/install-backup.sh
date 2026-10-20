@@ -30,8 +30,13 @@ UNIT
 systemctl daemon-reload
 systemctl enable --now sonder-backup.timer'
 
-# Take one backup now so the off-container copy exists immediately, then pull it.
-latest="$(incus exec "$INSTANCE" -- /usr/local/bin/backup-sonder /var/lib/sonder /var/backups/sonder | tail -n 1)"
+# Run the real systemd unit now (not the script directly) so the exact thing
+# the timer fires is proven to work on every deploy. start blocks for oneshot
+# units and fails if the unit fails.
+incus exec "$INSTANCE" -- systemctl start sonder-backup.service
+latest="$(incus exec "$INSTANCE" -- sh -c 'ls -1t /var/backups/sonder/sonder-state-*.tar.gz | head -n 1')"
+[[ -n "$latest" ]] || { echo "backup unit produced no archive" >&2; exit 1; }
+incus exec "$INSTANCE" -- tar -tzf "$latest" >/dev/null
 install -d -m 0700 "$HOST_DEST"
 ( umask 077; incus file pull "$INSTANCE$latest" "$HOST_DEST/" )
 ls -1t "$HOST_DEST"/sonder-state-*.tar.gz | tail -n +"$((HOST_KEEP + 1))" | xargs -r rm -f --
