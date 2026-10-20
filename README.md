@@ -277,3 +277,7 @@ restart or replace the application by itself. For other deployments, install
 yt-dlp, Deno, FFmpeg and FFprobe, set `SONDER_YOUTUBE_DIR`, allow service writes,
 and configure a library for that path. Downloads require normal source access;
 no browser cookies or account credentials are imported.
+
+## License
+
+MIT; see [LICENSE](LICENSE).
