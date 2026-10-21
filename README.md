@@ -20,15 +20,19 @@ still contains a legacy embedded HTTP server that the Go server supersedes.
 | `deploy/` | launchd install + Apple `container` image | Ops |
 | `docs/` | Audits and design notes | Reference |
 
-> **Repo caveat:** `IOS_Client_Xcode/TM_Sonder_Client` is currently committed as
-> a bare gitlink (submodule pointer) with **no `.gitmodules` entry**, so a fresh
-> clone cannot obtain the iOS sources. Either add a proper submodule or vendor
-> the directory into this repo. See [`docs/review-2026-09.md`](docs/review-2026-09.md).
+> The iOS client sources are vendored in `IOS_Client_Xcode/TM_Sonder_Client`
+> (an earlier revision committed only a bare gitlink; that is resolved). CI runs
+> its offline-persistence package tests and an unsigned iOS build. See
+> [`docs/review-2026-09.md`](docs/review-2026-09.md) for the architecture review.
 
 ## Run the Go server
 
+Requires Go 1.25+ (see `server/go.mod`); the web client test needs Node.
+
 ```bash
 make mac                    # → bin/sonder-darwin-arm64
+make linux                  # → bin/sonder-linux-arm64 (containers)
+make linux-amd64            # → bin/sonder-linux-amd64 (Ubuntu/x86_64 hosts)
 ./bin/sonder-darwin-arm64 -config ~/.config/sonder/server.json
 ```
 
@@ -37,6 +41,8 @@ to point at your media roots, then restart. Key config fields:
 `port`/`webPort`, `apiPort`, `dataDir`, `libraries[]`, `allowLAN`, `safeScan`,
 `probeWorkers`, `thumbWorkers`, `transcode`, `mediaCache`, and optional Caddy paths. Every
 field also has a `SONDER_*` environment override (see the generated template).
+`transcode.hwaccel` accepts `videotoolbox` (macOS only), `vaapi`, `qsv`, or
+`none`; Linux hosts should use `none` unless a VAAPI/QSV device is available.
 
 Requirements: the FFmpeg package, which provides both `ffmpeg` and `ffprobe`,
 on `PATH` (or configured paths) for track probing, thumbnails, chapters, and
@@ -83,10 +89,25 @@ are accepted only by the compatibility login endpoints and never written to
 The systemd install includes an optional protected environment file at
 `~/.config/sonder/bookplayer.env` for this purpose.
 
+### Web UI
+
+The server embeds its browser pages; nothing is served from disk.
+
+| Path | Page |
+| --- | --- |
+| `/` | Library browser (movies, TV, documentaries, audiobooks, books), settings, built-in player |
+| `/audiobooks` | Audiobook player (rails layout; `/audiobooks-classic` is the list layout) |
+| `/ebooks` | Ebook browser |
+| `/read/{id}` | In-browser EPUB reader |
+| `/youtube` | YouTube subscription manager (owner account only) |
+| `/account/login`, `/account/setup`, `/account/signup` | Browser account pages |
+
+Screenshots: _to be added_ (library rails view, audiobook player, phone layout).
+
 ### Operations
 
 ```bash
-make test                   # go test -race ./...
+make test                   # web client tests (node --test) + go test -race ./...
 make vet
 make fmt
 make prepare-install       # install/check ffmpeg + ffprobe
@@ -195,7 +216,13 @@ dashboard or config.
 
 ```bash
 # Go server (authoritative)
-cd server && go test -race -count=1 ./...
+cd server && go vet ./... && go test -race -count=1 ./...
+
+# Web client unit tests (library.js helpers)
+node --test server/internal/httpapi/web/library.test.cjs
+
+# Deploy script tests
+cd deploy && go test ./...
 
 # Shared Swift package
 cd Packages/SonderAPI && swift test
@@ -205,8 +232,11 @@ xcodebuild test -project xcode-TM-Sonder.xcodeproj -scheme xcode-TM-Sonder \
   -destination 'platform=macOS' -only-testing:xcode-TM-SonderTests
 ```
 
-CI runs the Go format/vet/test/cross-compile, the SonderAPI package tests, and
-the macOS unit tests (`.github/workflows/ci.yml`).
+CI (`.github/workflows/ci.yml`) runs four jobs on every push and pull request:
+the Go server (gofmt, vet, race tests, darwin/arm64 + linux/arm64 +
+linux/amd64 cross-compile, web client tests, deploy script tests), the
+SonderAPI package tests, a macOS Release build of the host app, and the iOS
+client's persistence tests plus an unsigned iOS build.
 
 ## Documentation
 
