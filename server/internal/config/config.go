@@ -3,11 +3,13 @@
 package config
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
 	"io"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strconv"
 	"strings"
 )
@@ -134,7 +136,7 @@ func Default() Config {
 		FFmpegPath:         "ffmpeg",
 		FFprobePath:        "ffprobe",
 		SafeScan:           true,
-		Transcode:          Transcode{MaxConcurrent: 2, HWAccel: "videotoolbox", Preset: "veryfast"},
+		Transcode:          Transcode{MaxConcurrent: 2, HWAccel: DefaultHWAccel(), Preset: "veryfast"},
 		MediaCache:         MediaCache{Enabled: true, MaxBytes: DefaultMediaCacheMaxBytes, MinFreeBytes: DefaultMediaCacheMinFreeBytes},
 		LogDir:             filepath.Join(dataDir, "logs"),
 	}
@@ -455,7 +457,27 @@ func WriteTemplate(path string) error {
 			return err
 		}
 	}
-	return os.WriteFile(path, templateBytes, 0o600)
+	return os.WriteFile(path, TemplateBytes(), 0o600)
+}
+
+// TemplateBytes renders the commented config template with the defaults for
+// the host the server is running on.
+func TemplateBytes() []byte {
+	return bytes.ReplaceAll(templateBytes,
+		[]byte(`"hwaccel": "videotoolbox"`),
+		[]byte(`"hwaccel": "`+DefaultHWAccel()+`"`))
+}
+
+// DefaultHWAccel is the transcode hardware acceleration a fresh config gets.
+// VideoToolbox exists only on macOS; a Linux host (the container image and
+// the Ubuntu deploy target) that inherited "videotoolbox" asked ffmpeg for
+// h264_videotoolbox and failed every encode-mode transcode until the config
+// was edited by hand. Software encoding is the safe default elsewhere.
+func DefaultHWAccel() string {
+	if runtime.GOOS == "darwin" {
+		return "videotoolbox"
+	}
+	return "none"
 }
 
 func fileExists(p string) bool {
