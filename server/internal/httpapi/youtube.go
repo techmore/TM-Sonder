@@ -3,6 +3,7 @@ package httpapi
 import (
 	"encoding/json"
 	"net/http"
+	"net/url"
 	"sync/atomic"
 	"time"
 	"tm-sonder/server/internal/youtube"
@@ -107,12 +108,34 @@ var youtubePage = newGzippedPage(func() []byte { return mustReadWeb("web/youtube
 func (s *Server) handleYouTubeJS(w http.ResponseWriter, r *http.Request) {
 	serveAsset(w, r, youtubeJS, "text/javascript; charset=utf-8")
 }
+
+// handleYouTubePage is a browser page, so a visitor who is not the owner gets
+// a browser answer: anonymous sessions go to sign-in (like the other
+// protected pages), and signed-in non-owners get a short HTML explanation.
+// Both used to receive the API's raw JSON error body.
 func (s *Server) handleYouTubePage(w http.ResponseWriter, r *http.Request) {
-	if !s.requireSubtitleOwner(w, r) {
+	if !s.isRuntimeOwner(r) {
+		if _, signedIn := s.sessionUsername(r); !signedIn {
+			setIdentityHeaders(w)
+			http.Redirect(w, r, "/account/login?next="+url.QueryEscape("/youtube"), http.StatusSeeOther)
+			return
+		}
+		w.Header().Set("Content-Type", "text/html; charset=utf-8")
+		w.Header().Set("Cache-Control", "no-store")
+		w.WriteHeader(http.StatusForbidden)
+		_, _ = w.Write([]byte(ownerOnlyPageHTML))
 		return
 	}
 	serveGzippableHTML(w, r, youtubePage)
 }
+
+// ownerOnlyPageHTML is the HTML reply for signed-in accounts that reach an
+// owner-only page. It carries no user data, so it is a plain constant.
+const ownerOnlyPageHTML = `<!doctype html>
+<html lang="en" data-theme="earthy"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Owner only · TM Sonder</title><link rel="icon" href="/favicon.png"><link rel="stylesheet" href="/library.css">
+<style>body{margin:0;background:var(--bg,#111);color:var(--text,#eee);font:15px system-ui}main{max-width:560px;margin:12vh auto;padding:24px}h1{font-size:22px;margin:0 0 10px}p{color:var(--muted,#aaa);line-height:1.5}a{color:inherit}</style></head>
+<body><main><h1>This page is for the library owner</h1><p>YouTube subscriptions are managed by the account that set up this server. Ask the owner if you need a channel added.</p><p><a href="/">Back to the library</a></p></main></body></html>
+`
 
 var youtubeLinkJS = newGzippedPage(func() []byte { return mustReadWeb("web/youtube-link.js") })
 

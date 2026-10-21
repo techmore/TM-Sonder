@@ -5273,6 +5273,7 @@
       if (!btn) return;
       const act = btn.dataset.action;
       if (act === "scan-storage") scanStorageNow();
+      else if (act === "retry-library-load") loadLibrary();
       else if (act === "refresh-insights") { storageData = null; void renderStorage(true); }
       else if (act === "retry-movie-metadata" && btn.dataset.id) {
         const item = items.find(item => item.id === btn.dataset.id);
@@ -5981,42 +5982,83 @@
     });
     void loadMovieContinuePreferences();
     restorePendingProgress();
-    fetch(api("/api/library")).then(async response => {
-      const etag = response.headers.get("ETag") || "";
-      return { etag, data: await response.json() };
-    }).then(({ etag, data }) => {
-      applyLibraryLayout(data.serverSettings?.libraryLayout || "rails");
-      hideEmptyLibraries = data.serverSettings?.hideEmptyLibraries !== false;
-      showAllLibraryTab = data.serverSettings?.showAllLibraryTab === true;
-      applyTheme(data.theme?.preset || "earthy");
-      items = data.items ?? [];
-      replaceServerProgress(data.progress ?? []);
-      if (!restoreCopyGroups(etag)) {
-        rebuildCopyGroups();
-        cacheCopyGroups(etag);
+
+    // ---------- Initial library load ----------
+    // Every view hangs off this one request, so its failure modes get their
+    // own states. A browser session that expired while the tab stayed open
+    // used to parse the 401 JSON body as an empty catalog and show "No
+    // matches"; now it offers a sign-in link, and a server or network failure
+    // gets a Retry button instead of a dead end.
+    function libraryLoadErrorHTML(status) {
+      const authFailure = status === 401 || status === 403;
+      if (authFailure && !window.Sonder.TOKEN) {
+        const next = encodeURIComponent(location.pathname + location.search + location.hash);
+        return `<div class="empty-state library-load-error" role="alert"><p>Your session has ended, or this library needs an account.</p><a class="button-like" href="/account/login?next=${next}">Sign in</a></div>`;
       }
-      applyEmptyLibraryTabs();
-      renderFacets();
-      applyHash(); // restore tab/show/page from the URL on load
-      const sharedBookID = new URLSearchParams(location.search).get("book");
-      const sharedBook = sharedBookID && items.find(item => item.id === sharedBookID);
-      if (sharedBook) {
-        activeTab = sharedBook.kind === "ebook" ? "books" : sharedBook.kind === "audiobook" ? "audiobooks" : activeTab;
-        for (const button of document.querySelectorAll("#tabs button[data-tab]")) {
-          button.classList.toggle("active", button.dataset.tab === activeTab);
+      const detail = authFailure ? "The pairing token was not accepted."
+        : status ? `The server answered with status ${status}.`
+        : "The server could not be reached. Check that it is running and that you are on the same network.";
+      return `<div class="empty-state library-load-error" role="alert"><p>Could not load the library. ${escapeHTML(detail)}</p><button type="button" data-action="retry-library-load">Try again</button></div>`;
+    }
+
+    function loadLibrary() {
+      const grid = $("#grid");
+      grid.setAttribute("aria-busy", "true");
+      grid.innerHTML = `<div class="empty-state">Loading library…</div>`;
+      return fetch(api("/api/library")).then(async response => {
+        if (!response.ok) {
+          const error = new Error(`Library request failed (${response.status})`);
+          error.status = response.status;
+          throw error;
         }
-      }
-      render();
-      if (sharedBook) openDetail(sharedBook.id);
-      refreshLists().catch(() => { lists = []; });
-      refreshReadingState().catch(() => { readingState = { queue: [], records: [] }; });
-      if (activeTab === "optimize") {
-        refreshOptimizationQueue();
-        refreshAudiobookJobs();
-      }
-    }).catch(() => {
-      $("#grid").innerHTML = `<div class="empty-state">Could not load the library. Is the token valid?</div>`;
-    });
+        const etag = response.headers.get("ETag") || "";
+        return { etag, data: await response.json() };
+      }).then(({ etag, data }) => {
+        applyLibraryLayout(data.serverSettings?.libraryLayout || "rails");
+        hideEmptyLibraries = data.serverSettings?.hideEmptyLibraries !== false;
+        showAllLibraryTab = data.serverSettings?.showAllLibraryTab === true;
+        applyTheme(data.theme?.preset || "earthy");
+        items = data.items ?? [];
+        replaceServerProgress(data.progress ?? []);
+        if (!restoreCopyGroups(etag)) {
+          rebuildCopyGroups();
+          cacheCopyGroups(etag);
+        }
+        applyEmptyLibraryTabs();
+        renderFacets();
+        applyHash(); // restore tab/show/page from the URL on load
+        const sharedBookID = new URLSearchParams(location.search).get("book");
+        const sharedBook = sharedBookID && items.find(item => item.id === sharedBookID);
+        if (sharedBook) {
+          activeTab = sharedBook.kind === "ebook" ? "books" : sharedBook.kind === "audiobook" ? "audiobooks" : activeTab;
+          for (const button of document.querySelectorAll("#tabs button[data-tab]")) {
+            button.classList.toggle("active", button.dataset.tab === activeTab);
+          }
+        }
+        render();
+        if (sharedBook) openDetail(sharedBook.id);
+        refreshLists().catch(() => { lists = []; });
+        refreshReadingState().catch(() => { readingState = { queue: [], records: [] }; });
+        if (activeTab === "optimize") {
+          refreshOptimizationQueue();
+          refreshAudiobookJobs();
+        }
+      }).catch(error => {
+        console.warn("Library unavailable", error);
+        // A retry can fail while a rails or detail view from an earlier
+        // successful load is still on screen; those sections sit beside the
+        // grid, so hide them or the message lands in a hidden element.
+        for (const selector of ["#movieCatalog", "#railsRow", "#continueRow", "#bookDetailPage", "#listsPanel", "#bookmarksPanel", "#storagePanel", "#optimizationPage", "#seasonList", "#pager", "#backRow"]) {
+          const section = $(selector);
+          if (section) section.hidden = true;
+        }
+        document.body.classList.remove("book-detail-mode", "storage-mode", "optimize-mode");
+        grid.hidden = false;
+        grid.className = "";
+        grid.innerHTML = libraryLoadErrorHTML(Number(error?.status) || 0);
+      }).finally(() => grid.removeAttribute("aria-busy"));
+    }
+    loadLibrary();
 
     // ---------- Settings ----------
     let settingsData = null;
