@@ -1,18 +1,29 @@
 name: CI
 
+# Run once per change: on pull requests, and on pushes to main.
+# This used to run on push to every branch ("**") so branches without a PR
+# (e.g. dev-container) still got CI, but every PR push then ran all four macOS
+# jobs twice, and every techmore repo shares one account-wide concurrent job
+# limit (5 macOS). Open a PR, or run this workflow by hand (workflow_dispatch)
+# on any branch, to check a branch.
 on:
   push:
-    # Every branch, not a hand-maintained list. The list was [main, master,
-    # go-port, fix/**, codex/**], so work on dev-container -- where the container
-    # machine and the audiobooks work actually lived -- never ran CI at all.
-    # A green main said nothing about whether those branches were buildable.
-    branches: ["**"]
+    branches: [main]
+    paths-ignore: ['**.md', 'docs/**']
   pull_request:
+    paths-ignore: ['**.md', 'docs/**']
+  workflow_dispatch:
+
+# A newer push to the same PR cancels the older run; runs on main always finish.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
   sonder-api:
     name: SonderAPI package
     runs-on: macos-15
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@v7
       - name: Test SonderAPI
@@ -23,6 +34,7 @@ jobs:
   mac-app:
     name: macOS Release build
     runs-on: xcode-27
+    timeout-minutes: 20
     env:
       DEVELOPER_DIR: /Applications/Xcode_27.0.app/Contents/Developer
     steps:
@@ -52,6 +64,7 @@ jobs:
   go-server:
     name: Go server (fmt + vet + test + cross-compile)
     runs-on: macos-15
+    timeout-minutes: 20
     defaults:
       run:
         working-directory: server
@@ -102,6 +115,7 @@ jobs:
   native-client:
     name: Native client persistence and iOS build
     runs-on: xcode-27
+    timeout-minutes: 20
     env:
       DEVELOPER_DIR: /Applications/Xcode_27.0.app/Contents/Developer
     steps:
