@@ -769,13 +769,16 @@
       return numeral;
     }
 
+    // The scope button's visible text says what it measures. It used to read
+    // a bare count ("5") between the elapsed and total times, which named
+    // nothing on screen and did not match the button's spoken label.
     function playbackScopeValue(section) {
       if (section?.kind === "chapter") {
-        return `${formatChapterNumber(section.chapter.index)} of ${formatChapterNumber(nowPlayingChapters.length)}`;
+        return `Chapter ${formatChapterNumber(section.chapter.index)} of ${formatChapterNumber(nowPlayingChapters.length)}`;
       }
-      if (section?.kind === "part") return `${nowPlayingPartIndex + 1} of ${nowPlayingParts.length}`;
-      if (nowPlayingChaptersAvailable && nowPlayingChapters.length > 1) return formatChapterNumber(nowPlayingChapters.length);
-      if (nowPlayingParts?.length > 1) return String(nowPlayingParts.length);
+      if (section?.kind === "part") return `Part ${nowPlayingPartIndex + 1} of ${nowPlayingParts.length}`;
+      if (nowPlayingChaptersAvailable && nowPlayingChapters.length > 1) return `Book · ${formatChapterNumber(nowPlayingChapters.length)} chapters`;
+      if (nowPlayingParts?.length > 1) return `Book · ${nowPlayingParts.length} parts`;
       return "Book";
     }
 
@@ -1219,13 +1222,14 @@
           ? playbackScopeValue(section)
           : playbackScopeValue(null);
         scopeButton.setAttribute("aria-pressed", selectedSection ? "true" : "false");
-        scopeButton.setAttribute("aria-label", selectedSection
-          ? `Showing ${section.label.toLowerCase()} progress. Switch to whole-book progress.`
+        // The spoken name starts with the visible text (WCAG 2.5.3).
+        scopeButton.setAttribute("aria-label", `${scopeLabel.textContent}. ` + (selectedSection
+          ? "Switch to whole-book progress."
           : section
-            ? `Showing whole-book progress. Switch to ${section.label.toLowerCase()} progress.`
+            ? `Switch to ${section.label.toLowerCase()} progress.`
             : nowPlayingChapters === null
-              ? "Whole-book progress. Chapter markers are loading."
-              : "Whole-book progress. No chapter or part section is available.");
+              ? "Chapter markers are loading."
+              : "No chapter or part section is available."));
         if (seek) {
           seek.setAttribute("aria-label", selectedSection
             ? `Seek within ${section.label.toLowerCase()}`

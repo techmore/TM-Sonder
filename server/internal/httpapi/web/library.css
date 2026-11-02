@@ -1667,6 +1667,12 @@ body:not(.mobile-filters-open) #filterRow { display:none !important; }
   body.np-expanded .np-scope-toggle { justify-content:space-between; min-width:0; }
   body.np-expanded .np-time-toggle { white-space:nowrap; }
   body.np-expanded .np-scope-toggle { padding:6px 0; border:0; background:transparent; }
+  /* The scope label names what it measures ("Book · 12 chapters"), which is
+     too long to sit between the elapsed and total readouts on a phone. */
+  body.np-expanded .np-book-progress { grid-template-columns:auto minmax(0,1fr) auto; row-gap:0; }
+  body.np-expanded .np-progress-position { grid-column:1; grid-row:1; }
+  body.np-expanded .np-time-toggle { grid-column:3; grid-row:1; }
+  body.np-expanded .np-scope-toggle { grid-column:1 / -1; grid-row:2; justify-self:center; min-height:32px; text-decoration:underline; text-decoration-color:rgba(255,255,255,.3); text-underline-offset:3px; }
   body.np-expanded .np-time-toggle.np-time-plain { padding:6px 0; border:0; background:transparent; }
   body.np-expanded .np-progress-elapsed { font-size:11px; }
   body.np-expanded .np-time, body.np-expanded .np-eta {

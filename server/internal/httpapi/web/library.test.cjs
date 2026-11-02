@@ -1192,10 +1192,10 @@ test('the centered timeline switches book/chapter scope and cycles three time mo
       chapterContext:$("#npPartLabel").textContent};
   })()`);
   assert.deepEqual(result, {
-    bookLabel: '3',
+    bookLabel: 'Book · 3 chapters',
     bookTime: {mode:'Total',value:'300'},
     progressControlsVisible: true, legacyReadoutsHidden: true, timeStyle: 'plain',
-    chapterLabel: '2 of 3',
+    chapterLabel: 'Chapter 2 of 3',
     chapterElapsed: '30',
     chapterTotal: {mode:'Total',value:'60'},
     chapterRemaining: {mode:'Left',value:'30'},
@@ -1320,8 +1320,8 @@ test('audiobook chapter scope supports compact Arabic and Roman numeral labels',
     return {arabic,pillStyle,plainStyle,roman,romanContext,romanBook,examples:[1,4,9,14,40,944,3999,4000].map(formatChapterNumber)};
   })()`);
   assert.deepEqual(result, {
-    arabic: '2 of 3', pillStyle: 'pill', plainStyle: 'plain',
-    roman: 'II of III', romanContext: 'Chapter II of III · Part 2 of 2 · 2003', romanBook: 'III',
+    arabic: 'Chapter 2 of 3', pillStyle: 'pill', plainStyle: 'plain',
+    roman: 'Chapter II of III', romanContext: 'Chapter II of III · Part 2 of 2 · 2003', romanBook: 'Book · III chapters',
     examples: ['I','IV','IX','XIV','XL','CMXLIV','MMMCMXCIX','4000'],
   });
   assert.equal(get.preference('sonder.player.timeReadoutStyle'), 'plain');
