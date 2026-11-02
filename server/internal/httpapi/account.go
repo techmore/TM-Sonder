@@ -150,7 +150,7 @@ func (s *Server) handleAccountLoginPage(w http.ResponseWriter, r *http.Request) 
 		http.Redirect(w, r, location, http.StatusSeeOther)
 		return
 	}
-	renderAccountPage(w, false, next, "", "")
+	s.renderSignInPage(w, next, "", "")
 }
 
 func (s *Server) handleAccountSetupPage(w http.ResponseWriter, r *http.Request) {
@@ -209,14 +209,14 @@ func (s *Server) handleAccountLogin(w http.ResponseWriter, r *http.Request) {
 			w.Header().Set("Retry-After", strconv.Itoa(int(loginLockout/time.Second)))
 			if form {
 				w.WriteHeader(http.StatusTooManyRequests)
-				renderAccountPage(w, false, safeNext(credentials.Next), loginThrottleBody, "")
+				s.renderSignInPage(w, safeNext(credentials.Next), loginThrottleBody, credentials.Username)
 				return
 			}
 			writeError(w, http.StatusTooManyRequests, loginThrottleBody)
 			return
 		}
 		if form {
-			renderAccountPage(w, false, safeNext(credentials.Next), "Incorrect username or password.", "")
+			s.renderSignInPage(w, safeNext(credentials.Next), "Incorrect username or password.", credentials.Username)
 			return
 		}
 		writeError(w, http.StatusUnauthorized, "Invalid credentials")
@@ -414,15 +414,37 @@ func safeNext(next string) string {
 	return next
 }
 
+// accountForm describes one of the browser account pages: sign in, first
+// account setup, or invite signup.
+type accountForm struct {
+	Setup, Signup bool
+	Next          string
+	Message       string
+	SetupToken    string
+	InviteCode    string
+	// Username refills the field after a failed sign-in, so a mistyped
+	// password does not cost the listener their username too.
+	Username string
+	// Google offers "Continue with Google". It is only shown on the sign-in
+	// page when Google sign-in is configured; otherwise the link led to a
+	// bare "not configured" error page.
+	Google bool
+}
+
+func (s *Server) renderSignInPage(w http.ResponseWriter, next, message, username string) {
+	renderAccountForm(w, accountForm{Next: next, Message: message, Username: strings.TrimSpace(username), Google: s.googleOAuthReady()})
+}
+
 func renderAccountPage(w http.ResponseWriter, setup bool, next, message, setupToken string) {
-	renderAccountForm(w, setup, false, next, message, setupToken, "")
+	renderAccountForm(w, accountForm{Setup: setup, Next: next, Message: message, SetupToken: setupToken})
 }
 
 func renderAccountSignupPage(w http.ResponseWriter, next, message, inviteCode string) {
-	renderAccountForm(w, false, true, next, message, "", inviteCode)
+	renderAccountForm(w, accountForm{Signup: true, Next: next, Message: message, InviteCode: inviteCode})
 }
 
-func renderAccountForm(w http.ResponseWriter, setup, signup bool, next, message, setupToken, inviteCode string) {
+func renderAccountForm(w http.ResponseWriter, f accountForm) {
+	setup, signup, next, message := f.Setup, f.Signup, f.Next, f.Message
 	title := "Sign in to TM Sonder"
 	heading := "Welcome back"
 	button := "Sign in"
@@ -434,42 +456,55 @@ func renderAccountForm(w http.ResponseWriter, setup, signup bool, next, message,
 		heading = "Create your account"
 		button = "Create account"
 		action = "/api/auth/setup"
-		passwordHint = `<small>Use at least 12 characters. Your password is stored only as a salted hash.</small>`
+		passwordHint = `<small id="passwordHint">Use at least 12 characters. Your password is stored only as a salted hash.</small>`
 		passwordAutocomplete = "new-password"
-		if setupToken != "" {
-			action += "?token=" + url.QueryEscape(setupToken)
+		if f.SetupToken != "" {
+			action += "?token=" + url.QueryEscape(f.SetupToken)
 		}
 	} else if signup {
 		title = "Join TM Sonder"
 		heading = "Create your account"
 		button = "Create account"
 		action = "/api/auth/signup"
-		passwordHint = `<small>Use at least 12 characters. Your password is stored only as a salted hash.</small>`
+		passwordHint = `<small id="passwordHint">Use at least 12 characters. Your password is stored only as a salted hash.</small>`
 		passwordAutocomplete = "new-password"
 	}
 	messageHTML := ""
 	if message != "" {
-		messageHTML = `<p class="message">` + html.EscapeString(message) + `</p>`
+		// role="alert" so a screen reader announces why the form came back.
+		messageHTML = `<p class="message" id="formMessage" role="alert">` + html.EscapeString(message) + `</p>`
 	}
 	inviteField := ""
 	if signup {
-		inviteField = `<input type="hidden" name="inviteCode" value="` + html.EscapeString(inviteCode) + `">`
+		inviteField = `<input type="hidden" name="inviteCode" value="` + html.EscapeString(f.InviteCode) + `">`
+	}
+	// The minimum length only applies to new passwords; on sign-in it made the
+	// browser reject a short password before the server could answer.
+	passwordRules := ""
+	if passwordHint != "" {
+		passwordRules = ` minlength="12" aria-describedby="passwordHint"`
+	}
+	usernameFocus, passwordFocus := " autofocus", ""
+	if f.Username != "" {
+		usernameFocus, passwordFocus = "", " autofocus"
 	}
 	form := `<form method="post" action="` + html.EscapeString(action) + `">` + inviteField + `
 <input type="hidden" name="next" value="` + html.EscapeString(safeNext(next)) + `">
-<label>Username<input name="username" autocomplete="username" required autofocus></label>
-<label>Password<input type="password" name="password" autocomplete="` + passwordAutocomplete + `" minlength="12" required></label>` + passwordHint + `
+<label>Username<input name="username" autocomplete="username" autocapitalize="none" spellcheck="false" value="` + html.EscapeString(f.Username) + `" required` + usernameFocus + `></label>
+<label>Password<input type="password" name="password" autocomplete="` + passwordAutocomplete + `"` + passwordRules + ` required` + passwordFocus + `></label>` + passwordHint + `
 <button type="submit">` + html.EscapeString(button) + `</button>
 </form>`
 	if signup {
 		form += `<p class="secondary">When you join, you and the person who invited you can see each other’s bookmarks and playback progress. You can change either sharing setting anytime from Profile → People.</p>`
 		form += `<p class="secondary">Already have an account? <a href="/account/login">Sign in</a>.</p>`
 	} else if !setup {
-		form += `<a class="google-button" href="/oauth2/start?next=` + url.QueryEscape(safeNext(next)) + `"><span aria-hidden="true">G</span>Continue with Google</a>`
+		if f.Google {
+			form += `<a class="google-button" href="/oauth2/start?next=` + url.QueryEscape(safeNext(next)) + `"><span aria-hidden="true">G</span>Continue with Google</a>`
+		}
 		form += `<p class="secondary">Need an account? Use the one-time setup link from the server owner to create the first account. After that, ask an existing user for an invite link.</p>`
 	}
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	w.WriteHeader(http.StatusOK)
 	_, _ = w.Write([]byte(`<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="application-name" content="TM Sonder"><meta name="apple-mobile-web-app-title" content="TM Sonder"><link rel="icon" type="image/png" href="/favicon.png?v=asset"><link rel="alternate icon" type="image/svg+xml" href="/favicon.svg"><link rel="apple-touch-icon" href="/favicon.png?v=asset"><title>` + html.EscapeString(title) + `</title><style>
-:root{color-scheme:dark;font-family:system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;background:#101713;color:#edf5ed}body{min-height:100vh;display:grid;place-items:center;margin:0;background:radial-gradient(circle at top,#274331,#101713 62%)}main{width:min(92vw,420px);padding:34px;border:1px solid #4f755c;border-radius:18px;background:#17231b;box-shadow:0 20px 70px #0008}h1{font-size:1.45rem;margin:0 0 24px}label{display:grid;gap:8px;margin:16px 0;font-weight:600}input{box-sizing:border-box;width:100%;padding:12px;border:1px solid #66866d;border-radius:9px;background:#0e1711;color:inherit;font:inherit}button{width:100%;margin-top:14px;padding:12px;border:0;border-radius:9px;background:#b6d9ad;color:#102014;font:inherit;font-weight:700;cursor:pointer}.google-button{display:flex;align-items:center;justify-content:center;gap:10px;margin-top:14px;padding:12px;border:1px solid #66866d;border-radius:9px;background:#0e1711;color:inherit;text-decoration:none;font-weight:650}.google-button span{font-size:1.2rem;color:#b6d9ad}.message{padding:11px;border-radius:9px;background:#552d2d;color:#ffd7d7}.secondary,small{display:block;margin-top:18px;color:#b9c9bc;font-size:.86rem;line-height:1.45}a{color:#c5e6bb}</style></head><body><main><h1>` + html.EscapeString(heading) + `</h1>` + messageHTML + form + `</main></body></html>`))
+:root{color-scheme:dark;font-family:system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;background:#101713;color:#edf5ed}*,*::before,*::after{box-sizing:border-box}body{min-height:100vh;display:grid;place-items:center;margin:0;padding:16px;background:radial-gradient(circle at top,#274331,#101713 62%)}main{width:100%;max-width:420px;padding:clamp(22px,7vw,34px);border:1px solid #4f755c;border-radius:18px;background:#17231b;box-shadow:0 20px 70px #0008}h1{font-size:1.45rem;margin:0 0 24px}label{display:grid;gap:8px;margin:16px 0;font-weight:600}input{width:100%;min-height:44px;padding:12px;border:1px solid #66866d;border-radius:9px;background:#0e1711;color:inherit;font:inherit}input:focus-visible,button:focus-visible,a:focus-visible{outline:3px solid #b6d9ad;outline-offset:2px}button{width:100%;min-height:44px;margin-top:14px;padding:12px;border:0;border-radius:9px;background:#b6d9ad;color:#102014;font:inherit;font-weight:700;cursor:pointer}.google-button{display:flex;align-items:center;justify-content:center;gap:10px;min-height:44px;margin-top:14px;padding:12px;border:1px solid #66866d;border-radius:9px;background:#0e1711;color:inherit;text-decoration:none;font-weight:650}.google-button span{font-size:1.2rem;color:#b6d9ad}.message{padding:11px;border-radius:9px;background:#552d2d;color:#ffd7d7}.secondary,small{display:block;margin-top:18px;color:#b9c9bc;font-size:.86rem;line-height:1.45}a{color:#c5e6bb}</style></head><body><main><h1>` + html.EscapeString(heading) + `</h1>` + messageHTML + form + `</main></body></html>`))
 }
