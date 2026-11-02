@@ -6,6 +6,7 @@ struct ContentView: View {
     @Environment(\.scenePhase) private var scenePhase
     @StateObject private var model = SonderClientModel()
     @StateObject private var browser = SonderServerBrowser()
+    @State private var signInDismissed = false
 
     var body: some View {
         NavigationStack {
@@ -37,6 +38,15 @@ struct ContentView: View {
             guard let endpoint = endpoints.first(where: model.shouldAutomaticallyUseDiscoveredEndpoint) else { return }
             Task { await model.connect(to: endpoint) }
         }
+        .onChange(of: model.needsSignIn) { _, needsSignIn in
+            if needsSignIn == false { signInDismissed = false }
+        }
+        .sheet(isPresented: Binding(
+            get: { model.hasConfiguredServer && model.needsSignIn && signInDismissed == false },
+            set: { if $0 == false { signInDismissed = true } }
+        )) {
+            ServerSignInView(model: model) { signInDismissed = true }
+        }
         .tint(SonderPalette.accent)
     }
 }
@@ -44,8 +54,10 @@ struct ContentView: View {
 struct ServerOnboardingView: View {
     @ObservedObject var model: SonderClientModel
     @ObservedObject var browser: SonderServerBrowser
-    @State private var manualURL = ""
+    @State private var publicURLText = ""
+    @State private var localURLText = ""
     @State private var token = ""
+    @State private var addressError: String?
 
     var body: some View {
         ScrollView {
@@ -117,7 +129,7 @@ struct ServerOnboardingView: View {
                     Text("Searching for Sonder on your local network")
                         .font(.subheadline.weight(.semibold))
                         .foregroundStyle(SonderPalette.text)
-                    Text("Make sure LAN sharing is enabled on the Mac server. Tailscale and private URLs can be entered below.")
+                    Text("Make sure LAN sharing is enabled on the server, or enter its address below.")
                         .font(.caption)
                         .foregroundStyle(SonderPalette.textLight)
                 }
@@ -160,24 +172,17 @@ struct ServerOnboardingView: View {
 
     private var manualPanel: some View {
         VStack(alignment: .leading, spacing: 12) {
-            Label("Manual or Tailscale", systemImage: "link")
+            Label("Server address", systemImage: "link")
                 .font(.headline)
                 .foregroundStyle(SonderPalette.text)
 
-            TextField("http://sonder.local:8797", text: $manualURL)
-                .textFieldStyle(.plain)
-                .autocorrectionDisabled()
-                .textInputAutocapitalization(.never)
-                .padding(12)
-                .background(SonderPalette.surfaceDeep, in: RoundedRectangle(cornerRadius: 8))
-                .overlay(RoundedRectangle(cornerRadius: 8).stroke(SonderPalette.border))
+            ServerAddressFields(publicText: $publicURLText, localText: $localURLText, pairingToken: $token)
 
-            SecureField("Optional token for restricted servers", text: $token)
-                .textFieldStyle(.plain)
-                .autocorrectionDisabled()
-                .padding(12)
-                .background(SonderPalette.surfaceDeep, in: RoundedRectangle(cornerRadius: 8))
-                .overlay(RoundedRectangle(cornerRadius: 8).stroke(SonderPalette.border))
+            if let addressError {
+                Label(addressError, systemImage: "exclamationmark.triangle")
+                    .font(.caption)
+                    .foregroundStyle(SonderPalette.ironGrey)
+            }
 
             Button {
                 connectManualURL()
@@ -186,7 +191,8 @@ struct ServerOnboardingView: View {
                     .frame(maxWidth: .infinity)
             }
             .buttonStyle(.borderedProminent)
-            .disabled(URL(string: manualURL.trimmingCharacters(in: .whitespacesAndNewlines)) == nil)
+            .disabled(publicURLText.trimmingCharacters(in: .whitespaces).isEmpty && localURLText.trimmingCharacters(in: .whitespaces).isEmpty)
+            .accessibilityIdentifier("server.connect")
         }
         .padding(16)
         .background(SonderPalette.surface, in: RoundedRectangle(cornerRadius: 8))
@@ -194,9 +200,15 @@ struct ServerOnboardingView: View {
     }
 
     private func connectManualURL() {
-        guard let url = URL(string: manualURL.trimmingCharacters(in: .whitespacesAndNewlines)) else { return }
-        model.saveServer(baseURL: url, accessToken: token)
-        Task { await model.reload() }
+        switch ServerAddressFields.addresses(publicText: publicURLText, localText: localURLText) {
+        case let .failure(error):
+            addressError = error.message
+        case let .success(addresses):
+            addressError = nil
+            let pairing = token.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard model.saveServer(addresses: addresses, pairingToken: pairing.isEmpty ? nil : pairing) else { return }
+            Task { await model.reload() }
+        }
     }
 }
 

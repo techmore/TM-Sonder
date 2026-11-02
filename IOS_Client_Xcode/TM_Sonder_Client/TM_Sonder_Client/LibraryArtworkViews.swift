@@ -85,6 +85,7 @@ struct CachedPosterImage<Placeholder: View>: View {
             // Posters dominate initial rendering. Allow URLSession's disk-backed
             // cache to satisfy repeat launches instead of redownloading every card.
             request.cachePolicy = .returnCacheDataElseLoad
+            request.httpShouldHandleCookies = false
             let token = accessToken.trimmingCharacters(in: .whitespacesAndNewlines)
             if token.isEmpty == false {
                 request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")

@@ -24,7 +24,7 @@ struct TVShowsTab: View {
                     LibrarySearchBar(model: model)
 
                     if shows.isEmpty {
-                        EmptyLibraryState()
+                        EmptyLibraryState(needsSignIn: model.needsSignIn)
                     } else {
                         LazyVGrid(columns: [GridItem(.adaptive(minimum: 150, maximum: 180), spacing: 16)], spacing: 18) {
                             ForEach(shows) { show in
