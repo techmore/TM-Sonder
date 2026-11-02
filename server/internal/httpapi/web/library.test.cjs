@@ -1498,3 +1498,11 @@ test('catalog folder scope filters mixed libraries and recalculates sizes', () =
   assert.match(libraryHTML, /id="catalogInsightsBtn"[^>]*data-settings-tab="storage"/);
   assert.match(librarySource, /generation !== insightsRequestGeneration/);
 });
+
+test('the desktop player bar offers the sleep timer', () => {
+  // Before the base stylesheet hid #npSleep, so only the expanded phone
+  // player could set a sleep timer.
+  assert.doesNotMatch(libraryCSS, /^\.np-tools #npSleep, \.np-tools #npDetails \{ display:none; \}/m);
+  assert.match(libraryCSS, /^\.np-tools #npSleep \{ display:inline-flex;/m);
+  assert.match(libraryCSS, /^\.np-sleep-overlay \{ position:absolute;/m);
+});

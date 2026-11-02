@@ -2012,6 +2012,15 @@
       if (!overlay.hidden) $("#npSleepDismiss")?.focus?.({ preventScroll: true });
     });
     on("#npSleepDismiss", "click", () => closeSleepMenu(true));
+    // The desktop popover has no backdrop to click, so a click anywhere else
+    // closes it.
+    onDocument("click", event => {
+      const overlay = $("#npSleepOverlay");
+      if (!overlay || overlay.hidden) return;
+      const target = event.target;
+      if (target?.closest?.("#npSleepOverlay, #npSleep")) return;
+      closeSleepMenu(false);
+    });
     on("#npSleepOverlay", "click", event => {
       if (event.target === $("#npSleepOverlay")) { closeSleepMenu(true); return; }
       const option = event.target.closest?.("[data-np-sleep]");
