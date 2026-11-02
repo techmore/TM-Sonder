@@ -148,7 +148,7 @@
             <h3>${escapeHTML(book.title)}</h3>
             <p>${escapeHTML([book.author, book.series].filter(Boolean).join(" • ") || book.subtitle)}</p>
             ${bits.length ? `<p class="version">${escapeHTML(bits.join(" • "))}</p>` : ""}
-            <div class="meta"><span>${formatTime(book.durationSeconds)}</span><span>${book.chapterCount} chapters</span></div>
+            <div class="meta"><span>${formatTime(book.durationSeconds)}</span>${book.chapterCount > 0 ? `<span>${book.chapterCount} ${book.chapterCount === 1 ? "chapter" : "chapters"}</span>` : ""}</div>
             <progress max="1" value="0"></progress>
           </div>
         </button>`;}).join("");

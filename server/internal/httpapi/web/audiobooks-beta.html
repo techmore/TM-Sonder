@@ -153,8 +153,56 @@
         <div class="cap"><strong>${escapeHTML(b.title)}</strong><span>${escapeHTML(byline(b))}</span>
         ${version ? `<span class="version">${escapeHTML(version)}</span>` : ""}
         ${f > 0 ? `<progress max="1" value="${f.toFixed(3)}"></progress>` : ""}</div>
-        <div class="peek">${escapeHTML((b.summary || "").slice(0, 220))}${(b.summary || "").length > 220 ? "…" : ""}<br><span class="time">${formatTime(b.durationSeconds)} • ${b.chapterCount || "?"} chapters</span></div>
+        <div class="peek">${escapeHTML((b.summary || "").slice(0, 220))}${(b.summary || "").length > 220 ? "…" : ""}<br><span class="time" data-peek-length="${escapeHTML(b.id)}">${escapeHTML(peekLength(b))}</span></div>
       </button>`;
+    }
+
+    // The catalog list does not carry chapter counts (only the per-book
+    // chapter timeline does, and that probes the file), so the hover card used
+    // to print "? chapters" on every tile. Show the runtime alone until the
+    // real count is known, and fetch it when a tile is hovered or focused.
+    const chapterCounts = new Map();   // id -> count (0 = no chapter markers)
+    const chapterCountRequests = new Set();
+    function knownChapterCount(b) {
+      if (chapterCounts.has(b.id)) return chapterCounts.get(b.id);
+      return b.chapterCount > 0 ? b.chapterCount : null;
+    }
+    function peekLength(b) {
+      const bits = [formatTime(b.durationSeconds)];
+      const count = knownChapterCount(b);
+      if (count > 0) bits.push(`${count} ${count === 1 ? "chapter" : "chapters"}`);
+      else if (b.partCount > 1) bits.push(`${b.partCount} files`);
+      return bits.join(" • ");
+    }
+    function rememberChapterCount(id, count) {
+      chapterCounts.set(id, count);
+      const book = books.find(b => b.id === id);
+      if (!book) return;
+      document.querySelectorAll("[data-peek-length]").forEach(el => {
+        if (el.dataset.peekLength === id) el.textContent = peekLength(book);
+      });
+    }
+    async function loadChapterCount(id) {
+      if (!id || chapterCounts.has(id) || chapterCountRequests.has(id)) return;
+      const book = books.find(b => b.id === id);
+      if (book && book.chapterCount > 0) return;
+      chapterCountRequests.add(id);
+      try {
+        const response = await fetch(api(`/api/audiobooks/${encodeURIComponent(id)}/chapters`));
+        if (!response.ok) return;   // leave it unknown; a later hover retries
+        const timeline = await response.json();
+        rememberChapterCount(id, timeline.available ? Number(timeline.chapterCount) || 0 : 0);
+      } catch (_) {
+        // Network failure: keep showing the runtime only.
+      } finally {
+        chapterCountRequests.delete(id);
+      }
+    }
+    for (const type of ["pointerover", "focusin"]) {
+      rails.addEventListener(type, event => {
+        const card = event.target.closest?.(".card[data-id]");
+        if (card) loadChapterCount(card.dataset.id);
+      });
     }
 
     function shelfSort(list) {
@@ -239,6 +287,9 @@
       // A book delivered as many files is one entry with an ordered parts
       // list; the player walks the parts so the whole book plays.
       const parts = Array.isArray(book.parts) && book.parts.length > 1 ? book.parts : null;
+      // A single-file book's detail carries its full chapter list, so its hover
+      // card can show the count without another request.
+      if (!parts) rememberChapterCount(book.id, chapters.length);
       const partList = parts
         ? `<div class="parts"><h4>${parts.length} files</h4><ol>${parts.map(p =>
             `<li><button onclick="playPart(${p.index - 1})">${escapeHTML(p.title || `Part ${p.index}`)}</button>
