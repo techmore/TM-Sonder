@@ -21,7 +21,7 @@ struct LibraryHomeTab: View {
                     LibrarySearchBar(model: model)
 
                     if model.filteredItems.isEmpty && model.isLoading == false {
-                        EmptyLibraryState()
+                        EmptyLibraryState(needsSignIn: model.needsSignIn)
                     } else {
                         if inProgressItems.isEmpty == false {
                             MediaShelf(title: "Continue Watching", subtitle: "Pick up where you left off", items: Array(inProgressItems.prefix(12)), model: model, selectedItem: $selectedItem)
@@ -100,7 +100,7 @@ struct MediaKindTab: View {
                     LibrarySearchBar(model: model)
 
                     if items.isEmpty {
-                        EmptyLibraryState()
+                        EmptyLibraryState(needsSignIn: model.needsSignIn)
                     } else {
                         LazyVGrid(columns: [GridItem(.adaptive(minimum: 126, maximum: 150), spacing: 16)], spacing: 18) {
                             ForEach(items) { item in
@@ -218,8 +218,12 @@ struct SectionHeader: View {
 }
 
 struct EmptyLibraryState: View {
+    var needsSignIn = false
+
     var body: some View {
-        ContentUnavailableView("No Titles", systemImage: "rectangle.stack", description: Text("Check the server URL or adjust the current filters."))
+        ContentUnavailableView(needsSignIn ? "Sign In to See Your Library" : "No Titles",
+                               systemImage: needsSignIn ? "person.crop.circle.badge.exclamationmark" : "rectangle.stack",
+                               description: Text(needsSignIn ? "The server answered and needs your Sonder account. Sign in from Settings." : "Check the server address or adjust the current filters."))
             .foregroundStyle(SonderPalette.text)
             .frame(maxWidth: .infinity, minHeight: 260)
     }

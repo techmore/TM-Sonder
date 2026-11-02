@@ -3,7 +3,7 @@ import PackageDescription
 import Foundation
 
 // Exercise the actual client persistence code without a simulator or signing.
-let sources = ["SonderClientModels.swift", "SonderOfflineDownloads.swift", "SonderAudiobookChapters.swift", "SonderProgressQueue.swift", "SonderEPUB.swift"]
+let sources = ["SonderClientModels.swift", "SonderOfflineDownloads.swift", "SonderAudiobookChapters.swift", "SonderProgressQueue.swift", "SonderEPUB.swift", "SonderServerConnection.swift"]
 let directory = URL(fileURLWithPath: #filePath).deletingLastPathComponent().appendingPathComponent("TM_Sonder_Client")
 let excluded = (try? FileManager.default.contentsOfDirectory(atPath: directory.path))?.filter { !sources.contains($0) } ?? []
 let package = Package(

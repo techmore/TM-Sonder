@@ -48,7 +48,7 @@ struct ReadingLibraryTab: View {
                         VerificationShelf(items: needsAttention, model: model, selectedItem: $selectedItem)
                     }
                     if items.isEmpty {
-                        EmptyLibraryState()
+                        EmptyLibraryState(needsSignIn: model.needsSignIn)
                     } else {
                         Text("All \(title)")
                             .font(.title3.bold())
