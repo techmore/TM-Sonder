@@ -100,3 +100,15 @@ func TestAudiobookPagesDoNotShowPlaceholderChapterCounts(t *testing.T) {
 		t.Error("audiobooks.html prints the list's chapterCount even when it is unknown (0)")
 	}
 }
+
+// The rails audiobook page plays through a bare <audio> element, which has no
+// sleep timer and, in most browsers, no speed control. Both are basic
+// audiobook tools, so the page provides them.
+func TestRailsAudiobookPlayerHasSpeedAndSleepTimer(t *testing.T) {
+	raw := string(mustReadWeb("web/audiobooks-beta.html"))
+	for _, needle := range []string{`id="rate"`, `id="sleep"`, "function setSleepTimer(", "playbackRate", `onclick="skipBy(-30)"`} {
+		if !strings.Contains(raw, needle) {
+			t.Errorf("audiobooks-beta.html missing %q", needle)
+		}
+	}
+}

@@ -42,8 +42,16 @@
     .hero .cover img { width:100%; height:100%; object-fit:cover; }
     .pill { color:#11160f; background:var(--accent); border-radius:4px; padding:2px 6px; font-size:11px; font-weight:700; }
     audio { width:100%; margin:15px 0 12px; }
+    .player-tools { display:flex; flex-wrap:wrap; align-items:center; gap:8px; margin:0 0 12px; }
+    .player-tools label { display:inline-flex; align-items:center; gap:6px; color:var(--muted); font-size:12.5px; }
+    .player-tools select { background:var(--panel); border:1px solid var(--line); color:var(--text); border-radius:8px; padding:7px 8px; font:inherit; font-size:13px; }
+    .player-tools button { min-width:44px; min-height:36px; font-variant-numeric:tabular-nums; }
+    .sleep-status { flex-basis:100%; margin:0; color:var(--accent); font-size:12.5px; }
+    .sleep-status:empty { display:none; }
     .chapters { display:grid; gap:8px; margin-top:18px; }
-    .chapter { display:grid; grid-template-columns:72px minmax(0,1fr) auto; gap:10px; align-items:center; padding:10px 12px; border:1px solid var(--line); border-radius:8px; background:var(--panel); }
+    .chapter { display:grid; grid-template-columns:64px minmax(0,1fr) auto; gap:10px; align-items:center; padding:8px 12px; border:1px solid var(--line); border-radius:8px; background:var(--panel); }
+    .chapter strong { display:block; overflow-wrap:anywhere; }
+    .chapter .length { display:block; margin-top:2px; color:var(--muted); font-size:12px; font-variant-numeric:tabular-nums; }
     .chapter.current { border-color:var(--accent); background:#202819; }
     .time { color:var(--muted); font-variant-numeric:tabular-nums; }
     .empty { color:var(--muted); padding:8px 0; }
@@ -56,6 +64,11 @@
     .load-error button, .load-error a.button { font:inherit; }
     @media (prefers-reduced-motion: reduce) { *, *::before, *::after { transition:none !important; animation:none !important; scroll-behavior:auto !important; } }
     @media (max-width: 900px) { main { grid-template-columns:1fr; } .detail { border-left:0; border-top:1px solid var(--line); } }
+    @media (max-width: 520px) {
+      /* Three header rows are too much to keep pinned on a phone. */
+      header { position:static; padding:12px 16px; } .rails { padding:16px 16px 48px; } .detail { padding:18px 16px 32px; }
+      .hero { grid-template-columns:minmax(0,1fr); gap:12px; } .hero .cover { width:112px; }
+    }
   </style>
   <script src="/shared.js"></script>
   <script src="/project-analytics.js" defer></script>
@@ -328,6 +341,18 @@
             <p>${escapeHTML([book.author, book.series, book.narrator ? `Narrated by ${book.narrator}` : null].filter(Boolean).join(" • "))}</p>
             ${f > 0 ? `<p class="time">Resuming at ${Math.round(f * 100)}% • ${formatTime(book.progressSeconds)} of ${formatTime(book.durationSeconds)}</p>` : ""}
             <audio id="player" controls src="${api("/stream/" + (parts ? parts[0].id : book.id))}"></audio>
+            <div class="player-tools">
+              <button type="button" onclick="skipBy(-30)" aria-label="Back 30 seconds" title="Back 30 seconds">−30s</button>
+              <button type="button" onclick="skipBy(30)" aria-label="Forward 30 seconds" title="Forward 30 seconds">+30s</button>
+              <label>Speed <select id="rate">${RATES.map(r => `<option value="${r}" ${r === savedRate() ? "selected" : ""}>${r}×</option>`).join("")}</select></label>
+              <label>Sleep <select id="sleep">
+                <option value="off">Off</option>
+                <option value="15">15 min</option><option value="30">30 min</option><option value="45">45 min</option><option value="60">1 hour</option>
+                <option value="chapter" ${chapters.length ? "" : "disabled"}>End of chapter</option>
+              </select></label>
+              <p class="sleep-status" id="sleepStatus"></p>
+              <p class="visually-hidden" id="sleepAnnounce" role="status"></p>
+            </div>
             <progress id="detailProgress" max="1" value="${f.toFixed(3)}" aria-label="Listening progress"></progress>
             <p id="nowPlaying">Chapter 1 • 0:00 / ${formatTime(book.durationSeconds)}</p>
             ${parts ? `<p id="partStatus" class="part-status">Part 1 of ${parts.length}</p>` : ""}
@@ -339,11 +364,20 @@
         <div class="chapters">
           ${chapters.map(chapter => `<div class="chapter" data-chapter="${chapter.index}">
             <span class="time">${formatTime(chapter.startSeconds)}</span>
-            <div><strong>${escapeHTML(chapter.title)}</strong><p>${formatTime(chapter.endSeconds ? chapter.endSeconds - chapter.startSeconds : 0)}</p></div>
+            <div><strong>${escapeHTML(chapter.title)}</strong><span class="length">${formatTime(chapter.endSeconds ? chapter.endSeconds - chapter.startSeconds : 0)}</span></div>
             <button type="button" onclick="jumpTo(${Number(chapter.startSeconds) || 0})" aria-label="Play from ${escapeHTML(chapter.title)}">Play</button>
           </div>`).join("")}
         </div>`;
       const player = document.querySelector("#player");
+      clearSleepTimer();
+      applyRate(player, savedRate());
+      document.querySelector("#rate").addEventListener("change", event => {
+        const rate = Number(event.target.value) || 1;
+        try { localStorage.setItem(RATE_KEY, String(rate)); } catch (_) {}
+        applyRate(player, rate);
+      });
+      document.querySelector("#sleep").addEventListener("change", event => setSleepTimer(event.target.value, chapters));
+      player.addEventListener("loadedmetadata", () => applyRate(player, savedRate()));
       currentParts = parts;
       // Resume where the listener actually stopped. Starting a long book at
       // part 1 because the aggregate progress looked unstarted is the failure
@@ -378,6 +412,10 @@
       player.addEventListener("timeupdate", () => {
         const id = currentParts ? currentParts[partIndex].id : book.id;
         updatePlayback(id, chapters, player);
+        if (sleepAtSeconds !== null && player.currentTime >= sleepAtSeconds - 0.25) {
+          player.pause();
+          finishSleepTimer();
+        }
       });
     }
 
@@ -401,6 +439,67 @@
     function currentChapter(chapters, seconds, duration) {
       return [...chapters].reverse().find(chapter => seconds >= chapter.startSeconds && seconds < (chapter.endSeconds ?? duration)) ?? chapters[chapters.length - 1];
     }
+    // Speed, skip and sleep timer. The native audio element offers neither a
+    // sleep timer nor (in most browsers) a speed control, and both are basic
+    // audiobook tools. Speed is remembered for the next session.
+    const RATES = [0.75, 1, 1.25, 1.5, 1.75, 2];
+    const RATE_KEY = "sonder.player.rate";
+    let sleepTimeout = null, sleepTicker = null, sleepDeadline = 0, sleepAtSeconds = null;
+    function savedRate() {
+      let rate = 1;
+      try { rate = Number(localStorage.getItem(RATE_KEY)) || 1; } catch (_) {}
+      return RATES.includes(rate) ? rate : 1;
+    }
+    function applyRate(player, rate) {
+      player.defaultPlaybackRate = rate;
+      player.playbackRate = rate;
+    }
+    function skipBy(delta) {
+      const player = document.querySelector("#player");
+      if (!player) return;
+      const end = Number.isFinite(player.duration) ? player.duration : Infinity;
+      player.currentTime = Math.min(Math.max((player.currentTime || 0) + delta, 0), end);
+    }
+    // The visible line counts down quietly; only changes of state are spoken.
+    function sleepStatus(text, announce = true) {
+      const el = document.querySelector("#sleepStatus");
+      if (el) el.textContent = text;
+      const spoken = document.querySelector("#sleepAnnounce");
+      if (spoken && announce) spoken.textContent = text;
+    }
+    function clearSleepTimer() {
+      clearTimeout(sleepTimeout); clearInterval(sleepTicker);
+      sleepTimeout = sleepTicker = null; sleepDeadline = 0; sleepAtSeconds = null;
+    }
+    function finishSleepTimer() {
+      clearSleepTimer();
+      const select = document.querySelector("#sleep");
+      if (select) select.value = "off";
+      sleepStatus("Sleep timer ended. Playback paused.");
+    }
+    function setSleepTimer(value, chapters) {
+      clearSleepTimer();
+      const player = document.querySelector("#player");
+      if (!player || value === "off") { sleepStatus(value === "off" ? "Sleep timer off." : ""); return; }
+      if (value === "chapter") {
+        const current = currentChapter(chapters, player.currentTime || 0, player.duration || 0);
+        const end = current?.endSeconds ?? player.duration;
+        if (!Number.isFinite(end)) { sleepStatus("This book has no chapter end to stop at."); return; }
+        sleepAtSeconds = end;
+        sleepStatus(`Pausing at the end of ${current?.title || "this chapter"}.`);
+        return;
+      }
+      const minutes = Number(value);
+      sleepDeadline = Date.now() + minutes * 60000;
+      const remaining = () => `Pausing in ${Math.max(1, Math.ceil((sleepDeadline - Date.now()) / 60000))} min.`;
+      sleepStatus(remaining());
+      // Update the visible countdown each minute without re-announcing it.
+      sleepTicker = setInterval(() => sleepStatus(remaining(), false), 30000);
+      sleepTimeout = setTimeout(() => {
+        document.querySelector("#player")?.pause();
+        finishSleepTimer();
+      }, minutes * 60000);
+    }
     function jumpTo(seconds) {
       const player = document.querySelector("#player");
       if (!player) return;
@@ -418,7 +517,11 @@
       const current = currentChapter(chapters, seconds, duration);
       if (progress && duration > 0) progress.value = Math.min(Math.max(seconds / duration, 0), 1);
       if (nowPlaying) nowPlaying.textContent = `${current?.title ?? "Chapter"} • ${formatTime(seconds)} / ${formatTime(duration)}`;
-      document.querySelectorAll(".chapter").forEach(row => row.classList.toggle("current", Number(row.dataset.chapter) === current?.index));
+      document.querySelectorAll(".chapter").forEach(row => {
+        const isCurrent = Number(row.dataset.chapter) === current?.index;
+        row.classList.toggle("current", isCurrent);
+        if (isCurrent) row.setAttribute("aria-current", "true"); else row.removeAttribute("aria-current");
+      });
       if (metadataReady && Number.isFinite(duration) && duration > 0 && Date.now() - lastSavedAt >= 10000) {
         lastSavedAt = Date.now();
         saveProgress(id, seconds, duration).catch(() => {});
