@@ -3,13 +3,16 @@ import SonderAPI
 
 struct ServerSettingsTab: View {
     @ObservedObject var model: SonderClientModel
-    @State private var serverText: String
-    @State private var tokenText: String
+    @State private var publicText: String
+    @State private var localText: String
+    @State private var tokenText = ""
+    @State private var addressError: String?
+    @State private var showsSignIn = false
 
     init(model: SonderClientModel) {
         self.model = model
-        _serverText = State(initialValue: model.serverBaseURL.absoluteString)
-        _tokenText = State(initialValue: model.accessToken)
+        _publicText = State(initialValue: model.addresses.publicURL?.absoluteString ?? "")
+        _localText = State(initialValue: model.addresses.localURL?.absoluteString ?? "")
     }
 
     var body: some View {
@@ -17,6 +20,7 @@ struct ServerSettingsTab: View {
             VStack(alignment: .leading, spacing: 18) {
                     SectionHeader(title: "Server", subtitle: "Connection, discovery, and sync", count: nil)
                     connectionCard
+                    accountCard
                     manualConnectionCard
                     DisclosureGroup("Offline storage") { offlineDownloadsCard }
                         .sonderPanel()
@@ -32,6 +36,12 @@ struct ServerSettingsTab: View {
                 await model.reload()
             }
             .navigationTitle("Settings")
+            .sheet(isPresented: $showsSignIn) {
+                ServerSignInView(model: model) { showsSignIn = false }
+            }
+            .onChange(of: model.needsSignIn) { _, needsSignIn in
+                if needsSignIn == false { showsSignIn = false }
+            }
     }
 
     private var connectionCard: some View {
@@ -53,11 +63,35 @@ struct ServerSettingsTab: View {
                 Spacer()
             }
 
-            Text(model.serverBaseURL.absoluteString)
-                .font(.caption)
-                .foregroundStyle(SonderPalette.textLight)
-                .lineLimit(1)
-                .truncationMode(.middle)
+            HStack(spacing: 8) {
+                Image(systemName: model.activeRoute == .local ? "house.fill" : "globe")
+                    .foregroundStyle(SonderPalette.ironGrey)
+                VStack(alignment: .leading, spacing: 1) {
+                    Text(model.isSelectingRoute ? "Checking local address…" : "Active: \(model.activeRoute.label)")
+                        .font(.caption.weight(.semibold))
+                        .foregroundStyle(SonderPalette.text)
+                        .accessibilityIdentifier("server.activeRoute")
+                    Text(model.activeBaseURL.absoluteString)
+                        .font(.caption)
+                        .foregroundStyle(SonderPalette.textLight)
+                        .lineLimit(1)
+                        .truncationMode(.middle)
+                }
+                Spacer()
+                if model.addresses.localURL != nil {
+                    Button {
+                        Task {
+                            await model.selectRoute()
+                            await model.reload()
+                        }
+                    } label: {
+                        Image(systemName: "arrow.triangle.2.circlepath")
+                    }
+                    .buttonStyle(.borderless)
+                    .disabled(model.isSelectingRoute || model.isLoading)
+                    .accessibilityLabel("Check the local address again")
+                }
+            }
 
             if model.pendingProgressCount > 0 {
                 Label(
@@ -89,27 +123,64 @@ struct ServerSettingsTab: View {
         .sonderPanel()
     }
 
+    private var accountCard: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Text("Account")
+                .font(.headline)
+                .foregroundStyle(SonderPalette.text)
+            if let username = model.signedInUsername, model.needsSignIn == false, model.accessToken.isEmpty == false {
+                Label("Signed in as \(username)", systemImage: "person.crop.circle.badge.checkmark")
+                    .font(.subheadline)
+                    .foregroundStyle(SonderPalette.text)
+                Button(role: .destructive) {
+                    Task { await model.signOut() }
+                } label: {
+                    Label("Sign Out", systemImage: "rectangle.portrait.and.arrow.right")
+                }
+                .buttonStyle(.bordered)
+            } else {
+                Text(model.needsSignIn ? "This server needs you to sign in." : "Sign in with your Sonder account.")
+                    .font(.caption)
+                    .foregroundStyle(SonderPalette.textLight)
+                Button {
+                    showsSignIn = true
+                } label: {
+                    Label("Sign In", systemImage: "person.crop.circle")
+                        .frame(maxWidth: .infinity)
+                }
+                .buttonStyle(.borderedProminent)
+                .tint(SonderPalette.ironGrey)
+                .accessibilityIdentifier("settings.signIn")
+            }
+        }
+        .sonderPanel()
+    }
+
     private var manualConnectionCard: some View {
         VStack(alignment: .leading, spacing: 12) {
-            Text("Manual or Tailscale")
+            Text("Server addresses")
                 .font(.headline)
                 .foregroundStyle(SonderPalette.text)
 
-            TextField("http://sonder.local:8797", text: $serverText)
-                .textFieldStyle(.plain)
-                .autocorrectionDisabled()
-                .textInputAutocapitalization(.never)
-                .sonderInput()
+            ServerAddressFields(publicText: $publicText, localText: $localText, pairingToken: $tokenText)
 
-            SecureField("Optional token for restricted servers", text: $tokenText)
-                .textFieldStyle(.plain)
-                .autocorrectionDisabled()
-                .sonderInput()
+            if let addressError {
+                Label(addressError, systemImage: "exclamationmark.triangle")
+                    .font(.caption)
+                    .foregroundStyle(SonderPalette.ironGrey)
+            }
 
             Button {
-                if let url = URL(string: serverText.trimmingCharacters(in: .whitespacesAndNewlines)) {
-                    model.saveServer(baseURL: url, accessToken: tokenText)
-                    Task { await model.reload() }
+                switch ServerAddressFields.addresses(publicText: publicText, localText: localText) {
+                case let .failure(error):
+                    addressError = error.message
+                case let .success(addresses):
+                    addressError = nil
+                    let pairing = tokenText.trimmingCharacters(in: .whitespacesAndNewlines)
+                    if model.saveServer(addresses: addresses, pairingToken: pairing.isEmpty ? nil : pairing) {
+                        tokenText = ""
+                        Task { await model.reload() }
+                    }
                 }
             } label: {
                 Label("Save and Sync", systemImage: "arrow.triangle.2.circlepath")

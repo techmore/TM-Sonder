@@ -1,11 +1,25 @@
 import AVFoundation
 import Combine
 import Foundation
+import Network
 import SonderAPI
 
 @MainActor
 final class SonderClientModel: ObservableObject {
+    /// The server's stable identity (its public address, or the local one when
+    /// that is the only address). Everything stored per server is keyed by it.
+    /// Requests go to `activeBaseURL`.
     @Published var serverBaseURL: URL
+    /// Where requests go right now: the local address when it answered the
+    /// last probe, otherwise the public address.
+    @Published private(set) var activeBaseURL: URL
+    @Published private(set) var activeRoute: SonderServerRoute
+    @Published private(set) var addresses: SonderServerAddresses
+    @Published private(set) var isSelectingRoute = false
+    /// True when the server answered but wants an account sign-in.
+    @Published var needsSignIn = false
+    @Published private(set) var signedInUsername: String?
+    @Published private(set) var authStatus: SonderAuthSessionStatus?
     @Published var accessToken: String
     @Published var hasConfiguredServer: Bool
     @Published var items: [SonderMediaItem] = []
@@ -36,7 +50,15 @@ final class SonderClientModel: ObservableObject {
 
     let audiobookPlayer = SonderAudiobookPlayer()
 
-    private let defaultsURLKey = "sonder.serverBaseURL"
+    private static let legacyDefaultsURLKey = "sonder.serverBaseURL"
+    private static let defaultsPublicURLKey = "sonder.publicServerURL"
+    private static let defaultsLocalURLKey = "sonder.localServerURL"
+    private static let defaultsUsernamesKey = "sonder.signedInUsernameByServer"
+    private let accountClient = SonderAccountClient()
+    private let probe = SonderServerProbe()
+    private let networkWatcher = SonderNetworkWatcher()
+    private var routeNeedsSelection = true
+    private var networkChangeTask: Task<Void, Never>?
     /// Legacy UserDefaults key; migrated into Keychain on first launch then cleared.
     private let legacyDefaultsTokenKey = "sonder.serverAccessToken"
     private let defaultsLibraryETagsKey = "sonder.libraryETagsByServer"
@@ -50,29 +72,61 @@ final class SonderClientModel: ObservableObject {
     private var isFlushingProgress = false
 
     init() {
-        let stored = UserDefaults.standard.string(forKey: defaultsURLKey)
-        self.serverBaseURL = URL(string: stored ?? "http://127.0.0.1:8797")!
-        self.accessToken = Self.loadStoredAccessToken()
-        self.hasConfiguredServer = stored != nil
-        if stored != nil { progressQueue.adoptLegacy(for: serverBaseURL) }
+        let addresses = Self.loadStoredAddresses()
+        let identity = addresses.identityURL ?? URL(string: "http://127.0.0.1:8797")!
+        self.addresses = addresses
+        self.serverBaseURL = identity
+        self.activeBaseURL = addresses.publicURL ?? identity
+        self.activeRoute = addresses.publicURL == nil ? .local : .public
+        self.accessToken = Self.loadStoredAccessToken(for: addresses.identityURL)
+        self.hasConfiguredServer = addresses.isEmpty == false
+        self.signedInUsername = Self.storedUsername(for: identity)
+        if hasConfiguredServer { progressQueue.adoptLegacy(for: serverBaseURL) }
         self.pendingProgressCount = progressQueue.pending(for: serverBaseURL).count
         self.offlineDownloads = offlineDownloadStore.downloads(for: serverBaseURL)
         refreshOfflineDownloads()
+        networkWatcher.onChange = { [weak self] in
+            Task { @MainActor in self?.networkDidChange() }
+        }
+        networkWatcher.start()
         Task { await loadCachedLibrary() }
     }
 
-    private static func loadStoredAccessToken() -> String {
-        if let keychainToken = SonderKeychain.loadAccessToken(), keychainToken.isEmpty == false {
+    /// Older builds stored one server URL; it becomes the public address.
+    private static func loadStoredAddresses() -> SonderServerAddresses {
+        let defaults = UserDefaults.standard
+        func url(_ key: String) -> URL? {
+            defaults.string(forKey: key).flatMap(URL.init(string:)).flatMap(SonderServerAddresses.normalize)
+        }
+        return SonderServerAddresses(
+            publicURL: url(defaultsPublicURLKey) ?? url(legacyDefaultsURLKey),
+            localURL: url(defaultsLocalURLKey)
+        )
+    }
+
+    private static func loadStoredAccessToken(for server: URL?) -> String {
+        if let keychainToken = SonderKeychain.loadAccessToken(for: server), keychainToken.isEmpty == false {
             return keychainToken
         }
         // One-time migration from older builds that stored the token in UserDefaults.
         if let legacy = UserDefaults.standard.string(forKey: "sonder.serverAccessToken"),
            legacy.isEmpty == false {
-            SonderKeychain.saveAccessToken(legacy)
+            SonderKeychain.saveAccessToken(legacy, for: server)
             UserDefaults.standard.removeObject(forKey: "sonder.serverAccessToken")
             return legacy
         }
         return ""
+    }
+
+    private static func storedUsername(for server: URL) -> String? {
+        (UserDefaults.standard.dictionary(forKey: defaultsUsernamesKey) as? [String: String])?[server.absoluteString]
+    }
+
+    private func storeUsername(_ username: String?) {
+        var values = UserDefaults.standard.dictionary(forKey: Self.defaultsUsernamesKey) as? [String: String] ?? [:]
+        values[serverBaseURL.absoluteString] = username
+        UserDefaults.standard.set(values, forKey: Self.defaultsUsernamesKey)
+        signedInUsername = username
     }
 
     func loadIfNeeded() async {
@@ -89,33 +143,139 @@ final class SonderClientModel: ObservableObject {
         errorMessage = nil
         defer { isLoading = false }
 
+        if routeNeedsSelection { await selectRoute() }
+        do {
+            try await sync()
+        } catch where activeRoute == .local && Self.isTransportError(error) && addresses.publicURL != nil {
+            // The local address answered the probe but not the sync (for
+            // example, the phone just left home Wi-Fi). Fall back to public now
+            // and probe again on the next refresh.
+            logEvent("Local address unreachable", detail: error.localizedDescription)
+            if let publicURL = addresses.publicURL { setActive(SonderEndpointChoice(url: publicURL, route: .public)) }
+            routeNeedsSelection = true
+            do { try await sync() } catch { await handleSyncFailure(error) }
+        } catch {
+            await handleSyncFailure(error)
+        }
+    }
+
+    private func sync() async throws {
         async let discoveryResponse = fetchDiscovery()
         async let healthResponse = fetchHealth()
         async let libraryResponse = fetchLibrary()
+        async let sessionResponse = accountClient.sessionStatus(baseURL: activeBaseURL, token: accessToken)
 
-        do {
-            if let response = try await libraryResponse {
-                apply(response, cached: false, date: Date())
-                saveCachedLibrary(response)
-            } else {
-                // 304 Not Modified — keep in-memory catalog, refresh connection metadata.
-                isShowingCachedData = false
-                lastSyncedAt = Date()
-            }
-            discovery = try? await discoveryResponse
-            health = try? await healthResponse
-            connectionMode = resolvedConnectionMode()
-            await flushPendingProgress()
-        } catch {
-            if isUnauthorized(error) {
-                connectionMode = .unauthorized
-            } else {
-                connectionMode = items.isEmpty ? .offline : .stale
-            }
-            isShowingCachedData = items.isEmpty == false
-            errorMessage = error.localizedDescription
-            logEvent("Sync failed", detail: error.localizedDescription)
+        if let response = try await libraryResponse {
+            apply(response, cached: false, date: Date())
+            saveCachedLibrary(response)
+        } else {
+            // 304 Not Modified — keep in-memory catalog, refresh connection metadata.
+            isShowingCachedData = false
+            lastSyncedAt = Date()
         }
+        needsSignIn = false
+        discovery = try? await discoveryResponse
+        health = try? await healthResponse
+        if let status = try? await sessionResponse {
+            authStatus = status
+            if let username = status.username, username.isEmpty == false, username != signedInUsername {
+                storeUsername(username)
+            }
+        }
+        connectionMode = resolvedConnectionMode()
+        await flushPendingProgress()
+    }
+
+    private func handleSyncFailure(_ error: Error) async {
+        if isUnauthorized(error) {
+            connectionMode = .unauthorized
+            // 403 means LAN access is off on the host; signing in will not help.
+            needsSignIn = (error as? HTTPStatusError)?.statusCode == 401
+            // Unauthenticated and always reachable: shows that the server answered.
+            authStatus = try? await accountClient.sessionStatus(baseURL: activeBaseURL, token: "")
+        } else {
+            connectionMode = items.isEmpty ? .offline : .stale
+        }
+        isShowingCachedData = items.isEmpty == false
+        errorMessage = error.localizedDescription
+        logEvent("Sync failed", detail: "\(activeBaseURL.absoluteString): \(error.localizedDescription)")
+    }
+
+    // MARK: - Local / public route
+
+    /// Probes the local address (short timeout) and falls back to public.
+    func selectRoute() async {
+        routeNeedsSelection = false
+        let addresses = self.addresses
+        guard addresses.localURL != nil else {
+            if let publicURL = addresses.publicURL { setActive(SonderEndpointChoice(url: publicURL, route: .public)) }
+            return
+        }
+        isSelectingRoute = true
+        defer { isSelectingRoute = false }
+        let probe = self.probe
+        let choice = await SonderEndpointSelector.choose(addresses) { await probe.isSonderServer($0) }
+        guard let choice, addresses == self.addresses else { return }
+        setActive(choice)
+    }
+
+    private func setActive(_ choice: SonderEndpointChoice) {
+        let changed = choice.url != activeBaseURL || choice.route != activeRoute
+        activeBaseURL = choice.url
+        activeRoute = choice.route
+        if changed { logEvent("Using \(choice.route.label.lowercased()) address", detail: choice.url.absoluteString) }
+    }
+
+    private func networkDidChange() {
+        routeNeedsSelection = true
+        guard hasConfiguredServer, addresses.localURL != nil else { return }
+        networkChangeTask?.cancel()
+        networkChangeTask = Task { [weak self] in
+            // Let the new network settle (DHCP, DNS) before probing.
+            try? await Task.sleep(for: .seconds(1))
+            guard let self, Task.isCancelled == false, self.isLoading == false else { return }
+            let before = self.activeBaseURL
+            await self.selectRoute()
+            if self.activeBaseURL != before { await self.reload() }
+        }
+    }
+
+    /// True for a URL on either configured address, so stream and artwork URLs
+    /// keep their credentials whichever route produced them.
+    func isServerURL(_ url: URL) -> Bool {
+        [activeBaseURL, addresses.publicURL, addresses.localURL].compactMap { $0 }.contains {
+            $0.scheme == url.scheme && $0.host == url.host && $0.port == url.port
+        }
+    }
+
+    private static func isTransportError(_ error: Error) -> Bool {
+        (error as NSError).domain == NSURLErrorDomain
+    }
+
+    // MARK: - Account sign-in
+
+    func signIn(username: String, password: String) async throws {
+        if routeNeedsSelection { await selectRoute() }
+        let result = try await accountClient.signIn(baseURL: activeBaseURL, username: username, password: password)
+        accessToken = result.token
+        SonderKeychain.saveAccessToken(result.token, for: serverBaseURL)
+        storeUsername(result.username)
+        needsSignIn = false
+        errorMessage = nil
+        logEvent("Signed in", detail: "\(result.username) via \(activeRoute.label.lowercased())")
+        await reload()
+    }
+
+    func signOut() async {
+        let token = accessToken
+        if token.isEmpty == false { await accountClient.signOut(baseURL: activeBaseURL, token: token) }
+        accessToken = ""
+        SonderKeychain.deleteAccessToken(for: serverBaseURL)
+        storeUsername(nil)
+        authStatus = nil
+        connectionMode = .unauthorized
+        needsSignIn = true
+        logEvent("Signed out", detail: serverBaseURL.absoluteString)
     }
 
     var filteredItems: [SonderMediaItem] {
@@ -137,7 +297,7 @@ final class SonderClientModel: ObservableObject {
     }
 
     func streamURL(for item: SonderMediaItem) -> URL {
-        serverBaseURL.appendingPathComponent("stream").appendingPathComponent(item.id.uuidString.lowercased())
+        activeBaseURL.appendingPathComponent("stream").appendingPathComponent(item.id.uuidString.lowercased())
     }
 
     func audiobookChapters(for item: SonderMediaItem) async throws -> [SonderAudiobookChapter] {
@@ -148,7 +308,7 @@ final class SonderClientModel: ObservableObject {
            let chapters = try? JSONDecoder.sonder.decode([SonderAudiobookChapter].self, from: data) {
             return chapters
         }
-        let url = serverBaseURL
+        let url = activeBaseURL
             .appendingPathComponent("api/audiobooks")
             .appendingPathComponent(item.id.uuidString.lowercased())
             .appendingPathComponent("chapters")
@@ -222,6 +382,7 @@ final class SonderClientModel: ObservableObject {
         guard supportsOfflineDownload(for: item), localMediaURL(for: item) == nil, downloadingItemIDs.contains(item.id) == false else { return }
         downloadingItemIDs.insert(item.id)
         let downloadServerURL = serverBaseURL
+        let requestBaseURL = activeBaseURL
         offlineDownloadProgress[item.id] = SonderOfflineDownloadProgress(bytesWritten: 0, bytesExpected: 0, bytesPerSecond: 0, isPaused: false)
         if supportsPreparedVideo(item) {
             persistVideoPreparation(item, serverURL: downloadServerURL, remove: false)
@@ -229,7 +390,7 @@ final class SonderClientModel: ObservableObject {
             preparationTasks[item.id] = Task { [weak self] in
                 guard let self else { return }
                 do {
-                    let url = try await self.prepareVideoForOffline(item, serverURL: downloadServerURL)
+                    let url = try await self.prepareVideoForOffline(item, serverURL: requestBaseURL)
                     try Task.checkCancellation()
                     guard self.serverBaseURL == downloadServerURL else { throw CancellationError() }
                     self.preparingOfflineItemIDs.remove(item.id)
@@ -248,8 +409,7 @@ final class SonderClientModel: ObservableObject {
         }
         let request = authorizedRequest(for: streamURL(for: item), timeout: 60)
         if item.kind == .audiobook { _ = try? await audiobookChapters(for: item) }
-        if let coverURL = artworkURL(for: item), !coverURL.isFileURL,
-           coverURL.host == downloadServerURL.host, coverURL.port == downloadServerURL.port {
+        if let coverURL = artworkURL(for: item), !coverURL.isFileURL, isServerURL(coverURL) {
             let poster = offlineDownloadStore.posterURL(itemID: item.id, serverURL: downloadServerURL)
             if let (data, response) = try? await URLSession.shared.data(for: authorizedRequest(for: coverURL)),
                let http = response as? HTTPURLResponse, http.statusCode == 200, data.count <= 20 * 1024 * 1024 {
@@ -351,13 +511,13 @@ final class SonderClientModel: ObservableObject {
                               onPreparing: @MainActor () -> Void = {}) async throws -> URL {
         if let local = localMediaURL(for: item) { return local }
         if supportsPreparedVideo(item) {
-            if let status = try? await videoPreparation(item, serverURL: serverBaseURL),
-               let url = preparedPlaylistURL(status, serverURL: serverBaseURL) { return url }
+            if let status = try? await videoPreparation(item, serverURL: activeBaseURL),
+               let url = preparedPlaylistURL(status, serverURL: activeBaseURL) { return url }
             // A raw MKV/WebM URL is not an AVPlayer fallback. Wait for a complete
             // VOD timeline so native saved-position resume and seeking work.
             if !item.format.isPlayableInAVPlayer || URLComponents(url: fallback, resolvingAgainstBaseURL: true)?.queryItems?.contains(where: { $0.name == "transcode" && $0.value == "1" }) == true {
                 onPreparing()
-                return try await prepareVideoForOffline(item, serverURL: serverBaseURL)
+                return try await prepareVideoForOffline(item, serverURL: activeBaseURL)
             }
         }
         if isVideo(item), !item.format.isPlayableInAVPlayer {
@@ -454,9 +614,7 @@ final class SonderClientModel: ObservableObject {
     }
 
     func streamAsset(for url: URL) -> AVURLAsset {
-        guard url.scheme == serverBaseURL.scheme, url.host == serverBaseURL.host, url.port == serverBaseURL.port else {
-            return AVURLAsset(url: url)
-        }
+        guard isServerURL(url) else { return AVURLAsset(url: url) }
         let token = accessToken.trimmingCharacters(in: .whitespacesAndNewlines)
         var components = URLComponents(url: url, resolvingAgainstBaseURL: true)
         if !token.isEmpty {
@@ -473,7 +631,7 @@ final class SonderClientModel: ObservableObject {
         if let absoluteURL = URL(string: rawValue), absoluteURL.scheme != nil {
             return absoluteURL
         }
-        return URL(string: rawValue, relativeTo: serverBaseURL)?.absoluteURL
+        return URL(string: rawValue, relativeTo: activeBaseURL)?.absoluteURL
     }
 
     func artworkURL(for item: SonderMediaItem) -> URL? {
@@ -485,7 +643,7 @@ final class SonderClientModel: ObservableObject {
         if let absoluteURL = URL(string: rawURL), absoluteURL.scheme != nil {
             return absoluteURL
         }
-        return serverBaseURL.appendingPathComponent(rawURL.trimmingCharacters(in: CharacterSet(charactersIn: "/")))
+        return activeBaseURL.appendingPathComponent(rawURL.trimmingCharacters(in: CharacterSet(charactersIn: "/")))
     }
 
     func progress(for item: SonderMediaItem) -> SonderProgress {
@@ -609,7 +767,14 @@ final class SonderClientModel: ObservableObject {
     }
 
     func connect(to endpoint: SonderServerEndpoint) async {
-        saveServer(baseURL: endpoint.url, accessToken: accessToken)
+        // A discovered LAN server is the local route when a public address is
+        // already set (and is not a simulator loopback leftover).
+        let publicHost = addresses.publicURL?.host?.lowercased()
+        if let publicHost, ["localhost", "127.0.0.1", "::1"].contains(publicHost) == false {
+            saveServer(addresses: SonderServerAddresses(publicURL: addresses.publicURL, localURL: endpoint.url), pairingToken: nil)
+        } else {
+            saveServer(addresses: SonderServerAddresses(publicURL: endpoint.url, localURL: addresses.localURL), pairingToken: nil)
+        }
         discovery = endpoint.discovery
         connectionMode = endpoint.mode
         await reload()
@@ -627,18 +792,47 @@ final class SonderClientModel: ObservableObject {
 
     @discardableResult
     func saveServer(baseURL: URL, accessToken: String) -> Bool {
-        guard let normalizedURL = Self.normalizedServerURL(baseURL) else {
-            errorMessage = "Enter a complete http:// or https:// server URL."
+        saveServer(addresses: SonderServerAddresses(publicURL: baseURL, localURL: addresses.localURL), pairingToken: accessToken)
+    }
+
+    /// Saves the public and optional local address. `pairingToken` nil keeps
+    /// the stored credential for this server; a string replaces it (empty clears it).
+    @discardableResult
+    func saveServer(addresses newAddresses: SonderServerAddresses, pairingToken: String?) -> Bool {
+        let normalized = SonderServerAddresses(
+            publicURL: newAddresses.publicURL.flatMap(SonderServerAddresses.normalize),
+            localURL: newAddresses.localURL.flatMap(SonderServerAddresses.normalize)
+        )
+        guard (newAddresses.publicURL == nil || normalized.publicURL != nil),
+              (newAddresses.localURL == nil || normalized.localURL != nil),
+              let normalizedURL = normalized.identityURL else {
+            errorMessage = "Enter a complete http:// or https:// server address."
             return false
         }
         let serverChanged = normalizedURL != serverBaseURL
         if serverChanged { audiobookPlayer.stop() }
+        addresses = normalized
         serverBaseURL = normalizedURL
-        self.accessToken = accessToken.trimmingCharacters(in: .whitespacesAndNewlines)
+        activeBaseURL = normalized.publicURL ?? normalizedURL
+        activeRoute = normalized.publicURL == nil ? .local : .public
+        routeNeedsSelection = true
+        if let pairingToken {
+            self.accessToken = pairingToken.trimmingCharacters(in: .whitespacesAndNewlines)
+            SonderKeychain.saveAccessToken(self.accessToken, for: normalizedURL)
+        } else if serverChanged {
+            self.accessToken = Self.loadStoredAccessToken(for: normalizedURL)
+        }
+        if serverChanged {
+            signedInUsername = Self.storedUsername(for: normalizedURL)
+            authStatus = nil
+            needsSignIn = false
+        }
         hasConfiguredServer = true
-        UserDefaults.standard.set(normalizedURL.absoluteString, forKey: defaultsURLKey)
-        UserDefaults.standard.removeObject(forKey: legacyDefaultsTokenKey)
-        SonderKeychain.saveAccessToken(self.accessToken)
+        let defaults = UserDefaults.standard
+        defaults.set(normalized.publicURL?.absoluteString, forKey: Self.defaultsPublicURLKey)
+        defaults.set(normalized.localURL?.absoluteString, forKey: Self.defaultsLocalURLKey)
+        defaults.removeObject(forKey: Self.legacyDefaultsURLKey)
+        defaults.removeObject(forKey: legacyDefaultsTokenKey)
         offlineDownloads = offlineDownloadStore.downloads(for: normalizedURL)
         if serverChanged {
             // Validators are meaningful only for the server that issued them.
@@ -709,20 +903,17 @@ final class SonderClientModel: ObservableObject {
     }
 
     private func resolvedConnectionMode() -> SonderConnectionMode {
-        if serverBaseURL.host == "127.0.0.1" || serverBaseURL.host == "localhost" {
+        if activeBaseURL.host == "127.0.0.1" || activeBaseURL.host == "localhost" {
             return .local
         }
-        if serverBaseURL.host?.localizedCaseInsensitiveContains("ts.net") == true {
+        if activeBaseURL.host?.localizedCaseInsensitiveContains("ts.net") == true {
             return .tailscale
         }
-        if health?.allowLAN == true || serverSettings?.allowLAN == true || discovery?.allowLAN == true {
-            return .lan
-        }
-        return .manual
+        return activeRoute == .local ? .lan : .manual
     }
 
     private func fetchDiscovery() async throws -> SonderDiscoveryResponse {
-        let request = authorizedRequest(for: serverBaseURL.appendingPathComponent("api/discovery"))
+        let request = authorizedRequest(for: activeBaseURL.appendingPathComponent("api/discovery"))
         let (data, response) = try await URLSession.shared.data(for: request)
         guard let http = response as? HTTPURLResponse, 200..<300 ~= http.statusCode else {
             throw URLError(.badServerResponse)
@@ -731,7 +922,7 @@ final class SonderClientModel: ObservableObject {
     }
 
     private func fetchHealth() async throws -> SonderHealthResponse {
-        let request = authorizedRequest(for: serverBaseURL.appendingPathComponent("api/health"))
+        let request = authorizedRequest(for: activeBaseURL.appendingPathComponent("api/health"))
         let (data, response) = try await URLSession.shared.data(for: request)
         guard let http = response as? HTTPURLResponse, 200..<300 ~= http.statusCode else {
             throw URLError(.badServerResponse)
@@ -741,7 +932,7 @@ final class SonderClientModel: ObservableObject {
 
     /// Returns a fresh library payload, or `nil` when the server responds `304 Not Modified`.
     private func fetchLibrary() async throws -> SonderLibraryResponse? {
-        var request = authorizedRequest(for: serverBaseURL.appendingPathComponent("api/library"), timeout: 20)
+        var request = authorizedRequest(for: activeBaseURL.appendingPathComponent("api/library"), timeout: 20)
         if let libraryETag, libraryETag.isEmpty == false {
             request.setValue(libraryETag, forHTTPHeaderField: "If-None-Match")
         }
@@ -763,7 +954,7 @@ final class SonderClientModel: ObservableObject {
     }
 
     private func postProgress(itemID: UUID, seconds: Double, duration: Double) async throws {
-        let url = serverBaseURL
+        let url = activeBaseURL
             .appendingPathComponent("api/progress")
             .appendingPathComponent(itemID.uuidString.lowercased())
         var request = authorizedRequest(for: url)
@@ -786,7 +977,7 @@ final class SonderClientModel: ObservableObject {
         subtitlesEnabled: Bool?,
         updatedAt: Date? = nil
     ) async throws -> SonderPlaybackResponse {
-        let url = serverBaseURL
+        let url = activeBaseURL
             .appendingPathComponent("api/playback")
             .appendingPathComponent(itemID.uuidString.lowercased())
         var request = authorizedRequest(for: url)
@@ -816,7 +1007,7 @@ final class SonderClientModel: ObservableObject {
         subtitleTrackID: String?,
         subtitlesEnabled: Bool?
     ) async throws -> SonderPlaybackResponse {
-        let url = serverBaseURL
+        let url = activeBaseURL
             .appendingPathComponent("api/playback")
             .appendingPathComponent(itemID.uuidString.lowercased())
             .appendingPathComponent("refresh-tracks")
@@ -846,6 +1037,9 @@ final class SonderClientModel: ObservableObject {
     private func authorizedRequest(for url: URL, timeout: TimeInterval = 5) -> URLRequest {
         var request = URLRequest(url: url, timeoutInterval: timeout)
         request.cachePolicy = .reloadIgnoringLocalCacheData
+        // The server reads a session cookie before the Authorization header;
+        // never let a stale shared cookie shadow the stored Bearer token.
+        request.httpShouldHandleCookies = false
         let token = accessToken.trimmingCharacters(in: .whitespacesAndNewlines)
         if token.isEmpty == false {
             request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
@@ -917,18 +1111,6 @@ final class SonderClientModel: ObservableObject {
         UserDefaults.standard.set(values, forKey: defaultsLibraryETagsKey)
     }
 
-    private static func normalizedServerURL(_ url: URL) -> URL? {
-        guard let scheme = url.scheme?.lowercased(),
-              ["http", "https"].contains(scheme),
-              url.host?.isEmpty == false else { return nil }
-        var components = URLComponents(url: url, resolvingAgainstBaseURL: false)
-        let path = components?.path.trimmingCharacters(in: CharacterSet(charactersIn: "/")) ?? ""
-        components?.path = path
-        components?.query = nil
-        components?.fragment = nil
-        return components?.url
-    }
-
     private func isUnauthorized(_ error: Error) -> Bool {
         (error as? HTTPStatusError)?.statusCode == 401 || (error as? HTTPStatusError)?.statusCode == 403
     }
@@ -996,13 +1178,43 @@ struct SonderServerEndpoint: Identifiable, Hashable {
     var discovery: SonderDiscoveryResponse?
 }
 
+/// Reports network path changes (Wi-Fi joined or left, cellular, VPN) so the
+/// app can re-probe the local address. The first update after start is the
+/// current path, not a change, and is ignored.
+final class SonderNetworkWatcher: @unchecked Sendable {
+    var onChange: (@Sendable () -> Void)?
+    private let monitor = NWPathMonitor()
+    private let queue = DispatchQueue(label: "com.techmore.tmsonder.network-watcher")
+    private var lastSignature: String?
+
+    func start() {
+        monitor.pathUpdateHandler = { [weak self] path in
+            guard let self else { return }
+            let signature = Self.signature(of: path)
+            defer { self.lastSignature = signature }
+            guard let last = self.lastSignature, last != signature else { return }
+            self.onChange?()
+        }
+        monitor.start(queue: queue)
+    }
+
+    private static func signature(of path: NWPath) -> String {
+        let interfaces = path.availableInterfaces.map { "\($0.type)-\($0.name)" }.joined(separator: ",")
+        return "\(path.status)|\(interfaces)|\(path.gateways.map { "\($0)" }.joined(separator: ","))"
+    }
+
+    deinit { monitor.cancel() }
+}
+
 struct HTTPStatusError: LocalizedError {
     var statusCode: Int
 
     var errorDescription: String? {
         switch statusCode {
-        case 401, 403:
-            return "This server is restricted. Add a token in Server settings or disable restrictions on the host."
+        case 401:
+            return "Sign in to this server to load your library."
+        case 403:
+            return "This server refused the connection. Check that LAN or remote access is enabled on the host."
         default:
             return "Server returned HTTP \(statusCode)."
         }
