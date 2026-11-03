@@ -264,3 +264,38 @@ func TestRemoteBrowserPageRedirectsToLogin(t *testing.T) {
 		t.Fatalf("redirect location = %q", got)
 	}
 }
+
+// A failed browser sign-in comes back with an announced error and the
+// username still filled in, and the page does not offer Google sign-in when
+// Google is not configured (the link led to a "not configured" error page).
+func TestSignInPageAfterFailedLogin(t *testing.T) {
+	f := newFixture(t, func(cfg *config.Config) {
+		cfg.AllowLAN = true
+		cfg.PairingToken = "pair-me"
+	})
+	post := func(path string, form url.Values) *httptest.ResponseRecorder {
+		req := httptest.NewRequest(http.MethodPost, path, strings.NewReader(form.Encode()))
+		req.RemoteAddr = "192.168.3.50:50123"
+		req.Host = "sonder.example:8096"
+		req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+		rec := httptest.NewRecorder()
+		f.s.Handler().ServeHTTP(rec, req)
+		return rec
+	}
+	if rec := post("/api/auth/setup?token=pair-me", url.Values{"username": {"owner"}, "password": {"a-long-test-password"}, "next": {"/"}}); rec.Code != http.StatusSeeOther {
+		t.Fatalf("setup status = %d", rec.Code)
+	}
+	rec := post("/api/auth/login", url.Values{"username": {"owner"}, "password": {"wrong-password-1"}, "next": {"/audiobooks"}})
+	body := rec.Body.String()
+	for _, want := range []string{`role="alert"`, `value="owner"`, `name="next" value="/audiobooks"`, "box-sizing:border-box"} {
+		if !strings.Contains(body, want) {
+			t.Errorf("failed sign-in page missing %q", want)
+		}
+	}
+	if strings.Contains(body, "Continue with Google") {
+		t.Error("sign-in page offers Google sign-in although it is not configured")
+	}
+	if strings.Contains(body, `type="password" name="password" autocomplete="current-password" minlength`) {
+		t.Error("sign-in password field enforces the new-password minimum length")
+	}
+}

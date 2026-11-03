@@ -304,7 +304,7 @@ struct SonderAudiobookPlaybackScreen: View {
                     Button { audio.isPlaying ? audio.pause() : audio.play() } label: { Image(systemName: audio.isPlaying ? "pause.circle.fill" : "play.circle.fill").font(.system(size: 64)) }.accessibilityLabel(audio.isPlaying ? "Pause" : "Play")
                     Button { audio.seek(audio.seconds + 30) } label: { Image(systemName: "goforward.30").font(.title).frame(minWidth: 44, minHeight: 44) }.accessibilityLabel("Forward 30 seconds")
                 }
-                Picker("Playback speed", selection: $audio.rate) { ForEach([Float(0.75), 1, 1.25, 1.5, 1.75, 2], id: \.self) { Text("\($0, specifier: "%.2g")×").tag($0) } }.pickerStyle(.menu)
+                Picker("Playback speed", selection: $audio.rate) { ForEach([Float(0.75), 1, 1.25, 1.5, 1.75, 2], id: \.self) { Text("\($0, specifier: "%g")×").tag($0) } }.pickerStyle(.menu)
                 HStack {
                     Button("Chapters") { showingChapters = true }.disabled(audio.chapters.isEmpty)
                     Menu("Sleep timer") {

@@ -83,3 +83,32 @@ func TestYouTubePageRedirectsAnonymousBrowsers(t *testing.T) {
 		t.Errorf("direct loopback GET /youtube = %d %s, want 200 text/html", direct.Code, direct.Header().Get("Content-Type"))
 	}
 }
+
+// The catalog list does not carry chapter counts, so the rails hover card must
+// not print a placeholder count ("? chapters") or the classic list "0
+// chapters"; the rails page fetches the real count from the chapter timeline.
+func TestAudiobookPagesDoNotShowPlaceholderChapterCounts(t *testing.T) {
+	rails := string(mustReadWeb("web/audiobooks-beta.html"))
+	if strings.Contains(rails, `"?"} chapters`) {
+		t.Error("audiobooks-beta.html still prints a placeholder chapter count")
+	}
+	if !strings.Contains(rails, "/chapters`") || !strings.Contains(rails, "function loadChapterCount(") {
+		t.Error("audiobooks-beta.html does not load the real chapter count")
+	}
+	classic := string(mustReadWeb("web/audiobooks.html"))
+	if strings.Contains(classic, "<span>${book.chapterCount} chapters</span>") {
+		t.Error("audiobooks.html prints the list's chapterCount even when it is unknown (0)")
+	}
+}
+
+// The rails audiobook page plays through a bare <audio> element, which has no
+// sleep timer and, in most browsers, no speed control. Both are basic
+// audiobook tools, so the page provides them.
+func TestRailsAudiobookPlayerHasSpeedAndSleepTimer(t *testing.T) {
+	raw := string(mustReadWeb("web/audiobooks-beta.html"))
+	for _, needle := range []string{`id="rate"`, `id="sleep"`, "function setSleepTimer(", "playbackRate", `onclick="skipBy(-30)"`} {
+		if !strings.Contains(raw, needle) {
+			t.Errorf("audiobooks-beta.html missing %q", needle)
+		}
+	}
+}
