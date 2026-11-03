@@ -44,8 +44,8 @@ slow; **Low** = polish. "Fixed" names the commit in this PR.
 | 12 | Rails, phone | A three-row sticky header took about 140 px of an 812 px screen; the detail hero squeezed the title into a 165 px column. | Medium | Fixed |
 | 13 | iOS player | Speed menu showed 1.25× as "1.2×" and 1.75× as "1.8×" (`%.2g`). | Medium | Fixed |
 | 14 | Library header, phone | Profile, invite, YouTube and Settings sit off-screen in a sideways-scrolling toolbar with a hidden scrollbar; only a sliver of the next button hints that more exist. | Medium | Open |
-| 15 | Library player | Speed is not remembered between sessions (the rails page now saves `sonder.player.rate`; the library player could read the same key). | Low | Open |
-| 16 | Library player | The sleep timer offers "End of part/book" but not "End of chapter", although chapters are known. | Low | Open |
+| 15 | Library player | Speed is not remembered between sessions (the rails page now saves `sonder.player.rate`; the library player could read the same key). | Low | Fixed: shares `sonder.player.rate` with the rails page |
+| 16 | Library player | The sleep timer offers "End of part/book" but not "End of chapter", although chapters are known. | Low | Fixed: "End of chapter" shown while a chapter is playing |
 | 17 | Rails page | Ignores the server theme: always dark, even when the library is set to the light Techmore theme. | Low | Open |
 | 18 | API | `chapterCount` in `GET /api/audiobooks` is always 0. Clients should treat it as unknown, or the server could fill it from the chapter cache without probing. | Low | Open |
 | 19 | iOS player | Generic headphones symbol instead of the cover; time shown only as whole minutes ("754 min"); no end-of-chapter sleep; chapter sheet has no times or current-chapter mark; speed not remembered; fixed-size fonts on the play button and artwork ignore Dynamic Type. | Medium | Open (left for after PR #7, which rewrites most iOS views) |

@@ -497,6 +497,8 @@
     let npQueueOpen = false;
     let npSleepDeadline = 0;
     let npSleepAtPartEnd = false;
+    // Book position (seconds) where "End of chapter" pauses, or null.
+    let npSleepChapterEnd = null;
     let npSleepTimeout = null;
     let npAirPlayMedia = null;
     let npAirPlayAvailabilityHandler = null;
@@ -740,6 +742,9 @@
     let npTimeDisplay = readPlayerPreference("sonder.player.timeDisplayMode", "total", ["total", "remaining", "eta"]);
     let npTimeReadoutStyle = readPlayerPreference("sonder.player.timeReadoutStyle", "plain", ["plain", "pill"]);
     let npChapterNumerals = readPlayerPreference("sonder.player.chapterNumerals", "arabic", ["arabic", "roman"]);
+    // Shared with the rails page, so a speed chosen on either player sticks.
+    const NP_RATES = ["0.75", "1", "1.25", "1.5", "1.75", "2"];
+    const npSavedRate = readPlayerPreference("sonder.player.rate", "1", NP_RATES);
 
     function savePlayerPreference(key, value) {
       try { localStorage.setItem(key, value); } catch { /* storage may be disabled */ }
@@ -868,6 +873,11 @@
       media.addEventListener("webkitcurrentplaybacktargetiswirelesschanged", npAirPlayWirelessHandler);
       npAirPlayMedia = media;
       renderAirPlayWirelessState();
+    }
+
+    function restoreSavedPlaybackRate() {
+      const select = $("#npRate");
+      if (select && NP_RATES.includes(npSavedRate)) select.value = npSavedRate;
     }
 
     function syncPlaybackRate(media) {
@@ -1070,6 +1080,8 @@
       const request = ++npChapterRequest;
       nowPlayingChapters = null;
       nowPlayingChaptersAvailable = false;
+      // A chapter end belongs to the book it was set on.
+      npSleepChapterEnd = null;
       if (!item || item.kind !== "audiobook") {
         nowPlayingChapters = [];
         return;
@@ -1306,11 +1318,16 @@
     function renderSleepTimer() {
       const label = $("#npSleepLabel");
       if (!label) return;
-      if (npSleepAtPartEnd) label.textContent = nowPlayingParts ? "End of part" : "End of book";
+      if (npSleepChapterEnd !== null) label.textContent = "End of chapter";
+      else if (npSleepAtPartEnd) label.textContent = nowPlayingParts ? "End of part" : "End of book";
       else if (npSleepDeadline) label.textContent = `${Math.max(1, Math.ceil((npSleepDeadline - Date.now()) / 60000))}m left`;
       else label.textContent = "Off";
       const part = $("#npSleepPart");
       if (part) part.textContent = nowPlayingParts ? "End of part" : "End of book";
+      // Offered only while a chapter is playing; books without chapter
+      // markers keep "End of part/book".
+      const chapterOption = $("#npSleepChapter");
+      if (chapterOption) chapterOption.hidden = !currentBookChapter();
     }
 
     function clearSleepClock() {
@@ -1322,6 +1339,7 @@
       clearSleepClock();
       npSleepDeadline = 0;
       npSleepAtPartEnd = false;
+      npSleepChapterEnd = null;
       pausePlayback();
       saveProgress(true);
       const status = $("#npStatus");
@@ -1334,6 +1352,15 @@
       if (npSleepDeadline && Date.now() >= npSleepDeadline) {
         finishSleepTimer();
         return;
+      }
+      if (npSleepChapterEnd !== null) {
+        const position = bookTimeline().position || 0;
+        if (position >= npSleepChapterEnd - 0.25) {
+          // Playing across the chapter end stops here. A seek far past it
+          // follows the chapter now playing instead of stopping at once.
+          if (position - npSleepChapterEnd < 3) { finishSleepTimer(); return; }
+          npSleepChapterEnd = currentBookChapter()?.endSeconds ?? null;
+        }
       }
       renderSleepTimer();
     }
@@ -1351,6 +1378,7 @@
       clearSleepClock();
       npSleepDeadline = 0;
       npSleepAtPartEnd = option === "part";
+      npSleepChapterEnd = option === "chapter" ? currentBookChapter()?.endSeconds ?? null : null;
       const minutes = Number(option);
       if (Number.isFinite(minutes) && minutes > 0) npSleepDeadline = Date.now() + minutes * 60000;
       const status = $("#npStatus");
@@ -2071,8 +2099,10 @@
         button.setAttribute("aria-pressed", collapsed ? "false" : "true");
       }
     });
+    restoreSavedPlaybackRate();
     on("#npRate", "change", () => {
       const media = npMedia();
+      savePlayerPreference("sonder.player.rate", $("#npRate")?.value || "1");
       syncPlaybackRate(media);
       updatePositionState();
     });
@@ -2128,7 +2158,7 @@
     });
     on("#npMedia", "ended", () => {
       sampleReadTime(true);
-      if (npSleepAtPartEnd) { finishSleepTimer(); return; }
+      if (npSleepAtPartEnd || npSleepChapterEnd !== null) { finishSleepTimer(); return; }
       // A multi-part book continues into the next file; a single-file item, and
       // the last part of a book, just stop as before.
       if (advanceBookPart()) return;

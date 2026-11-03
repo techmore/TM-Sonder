@@ -1070,6 +1070,8 @@ body:not(.np-expanded) .nowplaying.np-audio-mode .np-tools #npSleep .np-tool-kic
 .np-sleep-options button:hover { background:rgba(255,255,255,.14); }
 .np-sleep-options button:nth-last-child(2), .np-sleep-options button:last-child { grid-column:1 / -1; }
 .np-sleep-options button:last-child { color:var(--np-highlight); }
+.np-sleep-options #npSleepChapter { grid-column:1 / -1; }
+.np-sleep-options button[hidden] { display:none; }
 .np-sleep-panel button:focus-visible { outline:2px solid var(--np-highlight); outline-offset:2px; }
 .np-part-label { display:none; }
 .np-tool-button {

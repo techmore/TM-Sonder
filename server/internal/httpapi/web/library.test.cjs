@@ -1371,6 +1371,30 @@ test('an elapsed sleep timer pauses playback and tells the listener', () => {
   );
 });
 
+test('"End of chapter" pauses where the playing chapter ends', () => {
+  const get = catalog([{ id:'book', title:'Book', kind:'audiobook', format:'m4b' }]);
+  const setup = 'nowPlayingItem=items[0], nowPlayingChaptersAvailable=true, nowPlayingChapters=[{index:1,startSeconds:0,endSeconds:60},{index:2,startSeconds:60,endSeconds:120}], $("#npMedia").paused=false, $("#npMedia").currentTime=30';
+  assert.deepEqual(get(`(${setup}, renderSleepTimer(), setSleepTimer("chapter"), [npSleepChapterEnd, $("#npSleepLabel").textContent, $("#npSleepChapter").hidden])`),
+    [60, 'End of chapter', false]);
+  // Playing across the chapter end pauses there.
+  assert.deepEqual(get('($("#npMedia").currentTime=59.9, checkSleepTimer(), [$("#npMedia").paused, npSleepChapterEnd, $("#npStatus").textContent])'),
+    [true, null, 'Sleep timer ended. Playback paused.']);
+  // A seek well past the end follows the chapter now playing instead.
+  assert.deepEqual(get(`(${setup}, setSleepTimer("chapter"), $("#npMedia").currentTime=100, checkSleepTimer(), [$("#npMedia").paused, npSleepChapterEnd])`),
+    [false, 120]);
+  // Another timer choice replaces it, and a book without chapters hides the option.
+  assert.equal(get('(setSleepTimer("15"), npSleepChapterEnd)'), null);
+  assert.equal(get('(nowPlayingChapters=[], renderSleepTimer(), $("#npSleepChapter").hidden)'), true);
+});
+
+test('the library player remembers the playback speed it shares with the rails page', () => {
+  const get = catalog([{ id:'book', title:'Book', kind:'audiobook', format:'m4b' }]);
+  get('($("#npRate").value = "1.5", $("#npRate").listeners.change(), 0)');
+  assert.equal(get.preference('sonder.player.rate'), '1.5');
+  assert.match(libraryHTML, /data-np-sleep="chapter" id="npSleepChapter" hidden/);
+  assert.match(librarySource, /readPlayerPreference\("sonder\.player\.rate", "1", NP_RATES\)/);
+});
+
 test('a book is filtered by the watched filter using its whole progress', () => {
   const get = catalog(
     [part('p1', 'bk', 1, 1000), part('p2', 'bk', 2, 1000)],
