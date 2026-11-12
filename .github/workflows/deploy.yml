@@ -94,6 +94,9 @@ jobs:
   deploy:
     name: Deploy to the server
     needs: build
+    # This repo is public: never run fork code on the self-hosted server
+    # runner, even if a pull_request trigger is added to this workflow later.
+    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
     # The labels the runner on the server registers with. This job simply does
     # not run anywhere else, which is the point: there is no hosted-runner path
     # that could half-deploy.
