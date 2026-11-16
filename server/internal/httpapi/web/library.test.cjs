@@ -1135,6 +1135,23 @@ test('following a rejected checkpoint seeks to the newer server position', () =>
   assert.equal(position, 3860);
 });
 
+test('resume correction moves forward to a newer position without rewinding', () => {
+  const get = catalog([{ id: 'dune', title: 'Dune', kind: 'audiobook', format: 'm4b', durationSeconds: 600 }]);
+  get.context.fetch = () => Promise.resolve({ ok: true, status: 200, json: async () => ({}) });
+  const [forward, backward] = get(`(() => {
+    const media = $("#npMedia");
+    media.duration = 600; media.paused = false;
+    media.currentTime = 100;
+    seekToSavedPosition(media, { seconds: 300 });
+    const forward = media.currentTime;
+    media.currentTime = 400;
+    seekToSavedPosition(media, { seconds: 200 });
+    return [forward, media.currentTime];
+  })()`);
+  assert.equal(forward, 300);
+  assert.equal(backward, 400);
+});
+
 test('an authoritative refresh replaces a stale tab position but keeps unsaved work', async () => {
   const get = catalog([{ id: 'dune', title: 'Dune', kind: 'audiobook', format: 'm4b', durationSeconds: 60770 },
                        { id: 'emma', title: 'Emma', kind: 'audiobook', format: 'm4b', durationSeconds: 1000 }],

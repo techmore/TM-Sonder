@@ -1048,11 +1048,23 @@
       const item = items.find(candidate => candidate.id === id);
       if (!item) return;
       if (nowPlayingItem && nowPlayingItem.id === id) {
+        const media = npMedia();
+        const startedAt = media ? playbackPosition(media) : 0;
         togglePlay();
         if (nowPlayingMode === "video") window.SonderVideoPresentation?.start("video");
         else if (isMobileViewport()) setPlayerExpanded(true);
         closeDetailOnMobile();
-        refreshProgressFromServer().then(restorePausedMediaPosition).catch(() => {});
+        refreshProgressFromServer().then(() => {
+          if (!nowPlayingItem || nowPlayingItem.id !== id) return;
+          const active = npMedia();
+          if (!active || active.ended) return;
+          // Only correct while the listener is still where playback began;
+          // once they have moved on, their own position is the real one.
+          if (Math.abs(playbackPosition(active) - startedAt) <= 20) {
+            seekToSavedPosition(active, progressByID.get(currentProgressTargetID()));
+          }
+          restorePausedMediaPosition();
+        }).catch(() => {});
         return;
       }
       const parts = partsOf(item);
