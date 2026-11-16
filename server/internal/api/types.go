@@ -285,7 +285,12 @@ type PlaybackStateUpdate struct {
 	Seconds  float64 `json:"seconds"`
 	Duration float64 `json:"duration"`
 	// UpdatedAt preserves checkpoint order when requests arrive out of order.
-	UpdatedAt        *time.Time `json:"updatedAt,omitempty"`
+	UpdatedAt *time.Time `json:"updatedAt,omitempty"`
+	// BaseUpdatedAt is the updatedAt of the progress record the client last
+	// observed. When supplied, the server refuses the write if another device
+	// has saved newer progress, so a tab left open for days cannot overwrite a
+	// newer listening position with its stale one. Optional for older clients.
+	BaseUpdatedAt    *time.Time `json:"baseUpdatedAt,omitempty"`
 	AudioTrackID     *string    `json:"audioTrackID,omitempty"`
 	SubtitleTrackID  *string    `json:"subtitleTrackID,omitempty"`
 	SubtitlesEnabled *bool      `json:"subtitlesEnabled,omitempty"`

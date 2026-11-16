@@ -547,7 +547,10 @@
       const previous = progressWritesByID.get(record.itemID) || Promise.resolve();
       const request = previous.catch(() => {}).then(() => fetch(api("/api/progress/" + record.itemID), {
         method: "POST", headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ seconds: record.seconds, duration: record.duration, updatedAt: record.updatedAt }),
+        body: JSON.stringify({
+          seconds: record.seconds, duration: record.duration, updatedAt: record.updatedAt,
+          baseUpdatedAt: record.baseUpdatedAt || undefined,
+        }),
         keepalive: true,
       }));
       progressWritesByID.set(record.itemID, request);
@@ -557,6 +560,13 @@
       request.then(cleanup, cleanup);
       return request;
     }
+    function refreshProgressUI(itemID) {
+      if (selectedBookID !== itemID) return;
+      const item = items.find(candidate => candidate.id === selectedBookID);
+      if (!item) return;
+      renderBookProgress(item);
+      updateBookDetailPlaybackButton();
+    }
     function settleProgressCheckpoint(checkpoint, session) {
       if (!session?.updatedAt) return false;
       const saved = {
@@ -565,12 +575,48 @@
         duration: Number(session.duration) || checkpoint.duration,
         updatedAt: session.updatedAt,
       };
-      if (!progressTimestampIsAtLeast(saved.updatedAt, checkpoint.updatedAt)) return false;
       const current = progressByID.get(checkpoint.itemID);
-      if (!current || progressTimestampIsAtLeast(saved.updatedAt, current.updatedAt)) {
+      // The server may restamp a checkpoint whose client clock is badly wrong,
+      // so it is authoritative for its own stored record. A later local
+      // checkpoint still wins until it has been saved too.
+      if (!current || current.updatedAt === checkpoint.updatedAt ||
+          progressTimestampIsAtLeast(saved.updatedAt, current.updatedAt)) {
         progressByID.set(checkpoint.itemID, saved);
       }
       clearPendingProgress(checkpoint.itemID, checkpoint.updatedAt);
+      refreshProgressUI(checkpoint.itemID);
+      return true;
+    }
+    // A rejected checkpoint means another device is ahead. If this tab is
+    // still parked where it wrote that checkpoint, follow the newer position
+    // now; otherwise its next checkpoint would honestly report the older spot
+    // and supersede the newer one.
+    function followAdoptedPosition(checkpoint, saved) {
+      if (!nowPlayingItem || currentProgressTargetID() !== checkpoint.itemID) return;
+      const media = npMedia();
+      if (!media || media.ended) return;
+      if (Math.abs(playbackPosition(media) - checkpoint.seconds) > 30) return;
+      const duration = Number(media.duration) || 0;
+      if (saved.seconds <= 5 || (duration > 0 && saved.seconds >= duration - 8)) return;
+      if (saved.seconds <= playbackPosition(media) + 5) return;
+      media.currentTime = saved.seconds;
+      onTimeUpdate();
+    }
+    // The server refused this checkpoint because another device saved newer
+    // progress. Its record is the truth even when this tab stamped a later
+    // local time on an older position, so adopt it instead of retrying.
+    function adoptServerProgress(checkpoint, session) {
+      if (!checkpoint?.itemID || !session || !Number.isFinite(Number(session.seconds))) return false;
+      const saved = {
+        itemID: checkpoint.itemID,
+        seconds: Number(session.seconds) || 0,
+        duration: Number(session.duration) || checkpoint.duration,
+        updatedAt: session.updatedAt || checkpoint.updatedAt,
+      };
+      progressByID.set(checkpoint.itemID, saved);
+      clearPendingProgress(checkpoint.itemID, checkpoint.updatedAt);
+      refreshProgressUI(checkpoint.itemID);
+      followAdoptedPosition(checkpoint, saved);
       return true;
     }
     function savePendingProgress(record) {
@@ -596,22 +642,70 @@
     function serverCheckpointIsCurrent(serverRecord, localRecord) {
       return !!serverRecord && progressTimestampIsAtLeast(serverRecord.updatedAt, localRecord.updatedAt);
     }
-    function replaceServerProgress(serverProgress = []) {
+    function replaceServerProgress(serverProgress = [], authoritative = false) {
       const previous = [...progressByID.entries()];
+      const pending = new Set(pendingProgress().map(entry => entry.itemID));
       progressByID.clear();
       (serverProgress || []).forEach(record => {
         if (record?.itemID) progressByID.set(record.itemID, record);
       });
-      // A library response can have started before a checkpoint finished
-      // saving. Keep a newer in-memory checkpoint if that response is stale.
-      for (const [itemID, record] of previous) {
-        const serverRecord = progressByID.get(itemID);
-        if (!serverRecord || !progressTimestampIsAtLeast(serverRecord.updatedAt, record.updatedAt)) {
-          progressByID.set(itemID, record);
+      if (authoritative) {
+        // A deliberate refresh reports the newest writes that actually landed.
+        // Only checkpoints that have not reached the server yet outrank it;
+        // an old tab's in-memory copy may carry a later local timestamp on an
+        // older position and must not be trusted here.
+        for (const [itemID, record] of previous) {
+          if (!pending.has(itemID)) continue;
+          const serverRecord = progressByID.get(itemID);
+          if (!serverRecord || progressTimestampIsAtLeast(record.updatedAt, serverRecord.updatedAt)) {
+            progressByID.set(itemID, record);
+          }
+        }
+      } else {
+        // A library response can have started before a checkpoint finished
+        // saving. Keep a newer in-memory checkpoint if that response is stale.
+        for (const [itemID, record] of previous) {
+          const serverRecord = progressByID.get(itemID);
+          if (!serverRecord || !progressTimestampIsAtLeast(serverRecord.updatedAt, record.updatedAt)) {
+            progressByID.set(itemID, record);
+          }
         }
       }
       restorePendingProgress();
       replayPendingProgress(serverProgress).catch(() => {});
+    }
+    let progressRefreshRequest = null;
+    let lastProgressRefreshMS = 0;
+    // Re-read saved progress from the server. Used when a tab becomes visible
+    // again so an open-for-days player cannot resume (or overwrite) a position
+    // that another device has moved past.
+    function refreshProgressFromServer(force = false) {
+      if (typeof fetch !== "function") return Promise.resolve(false);
+      if (progressRefreshRequest) return progressRefreshRequest;
+      if (!force && lastProgressRefreshMS && Date.now() - lastProgressRefreshMS < 5000) {
+        return Promise.resolve(true);
+      }
+      // The library response is served with an ETag and must-revalidate, so
+      // the browser's conditional request keeps this refresh cheap.
+      progressRefreshRequest = fetch(api("/api/library"))
+        .then(response => {
+          if (!response.ok) throw new Error(`Progress refresh failed (${response.status})`);
+          return response.json();
+        })
+        .then(data => {
+          replaceServerProgress(data.progress ?? [], true);
+          lastProgressRefreshMS = Date.now();
+          const activeID = nowPlayingItem?.id || selectedBookID;
+          if (activeID) {
+            const item = items.find(candidate => candidate.id === activeID);
+            if (item && item.kind === "audiobook") renderBookProgress(item);
+          }
+          if (selectedBookID) updateBookDetailPlaybackButton();
+          return true;
+        })
+        .catch(() => false)
+        .finally(() => { progressRefreshRequest = null; });
+      return progressRefreshRequest;
     }
     async function replayPendingProgress(serverProgress = []) {
       const serverByID = new Map((serverProgress || []).map(record => [record.itemID, record]));
@@ -624,8 +718,12 @@
         }
         try {
           const response = await writeProgressCheckpoint(record);
-          if (!response.ok) continue;
           const session = await response.json().catch(() => null);
+          if (response.status === 409) {
+            adoptServerProgress(record, session);
+            continue;
+          }
+          if (!response.ok) continue;
           settleProgressCheckpoint(record, session);
         } catch { /* retry on the next page load or online event */ }
       }
@@ -887,6 +985,65 @@
       media.playbackRate = rate;
     }
 
+    // Put a paused element back at the saved position when a restored
+    // background tab left it at 0 without the listener rewinding.
+    function restorePausedMediaPosition() {
+      const item = nowPlayingItem;
+      const media = npMedia();
+      if (!item || !media || !media.paused || media.ended) return;
+      const targetID = currentProgressTargetID();
+      if (!targetID) return;
+      const seconds = Number(progressByID.get(targetID)?.seconds) || 0;
+      if (seconds <= 5) return;
+      const duration = Number(media.duration) || 0;
+      if (duration > 0 && seconds >= duration - 8) return;
+      if (Number(media.currentTime) >= 1) return;
+      const apply = () => {
+        if (nowPlayingItem?.id !== item.id || Number(media.currentTime) >= 1) return;
+        media.currentTime = seconds;
+        onTimeUpdate();
+      };
+      if (media.readyState >= 1) apply();
+      else media.addEventListener("loadedmetadata", apply, { once: true });
+    }
+
+    function seekToSavedPosition(media, record) {
+      const seconds = Number(record?.seconds) || 0;
+      if (seconds <= 5) return;
+      const duration = Number(media.duration) || 0;
+      if (duration > 0 && seconds >= duration - 8) return;
+      if (playbackPosition(media) >= seconds - 5) return;
+      media.currentTime = seconds;
+      onTimeUpdate();
+    }
+
+    // Starting playback stays synchronous so Safari keeps the tap's user
+    // activation. Once the fresh position arrives, correct a tab that had been
+    // left open while another device moved the book forward. expectedStart is
+    // where this tab resumed; if the listener has already moved well past it,
+    // leave them alone.
+    async function reconcileResumeWithServer(item, expectedStart = 0) {
+      if (!item) return;
+      await refreshProgressFromServer();
+      if (!nowPlayingItem || nowPlayingItem.id !== item.id) return;
+      const media = npMedia();
+      if (!media || media.ended) return;
+      if (!media.paused && Math.abs(playbackPosition(media) - expectedStart) > 20) return;
+      const parts = partsOf(item);
+      if (!parts) {
+        seekToSavedPosition(media, progressByID.get(item.id));
+        return;
+      }
+      const target = resumePartIndex(parts);
+      if (target === nowPlayingPartIndex) {
+        seekToSavedPosition(media, progressByID.get(parts[target].id));
+        return;
+      }
+      const shouldPlay = !media.paused;
+      startBookPlayback(item, parts, target);
+      if (!shouldPlay) pausePlayback();
+    }
+
     function startPlaybackById(id) {
       const item = items.find(candidate => candidate.id === id);
       if (!item) return;
@@ -895,6 +1052,7 @@
         if (nowPlayingMode === "video") window.SonderVideoPresentation?.start("video");
         else if (isMobileViewport()) setPlayerExpanded(true);
         closeDetailOnMobile();
+        refreshProgressFromServer().then(restorePausedMediaPosition).catch(() => {});
         return;
       }
       const parts = partsOf(item);
@@ -902,11 +1060,15 @@
         // Resume where the listener actually stopped, which is rarely part 1 of
         // a long book.
         const index = resumePartIndex(parts);
+        const expectedStart = Number(progressByID.get(parts[index]?.id)?.seconds) || 0;
         startBookPlayback(item, parts, index);
+        reconcileResumeWithServer(item, expectedStart).catch(() => {});
         return;
       }
       const record = progressFor(id);
-      startPlayback(item, record && record.seconds > 5 ? record.seconds : 0);
+      const resumeAt = record && record.seconds > 5 ? record.seconds : 0;
+      startPlayback(item, resumeAt);
+      reconcileResumeWithServer(item, resumeAt).catch(() => {});
     }
 
     function startBookPlayback(item, parts, index, seekTo = null) {
@@ -1722,17 +1884,29 @@
       const part = nowPlayingParts && nowPlayingParts[nowPlayingPartIndex];
       const targetID = currentProgressTargetID();
       if (!targetID) return;
-      if (!force && Math.abs(playbackPosition(media) - npLastSaved) < 15) return;
-      npLastSaved = playbackPosition(media);
-      const payload = { seconds: playbackPosition(media), duration: nowPlayingMode === "video" && item.durationSeconds > 0 ? item.durationSeconds : media.duration };
+      const position = playbackPosition(media);
+      const previous = progressByID.get(targetID);
+      // Restoring a backgrounded page can reset a paused media element to 0
+      // without the listener rewinding, and a title with no local record may
+      // already have progress on another device. Never let either transient
+      // state erase a real listening position.
+      if (position < 1 && !media.ended && (!previous || Number(previous.seconds) > 30)) return;
+      if (!force && Math.abs(position - npLastSaved) < 15) return;
+      npLastSaved = position;
+      const payload = { seconds: position, duration: nowPlayingMode === "video" && item.durationSeconds > 0 ? item.durationSeconds : media.duration };
       const checkpoint = {
         itemID: targetID, seconds: payload.seconds, duration: payload.duration,
         updatedAt: nextProgressTimestamp(targetID),
+        baseUpdatedAt: previous?.updatedAt || null,
       };
       progressByID.set(targetID, checkpoint);
       if (selectedBookID === item.id) renderBookProgress(item);
       savePendingProgress(checkpoint);
       writeProgressCheckpoint(checkpoint).then(async response => {
+        if (response.status === 409) {
+          adoptServerProgress(checkpoint, await response.json().catch(() => null));
+          return;
+        }
         if (!response.ok) return;
         const saved = await response.json().catch(() => null);
         settleProgressCheckpoint(checkpoint, saved);
@@ -2202,10 +2376,16 @@
         saveProgress(true);
         persistReadSession(false);
       }
-      if (document.visibilityState === "visible" && nowPlayingItem) {
-        updateMediaSession(nowPlayingItem);
-        onPlayStateChange();
-        updatePositionState();
+      if (document.visibilityState === "visible") {
+        if (nowPlayingItem) {
+          updateMediaSession(nowPlayingItem);
+          onPlayStateChange();
+          updatePositionState();
+        }
+        // A tab can stay open for days while the listener continues on a
+        // phone. Re-read saved progress before the next Play tap so the tab
+        // resumes the newest position instead of its stale one.
+        refreshProgressFromServer().then(restorePausedMediaPosition).catch(() => {});
       }
       checkSleepTimer();
     });
@@ -2216,10 +2396,15 @@
     });
     if (typeof window !== "undefined" && typeof window.addEventListener === "function") {
       window.addEventListener("pageshow", () => {
-        if (!nowPlayingItem) return;
-        updateMediaSession(nowPlayingItem);
-        onPlayStateChange();
-        updatePositionState();
+        if (nowPlayingItem) {
+          updateMediaSession(nowPlayingItem);
+          onPlayStateChange();
+          updatePositionState();
+        }
+        refreshProgressFromServer().then(restorePausedMediaPosition).catch(() => {});
+      });
+      window.addEventListener("focus", () => {
+        refreshProgressFromServer().catch(() => {});
       });
       window.addEventListener("online", () => replayPendingProgress().catch(() => {}));
     }
@@ -3674,12 +3859,27 @@
     function rememberMovieStart(item) {
       if (dismissedMovieIDs.has(item.id)) void setMovieDismissed(item.id, false);
       if (progressFor(item.id)) return;
-      // Even an interrupted start remains findable instead of requiring search.
-      const record = { itemID: item.id, seconds: 0, duration: item.durationSeconds || 0, updatedAt: nextProgressTimestamp(item.id) };
-      progressByID.set(item.id, record);
-      savePendingProgress(record);
-      writeProgressCheckpoint(record).then(async response => {
-        if (response.ok) settleProgressCheckpoint(record, await response.json());
+      // An old tab cannot know whether another device already started this
+      // title, so confirm with the server before creating a zero-second
+      // record. That keeps an interrupted start findable without ever
+      // replacing real progress with a guess.
+      refreshProgressFromServer(true).then(() => {
+        if (progressFor(item.id)) return;
+        if (nowPlayingItem?.id === item.id) {
+          const media = npMedia();
+          if (media && playbackPosition(media) > 1) return;
+        }
+        const record = { itemID: item.id, seconds: 0, duration: item.durationSeconds || 0,
+                         updatedAt: nextProgressTimestamp(item.id), baseUpdatedAt: null };
+        progressByID.set(item.id, record);
+        savePendingProgress(record);
+        writeProgressCheckpoint(record).then(async response => {
+          if (response.status === 409) {
+            adoptServerProgress(record, await response.json().catch(() => null));
+            return;
+          }
+          if (response.ok) settleProgressCheckpoint(record, await response.json().catch(() => null));
+        }).catch(() => {});
       }).catch(() => {});
     }
 

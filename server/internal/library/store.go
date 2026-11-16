@@ -390,8 +390,19 @@ func (s *Store) Count() int {
 // equal timestamps never overwrite newer ones) and merges the seconds into
 // the item's wire progress. Returns false if the write was stale-rejected.
 func (s *Store) SetProgress(rec api.ProgressRecord) bool {
+	saved, _ := s.SetProgressIfCurrent(rec, nil)
+	return saved
+}
+
+// SetProgressIfCurrent stores rec and reports whether it was saved. base is the
+// updatedAt the client last observed: when it is non-nil and the stored record
+// has advanced past it, the write is rejected so a stale client cannot replace
+// newer progress with an older position. It returns the record that is stored
+// after the attempt, which lets callers answer a conflict with the current
+// position.
+func (s *Store) SetProgressIfCurrent(rec api.ProgressRecord, base *time.Time) (bool, api.ProgressRecord) {
 	if rec.ItemID == "" {
-		return false
+		return false, api.ProgressRecord{}
 	}
 	if rec.UpdatedAt.IsZero() {
 		rec.UpdatedAt = time.Now().UTC()
@@ -403,8 +414,10 @@ func (s *Store) SetProgress(rec api.ProgressRecord) bool {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	if prev, ok := s.progress[rec.ItemID]; ok && !rec.UpdatedAt.After(prev.UpdatedAt) {
-		return false
+	if prev, ok := s.progress[rec.ItemID]; ok {
+		if (base != nil && prev.UpdatedAt.After(*base)) || !rec.UpdatedAt.After(prev.UpdatedAt) {
+			return false, *prev
+		}
 	}
 	r := rec
 	s.progress[rec.ItemID] = &r
@@ -416,7 +429,7 @@ func (s *Store) SetProgress(rec api.ProgressRecord) bool {
 		}
 	}
 	s.gen++
-	return true
+	return true, r
 }
 
 // Progress returns all progress records, itemID-sorted for stable output.

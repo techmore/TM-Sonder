@@ -299,7 +299,13 @@ func (s *accountActivityStore) progressFor(username, itemID string) (api.Progres
 	return record, ok
 }
 
-func (s *accountActivityStore) setProgress(username string, record api.ProgressRecord) (bool, error) {
+// setProgressIfCurrent saves record and reports whether it was written. base is
+// the updatedAt the client last observed: when it is non-nil and the account
+// has newer progress, the write is ignored so a stale device cannot replace a
+// newer listening position. Callers use the false result to answer the client
+// with the progress that is actually stored instead of reporting a false
+// success.
+func (s *accountActivityStore) setProgressIfCurrent(username string, record api.ProgressRecord, base *time.Time) (bool, error) {
 	if record.ItemID == "" {
 		return false, nil
 	}
@@ -311,8 +317,13 @@ func (s *accountActivityStore) setProgress(username string, record api.ProgressR
 	}
 	changed := false
 	err := s.update(username, func(activity *accountActivity) error {
-		if previous, ok := activity.Progress[record.ItemID]; ok && !record.UpdatedAt.After(previous.UpdatedAt) {
-			return nil
+		if previous, ok := activity.Progress[record.ItemID]; ok {
+			if base != nil && previous.UpdatedAt.After(*base) {
+				return nil
+			}
+			if !record.UpdatedAt.After(previous.UpdatedAt) {
+				return nil
+			}
 		}
 		activity.Progress[record.ItemID] = record
 		changed = true

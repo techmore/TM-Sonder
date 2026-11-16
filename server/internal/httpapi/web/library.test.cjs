@@ -59,6 +59,8 @@ function catalog(items, progress = [], detailTools = false, insightsTools = fals
   context.progress = progress;
   vm.runInContext('items = input; for (const p of progress) progressByID.set(p.id, p); rebuildCopyGroups();', context);
   const evaluate = expression => JSON.parse(JSON.stringify(vm.runInContext(expression, context)));
+  evaluate.async = expression => vm.runInContext(expression, context);
+  evaluate.context = context;
   evaluate.setTime = value => { fakeNow = value; };
   evaluate.preference = key => preferences.get(key) ?? null;
   return evaluate;
@@ -1092,6 +1094,75 @@ test('progress is written to the part being played, not the book head', () => {
   const get = catalog([part('p1', 'bk', 1, 100), part('p2', 'bk', 2, 100)]);
   assert.equal(get('(nowPlayingParts = partsOf(items[0]), nowPlayingPartIndex = 1, currentProgressTargetID())'), 'p2');
   assert.equal(get('(nowPlayingParts = null, currentProgressTargetID())'), null);
+});
+
+test('a checkpoint tells the server which saved version it is updating', async () => {
+  const get = catalog([{ id: 'dune', title: 'Dune', kind: 'audiobook', format: 'm4b', durationSeconds: 600 }],
+    [{ id: 'dune', itemID: 'dune', seconds: 120, duration: 600, updatedAt: '2026-11-16T17:00:00Z' }]);
+  let request = null;
+  get.context.fetch = (url, options) => {
+    request = { url, body: JSON.parse(options.body) };
+    return Promise.resolve({ ok: true, status: 200,
+      json: async () => ({ itemID: 'dune', seconds: 135, duration: 600, updatedAt: '2026-11-16T17:01:00Z' }) });
+  };
+  await get.async(`writeProgressCheckpoint({ itemID: 'dune', seconds: 135, duration: 600,
+    updatedAt: '2026-11-16T17:01:00Z', baseUpdatedAt: '2026-11-16T17:00:00Z' })`);
+  assert.equal(request.url, '/api/progress/dune');
+  assert.equal(request.body.baseUpdatedAt, '2026-11-16T17:00:00Z');
+  assert.equal(request.body.seconds, 135);
+});
+
+test('a rejected checkpoint adopts the newer server position', async () => {
+  const get = catalog([{ id: 'dune', title: 'Dune', kind: 'audiobook', format: 'm4b', durationSeconds: 60770 }],
+    [{ id: 'dune', itemID: 'dune', seconds: 3494.9, duration: 60770, updatedAt: '2026-11-16T18:44:00Z' }]);
+  get('adoptServerProgress({ itemID: "dune", seconds: 3494.9, duration: 60770, updatedAt: "2026-11-16T18:44:00Z" }, ' +
+      '{ itemID: "dune", seconds: 3860, duration: 60770, updatedAt: "2026-11-16T17:50:00Z" })');
+  const record = get('progressByID.get("dune")');
+  assert.equal(record.seconds, 3860);
+  assert.equal(record.updatedAt, '2026-11-16T17:50:00Z');
+});
+
+test('following a rejected checkpoint seeks to the newer server position', () => {
+  const get = catalog([{ id: 'dune', title: 'Dune', kind: 'audiobook', format: 'm4b', durationSeconds: 60770 }],
+    [{ id: 'dune', itemID: 'dune', seconds: 3494.9, duration: 60770, updatedAt: '2026-11-16T18:44:00Z' }]);
+  get.context.fetch = () => Promise.resolve({ ok: true, status: 200, json: async () => ({}) });
+  const position = get(`(nowPlayingItem = items[0], nowPlayingMode = 'audio', nowPlayingParts = null,
+    $("#npMedia").duration = 60770, $("#npMedia").currentTime = 3494.9,
+    adoptServerProgress(
+      { itemID: 'dune', seconds: 3494.9, duration: 60770, updatedAt: '2026-11-16T18:44:00Z' },
+      { itemID: 'dune', seconds: 3860, duration: 60770, updatedAt: '2026-11-16T17:50:00Z' }),
+    $("#npMedia").currentTime)`);
+  assert.equal(position, 3860);
+});
+
+test('an authoritative refresh replaces a stale tab position but keeps unsaved work', async () => {
+  const get = catalog([{ id: 'dune', title: 'Dune', kind: 'audiobook', format: 'm4b', durationSeconds: 60770 },
+                       { id: 'emma', title: 'Emma', kind: 'audiobook', format: 'm4b', durationSeconds: 1000 }],
+    [{ id: 'dune', itemID: 'dune', seconds: 3494.9, duration: 60770, updatedAt: '2026-11-16T18:44:00Z' },
+     { id: 'emma', itemID: 'emma', seconds: 500, duration: 1000, updatedAt: '2026-11-16T18:40:00Z' }]);
+  // Emma has a checkpoint that has not reached the server yet.
+  get(`(savePendingProgress({ itemID: 'emma', seconds: 500, duration: 1000, updatedAt: '2026-11-16T18:40:00Z' }), pendingProgress().length)`);
+  get.context.fetch = url => Promise.resolve({ ok: true, status: 200, json: async () => (
+    String(url).startsWith('/api/progress/')
+      ? { itemID: 'emma', seconds: 500, duration: 1000, updatedAt: '2026-11-16T18:40:01Z' }
+      : { progress: [
+          { itemID: 'dune', seconds: 3860, duration: 60770, updatedAt: '2026-11-16T17:50:00Z' },
+          { itemID: 'emma', seconds: 90, duration: 1000, updatedAt: '2026-11-16T18:30:00Z' },
+        ] }
+  ) });
+  await get.async('refreshProgressFromServer(true)');
+  assert.equal(get('progressByID.get("dune").seconds'), 3860);
+  assert.equal(get('progressByID.get("emma").seconds'), 500);
+});
+
+test('a settled checkpoint clears its pending entry even when the clock was clamped', () => {
+  const get = catalog([{ id: 'dune', title: 'Dune', kind: 'audiobook', format: 'm4b', durationSeconds: 600 }]);
+  get(`(savePendingProgress({ itemID: 'dune', seconds: 300, duration: 600, updatedAt: '2099-01-01T00:00:00Z' }), pendingProgress().length)`);
+  assert.equal(get('pendingProgress().length'), 1);
+  get(`settleProgressCheckpoint({ itemID: 'dune', seconds: 300, duration: 600, updatedAt: '2099-01-01T00:00:00Z' },
+      { itemID: 'dune', seconds: 300, duration: 600, updatedAt: '2026-11-16T18:00:00Z' })`);
+  assert.equal(get('pendingProgress().length'), 0);
+  assert.equal(get('progressByID.get("dune").updatedAt'), '2026-11-16T18:00:00Z');
 });
 
 test('the now-playing panel says which part of the book is playing', () => {

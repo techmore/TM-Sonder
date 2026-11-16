@@ -655,8 +655,60 @@ func (s *Server) handlePlaybackGet(w http.ResponseWriter, r *http.Request) {
 
 var allowedMethods = map[string]bool{http.MethodPost: true, http.MethodPatch: true, http.MethodPut: true}
 
+// progressClockSkew bounds how far ahead of the server a client clock may run
+// before its checkpoints are restamped with the server's time. A future-dated
+// checkpoint would otherwise win ordering forever and block every later save.
+const progressClockSkew = 5 * time.Minute
+
+func normalizedProgressTimestamp(value *time.Time, now time.Time) time.Time {
+	if value == nil {
+		return now
+	}
+	ts := value.UTC()
+	if ts.IsZero() || ts.Before(time.Date(2000, 1, 1, 0, 0, 0, 0, time.UTC)) || ts.After(now.Add(progressClockSkew)) {
+		return now
+	}
+	return ts
+}
+
+func normalizedProgressBase(value *time.Time, now time.Time) *time.Time {
+	if value == nil {
+		return nil
+	}
+	ts := value.UTC()
+	if ts.IsZero() {
+		return nil
+	}
+	// A client that claims to have already seen a future timestamp cannot
+	// prove it is current, so treat the base as the present instead of letting
+	// it unlock any write.
+	if ts.After(now.Add(progressClockSkew)) {
+		ts = now
+	}
+	return &ts
+}
+
+func applyProgressRecord(sess *api.PlaybackSession, rec api.ProgressRecord) {
+	sess.Seconds = rec.Seconds
+	sess.Duration = rec.Duration
+	if rec.Duration > 0 {
+		sess.Percent = rec.Seconds / rec.Duration * 100
+	}
+	updated := rec.UpdatedAt
+	sess.UpdatedAt = &updated
+	sess.AudioTrackID = rec.AudioTrackID
+	sess.SubtitleTrackID = rec.SubtitleTrackID
+	sess.SubtitlesEnabled = rec.SubtitlesEnabled
+}
+
 // applyUpdate decodes a PlaybackStateUpdate and merges it last-write-wins.
 // Omitted optional track fields keep their previously saved values.
+//
+// A client that supplies BaseUpdatedAt is telling the server which version of
+// the record it last saw. If another device has saved newer progress since
+// then, the write is refused with 409 and the stored session, rather than
+// silently replacing the newer position. This is what keeps a browser tab left
+// open for days from resuming an old position and erasing newer listening.
 func (s *Server) applyUpdate(w http.ResponseWriter, r *http.Request) (*library.Item, string, bool) {
 	item, ok := s.store.Get(r.PathValue("id"))
 	if !ok {
@@ -694,21 +746,30 @@ func (s *Server) applyUpdate(w http.ResponseWriter, r *http.Request) (*library.I
 	if upd.SubtitlesEnabled != nil {
 		rec.SubtitlesEnabled = upd.SubtitlesEnabled
 	}
-	if upd.UpdatedAt != nil {
-		rec.UpdatedAt = upd.UpdatedAt.UTC()
-	} else {
-		rec.UpdatedAt = time.Now().UTC()
-	}
+	now := time.Now().UTC()
+	rec.UpdatedAt = normalizedProgressTimestamp(upd.UpdatedAt, now)
+	base := normalizedProgressBase(upd.BaseUpdatedAt, now)
 	if rec.ID == "" {
 		rec.ID = api.NewID()
 	}
 	if scoped {
-		if _, err := s.accountActivity.setProgress(username, rec); err != nil {
+		saved, err := s.accountActivity.setProgressIfCurrent(username, rec, base)
+		if err != nil {
 			writeError(w, http.StatusInternalServerError, "Could not save playback progress")
 			return nil, "", false
 		}
+		if !saved {
+			writeJSON(w, http.StatusConflict, s.sessionForUser(item, username))
+			return nil, "", false
+		}
 	} else {
-		s.store.SetProgress(rec)
+		saved, stored := s.store.SetProgressIfCurrent(rec, base)
+		if !saved {
+			sess := s.sessionForUser(item, "")
+			applyProgressRecord(&sess, stored)
+			writeJSON(w, http.StatusConflict, sess)
+			return nil, "", false
+		}
 		s.progressChanged()
 	}
 	return item, username, true
